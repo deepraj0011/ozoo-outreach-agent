@@ -7,6 +7,10 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+# httpx logs full request URLs (query holds email + api key) at INFO; silence it.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+
 ZEROBOUNCE_URL = "https://api.zerobounce.net/v2/validate"
 _MAP = {
     "valid": "valid",

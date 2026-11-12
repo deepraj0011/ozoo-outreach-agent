@@ -172,3 +172,13 @@ def test_spamtrap_maps_invalid():
         respx.get("https://api.zerobounce.net/v2/validate").mock(
             return_value=httpx.Response(200, json={"status": "spamtrap"}))
         assert EmailVerifier("k").check("a@b.com") == "invalid"
+
+
+def test_unique_race_maps_to_duplicate(session, monkeypatch):
+    from outreach import intake as intake_mod
+
+    make_lead(session, email="asha@acme.com")
+    monkeypatch.setattr(intake_mod, "_find_existing", lambda *a, **k: None)
+    r = run(session, payload())
+    assert r.outcome == "skipped_duplicate" and r.lead_id is None
+    assert session.query(Lead).count() == 1

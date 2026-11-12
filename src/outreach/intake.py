@@ -7,6 +7,7 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .channels import choose_channel, normalize_phone
@@ -57,6 +58,15 @@ def _rejected(reason: str) -> IntakeResult:
     return IntakeResult(None, "rejected", None, reason)
 
 
+def _find_existing(session: Session, email: Optional[str], phone: Optional[str]):
+    clauses = []
+    if email:
+        clauses.append(Lead.email == email)
+    if phone:
+        clauses.append(Lead.phone == phone)
+    return session.scalar(select(Lead).where(or_(*clauses)).limit(1))
+
+
 def intake_lead(session: Session, payload: dict, verifier, now: datetime,
                 primary_when_both: str = "whatsapp") -> IntakeResult:
     try:
@@ -81,12 +91,7 @@ def intake_lead(session: Session, payload: dict, verifier, now: datetime,
     if session.scalar(select(Suppression.id).where(Suppression.value.in_(contacts)).limit(1)):
         return IntakeResult(None, "skipped_suppressed", None, "suppressed")
 
-    clauses = []
-    if email:
-        clauses.append(Lead.email == email)
-    if phone:
-        clauses.append(Lead.phone == phone)
-    existing = session.scalar(select(Lead).where(or_(*clauses)).limit(1))
+    existing = _find_existing(session, email, phone)
     if existing is not None:
         return IntakeResult(existing.id, "skipped_duplicate", None, "duplicate")
 
@@ -120,8 +125,15 @@ def intake_lead(session: Session, payload: dict, verifier, now: datetime,
         return _rejected("no usable channel")
 
     lead.active_channel = channel
-    session.add(lead)
-    session.flush()
+    try:
+        with session.begin_nested():
+            session.add(lead)
+            session.flush()
+    except IntegrityError:
+        # concurrent intake of the same contact won the unique constraint
+        existing = _find_existing(session, email, phone)
+        return IntakeResult(existing.id if existing else None, "skipped_duplicate",
+                            None, "duplicate")
 
     held = False
     if lead.domain and lead.domain not in FREE_MAIL_DOMAINS:
