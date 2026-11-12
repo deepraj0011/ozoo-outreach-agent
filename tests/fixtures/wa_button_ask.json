@@ -1,0 +1,45 @@
+{
+  "_source": "constructed — no doc example (quick-reply button shape, type=button)",
+  "object": "whatsapp_business_account",
+  "entry": [
+    {
+      "id": "WABA_ID",
+      "changes": [
+        {
+          "field": "messages",
+          "value": {
+            "messaging_product": "whatsapp",
+            "metadata": {
+              "display_phone_number": "15550000000",
+              "phone_number_id": "PHONE_NUMBER_ID"
+            },
+            "contacts": [
+              {
+                "profile": {
+                  "name": "Lead"
+                },
+                "wa_id": "919800000000"
+              }
+            ],
+            "messages": [
+              {
+                "from": "919800000000",
+                "id": "wamid.IN1",
+                "timestamp": "1762941700",
+                "type": "button",
+                "button": {
+                  "payload": "ASK_QUESTION",
+                  "text": "Ask a question"
+                },
+                "context": {
+                  "from": "15550000000",
+                  "id": "wamid.OUT1"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

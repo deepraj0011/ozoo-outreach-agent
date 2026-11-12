@@ -1,0 +1,19 @@
+{
+  "_source": "docs: https://cal.com/docs/developing/guides/automation/webhooks",
+  "triggerEvent": "BOOKING_NO_SHOW_UPDATED",
+  "createdAt": "2026-11-20T10:00:00.000Z",
+  "payload": {
+    "message": "lead@example.com marked as no-show",
+    "attendees": [
+      {
+        "email": "lead@example.com",
+        "noShow": true
+      }
+    ],
+    "bookingUid": "bk_uid_123",
+    "bookingId": 123,
+    "metadata": {
+      "lead": "lead_abc123"
+    }
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "_source": "docs: https://cal.com/docs/developing/guides/automation/webhooks (flat structure, no payload wrapper)",
+  "triggerEvent": "MEETING_ENDED",
+  "title": "Ozoo demo",
+  "startTime": "2026-11-20T09:00:00Z",
+  "endTime": "2026-11-20T09:30:00Z",
+  "organizer": {
+    "name": "Ozoo",
+    "email": "sales@ozoo.ai",
+    "timeZone": "Asia/Kolkata"
+  },
+  "attendees": [
+    {
+      "name": "Lead",
+      "email": "lead@example.com",
+      "timeZone": "Asia/Kolkata"
+    }
+  ],
+  "uid": "bk_uid_123",
+  "bookingId": 123,
+  "status": "ACCEPTED",
+  "metadata": {
+    "lead": "lead_abc123"
+  }
+}

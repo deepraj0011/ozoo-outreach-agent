@@ -1,0 +1,20 @@
+{
+  "_source": "constructed — no doc example (doc: root fields duplicated; response replaces value)",
+  "triggerEvent": "FORM_SUBMITTED",
+  "createdAt": "2026-11-12T10:00:00.000Z",
+  "payload": {
+    "formId": "form_1",
+    "formName": "Ozoo routing",
+    "responses": {
+      "email": {
+        "label": "Email",
+        "value": "lead@example.com",
+        "response": "lead@example.com"
+      }
+    },
+    "responseId": 1,
+    "metadata": {
+      "lead": "lead_abc123"
+    }
+  }
+}

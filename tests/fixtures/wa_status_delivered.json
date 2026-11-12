@@ -1,0 +1,29 @@
+{
+  "_source": "docs: https://developers.facebook.com/docs/whatsapp/cloud-api/webhooks/payload-examples",
+  "object": "whatsapp_business_account",
+  "entry": [
+    {
+      "id": "WABA_ID",
+      "changes": [
+        {
+          "field": "messages",
+          "value": {
+            "messaging_product": "whatsapp",
+            "metadata": {
+              "display_phone_number": "15550000000",
+              "phone_number_id": "PHONE_NUMBER_ID"
+            },
+            "statuses": [
+              {
+                "id": "wamid.OUT1",
+                "status": "delivered",
+                "timestamp": "1762941600",
+                "recipient_id": "919800000000"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
