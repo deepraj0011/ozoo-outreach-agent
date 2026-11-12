@@ -178,6 +178,30 @@ def test_hard_bounce_with_wa_already_switched_suppresses():
         HARD, ToolStop(), SetState(S.SUPPRESSED, "hard_bounce")]
 
 
+def test_hard_bounce_in_booked_keeps_state():
+    for st in (S.ENGAGED, S.QUALIFYING, S.BOOKED):
+        assert run(both(state=st), ev("bounce_hard")) == [HARD, ToolStop()]
+        assert run(lead_snap(state=st, flags={"soft_bounce_count": 2}),
+                   ev("bounce_soft")) == [HARD, ToolStop()]
+
+
+def test_hard_bounce_while_whatsapp_active_keeps_whatsapp():
+    for st in (S.IN_SEQUENCE, S.PAUSED, S.NURTURE):
+        assert run(both(state=st, active_channel="whatsapp"), ev("bounce_hard")) == [
+            HARD, ToolStop()]
+        assert run(both(state=st, active_channel="whatsapp", channel_switched=True),
+                   ev("bounce_hard")) == [HARD, ToolStop()]
+
+
+def test_hard_bounce_in_nurture_suppresses():
+    assert run(lead_snap(state=S.NURTURE), ev("bounce_hard")) == [
+        HARD, ToolStop(), SetState(S.SUPPRESSED, "hard_bounce")]
+    assert run(lead_snap(state=S.PAUSED), ev("bounce_hard")) == [
+        HARD, ToolStop(), SetState(S.SUPPRESSED, "hard_bounce")]
+    assert run(both(state=S.NURTURE), ev("bounce_hard")) == [
+        HARD, ToolStop(), SwitchChannel("bounce")]
+
+
 def test_hard_bounce_terminal_only_suppresses_email():
     for st in TERMINAL:
         assert run(lead_snap(state=st), ev("bounce_hard")) == [HARD]
@@ -313,11 +337,12 @@ def test_unsubscribe_any_state(st):
 
 
 @pytest.mark.parametrize("verdict", ["human", "bot", "machine", None])
-def test_unsubscribe_link_click_any_verdict(verdict):
-    assert run(lead_snap(), click("unsubscribe", verdict=verdict)) == optout_actions(
-        "unsubscribe")
-    assert run(lead_snap(state=S.CLOSED), click("unsubscribe", verdict=verdict)) == [
-        SuppressAllChannels("unsubscribe")]
+@pytest.mark.parametrize("st", list(S))
+def test_unsubscribe_click_alone_does_nothing(st, verdict):
+    # scanners pre-click every link: only the `unsubscribe` event kind opts out
+    assert run(lead_snap(state=st), click("unsubscribe", verdict=verdict)) == []
+    assert run(wa_lead(state=st, wa_window_open=True),
+               click("unsubscribe", verdict=verdict)) == []
 
 
 def test_sent_records_step_and_refreshes():
@@ -366,6 +391,16 @@ def test_wa_failed_other_code_alerts(code):
 @pytest.mark.parametrize("st", [S.ENGAGED, S.QUALIFYING, S.BOOKED, S.NURTURE, S.PAUSED])
 def test_wa_failed_outside_in_sequence_ignored(st):
     assert run(wa_lead(state=st), failed(131026)) == []
+
+
+def test_wa_failed_ignored_when_email_active():
+    for code in (131026, 131049, 131047, 500):
+        assert run(both(active_channel="email", channel_switched=True), failed(code)) == []
+        assert run(lead_snap(active_channel=None, phone=PHONE, has_wa_optin=True),
+                   failed(code)) == []
+    # 131050 stays an opt-out regardless of the active channel
+    assert run(both(active_channel="email"), failed(131050)) == optout_actions(
+        "wa_user_stopped_marketing")
 
 
 def test_wa_user_stopped_marketing():
@@ -476,11 +511,18 @@ def test_wa_tap_stops_email():
 @pytest.mark.parametrize("st", sorted(TERMINAL, key=lambda s: s.value))
 @pytest.mark.parametrize("event", [
     click("pricing"), button("BOOK_DEMO"), button("ASK_QUESTION"), ev("reply"),
-    text("hello"), ev("open", step=1), ev("wa_read"), ev("booking_created"),
+    text("hello"), ev("open", step=1), ev("wa_read"),
     ev("no_show"), ev("meeting_ended"), failed(131026), ev("sent", step=2),
 ], ids=lambda e: e.kind)
 def test_terminal_state_no_actions(st, event):
     assert run(both(state=st, wa_window_open=True), event) == []
+
+
+@pytest.mark.parametrize("st", sorted(TERMINAL, key=lambda s: s.value))
+def test_terminal_booking_alerts_sales(st):
+    out = run(both(state=st), ev("booking_created"))
+    assert out == [Alert("booked")]
+    assert out[0].text.endswith("booking from lead in terminal state")
 
 
 def test_terminal_still_records_optout():

@@ -1,7 +1,7 @@
 """Pure rules engine: (lead snapshot, event snapshot) -> ordered list of actions.
 
 No DB, no I/O, no clock reads. Order of checks (rulings G, H):
-  1. opt-outs and bounces (apply in every state, terminal ones included)
+  1. opt-outs, bounces and terminal-state bookings (apply in every state)
   2. terminal guard
   3. verdict != "human" for open / click / wa_read -> []
   4. per-kind handler
@@ -158,8 +158,6 @@ def _score(lead: LeadSnapshot, points: int, *, force_hot_alert: bool = False) ->
 def _optout_reason(event: EventSnapshot) -> Optional[str]:
     if event.kind == "unsubscribe":
         return "unsubscribe"
-    if event.kind == "click" and event.tag == "unsubscribe":
-        return "unsubscribe"
     if event.kind == "wa_text" and _wa_text(event).strip().lower() in WA_OPTOUT_KEYWORDS:
         return "wa_optout"
     if event.kind == "wa_failed" and _wa_code(event) == WA_USER_STOPPED_MARKETING:
@@ -174,12 +172,16 @@ def _optout(lead: LeadSnapshot, reason: str) -> List[Action]:
 
 
 def _hard_bounce(lead: LeadSnapshot) -> List[Action]:
+    """Suppress the email always; state effects only for outreach states on email."""
     out: List[Action] = []
     if lead.email:
         out.append(Suppress(lead.email, "email", "hard_bounce"))
     if lead.state in TERMINAL:
         return out
     out.append(ToolStop())
+    if lead.state not in OUTREACH_STATES or lead.active_channel == "whatsapp":
+        # conversation continues / lead stays on WhatsApp
+        return out
     if lead.has_wa_optin and not lead.channel_switched and lead.active_channel == "email":
         out.append(SwitchChannel("bounce"))
     else:
@@ -202,6 +204,8 @@ def _pre_guard(lead: LeadSnapshot, event: EventSnapshot) -> Optional[List[Action
         return _hard_bounce(lead)
     if event.kind == "bounce_soft":
         return _soft_bounce(lead)
+    if event.kind == "booking_created" and lead.state in TERMINAL:
+        return [_alert(lead, "booked", "booking from lead in terminal state")]
     return None
 
 
@@ -260,7 +264,7 @@ def _on_wa_read(lead: LeadSnapshot, event: EventSnapshot) -> List[Action]:
 
 
 def _on_wa_failed(lead: LeadSnapshot, event: EventSnapshot) -> List[Action]:
-    if lead.state != S.IN_SEQUENCE:
+    if lead.state != S.IN_SEQUENCE or lead.active_channel != "whatsapp":
         return []
     code = _wa_code(event)
     if code == WA_RE_ENGAGEMENT:
