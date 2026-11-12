@@ -81,7 +81,7 @@ class Event(Base):
     step: Mapped[Optional[int]] = mapped_column(Integer)
     tag: Mapped[Optional[str]] = mapped_column(String(50))
     ip: Mapped[Optional[str]] = mapped_column(String(64))
-    user_agent: Mapped[Optional[str]] = mapped_column(String(500))
+    user_agent: Mapped[Optional[str]] = mapped_column(String(512))
     verdict: Mapped[Optional[str]] = mapped_column(String(20))
     processed: Mapped[bool] = mapped_column(Boolean, default=False)
     data: Mapped[Dict[str, Any]] = mapped_column(MutableDict.as_mutable(JSON), default=dict)
