@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Optional
 
 from .models import Lead
 
@@ -25,24 +25,32 @@ COLD_MAX = 4
 WARM_MAX = 14
 
 
-def apply_points(lead: Lead, event: Any) -> int:
-    """Add points for a human event to lead.score; returns the points added."""
-    if event.verdict != "human":
-        return 0
-    flags = lead.variant_flags
-    if event.kind == "open":
-        n = int(flags.get("human_opens", 0)) + 1
-        flags["human_opens"] = n
+def points_for(kind: str, tag: Optional[str], human_opens_so_far: int, wa_read_scored: bool) -> int:
+    """Pure: points a human event of `kind`/`tag` is worth given the lead's counters."""
+    if kind == "open":
+        n = human_opens_so_far + 1
         pts = OPEN_POINTS if n <= OPEN_MAX_COUNTED else 0
         if n == OPEN_MAX_COUNTED:
             pts += OPEN_BONUS_AT_MAX
-    elif event.kind == "click":
-        pts = SCORE_POINTS.get(event.tag or "", 0)
-    elif event.kind == "wa_read":
-        pts = 0 if flags.get("wa_read_scored") else WA_READ_POINTS
-        flags["wa_read_scored"] = True
-    else:
+        return pts
+    if kind == "click":
+        return SCORE_POINTS.get(tag or "", 0)
+    if kind == "wa_read":
+        return 0 if wa_read_scored else WA_READ_POINTS
+    return 0
+
+
+def apply_points(lead: Lead, event: Any) -> int:
+    """Add points for a human event to lead.score; returns the points added."""
+    if event.verdict != "human" or event.kind not in ("open", "click", "wa_read"):
         return 0
+    flags = lead.variant_flags
+    opens = int(flags.get("human_opens", 0))
+    pts = points_for(event.kind, event.tag, opens, bool(flags.get("wa_read_scored")))
+    if event.kind == "open":
+        flags["human_opens"] = opens + 1
+    elif event.kind == "wa_read":
+        flags["wa_read_scored"] = True
     lead.score = (lead.score or 0) + pts
     lead.last_human_event_at = event.occurred_at
     return pts

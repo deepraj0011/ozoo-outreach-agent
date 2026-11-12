@@ -1,0 +1,600 @@
+from __future__ import annotations
+
+from dataclasses import replace
+from types import MappingProxyType
+
+import pytest
+
+from outreach.actions import (
+    AddScore, Alert, BotReply, Classify, HandOff, PauseColleagues, RefreshNextStep,
+    SendReply, SetFlag, SetState, SetStepSent, SetVariant, StopAllOutreach, Suppress,
+    SuppressAllChannels, SwitchChannel, ToolStop, WaCancelReminder, WaSendText, flatten,
+)
+from outreach.models import Event
+from outreach.rules import EventSnapshot, LeadSnapshot, decide
+from outreach.score import apply_points, points_for
+from outreach.states import ALLOWED, TERMINAL, LeadState as S
+from tests.conftest import NOW, make_lead
+
+EMAIL = "lead@acme.com"
+PHONE = "+14155550100"
+
+_CHANNEL = {"booking_created": "cal", "no_show": "cal", "meeting_ended": "cal", "click": "web"}
+
+
+def lead_snap(**kw) -> LeadSnapshot:
+    d = dict(
+        id=1, state=S.IN_SEQUENCE, score=0, step_sent=1, active_channel="email",
+        channel_switched=False, has_usable_email=True, has_wa_optin=False,
+        email=EMAIL, phone=None, wa_human_owner=None, wa_window_open=False, flags={},
+    )
+    d.update(kw)
+    d["flags"] = MappingProxyType(dict(d["flags"]))
+    return LeadSnapshot(**d)
+
+
+def both(**kw) -> LeadSnapshot:
+    """Lead with usable email and WhatsApp opt-in."""
+    d = dict(phone=PHONE, has_wa_optin=True)
+    d.update(kw)
+    return lead_snap(**d)
+
+
+def wa_lead(**kw) -> LeadSnapshot:
+    d = dict(active_channel="whatsapp", email=None, has_usable_email=False,
+             phone=PHONE, has_wa_optin=True)
+    d.update(kw)
+    return lead_snap(**d)
+
+
+def ev(kind: str, **kw) -> EventSnapshot:
+    channel = _CHANNEL.get(kind, "whatsapp" if kind.startswith("wa_") else "email")
+    d = dict(kind=kind, channel=channel, tag=None, verdict="human", step=None,
+             occurred_at=NOW, data={})
+    d.update(kw)
+    d["data"] = MappingProxyType(dict(d["data"]))
+    return EventSnapshot(**d)
+
+
+def click(tag: str, **kw) -> EventSnapshot:
+    return ev("click", tag=tag, **kw)
+
+
+def button(payload: str) -> EventSnapshot:
+    return ev("wa_button", data={"payload": payload})
+
+
+def text(t: str) -> EventSnapshot:
+    return ev("wa_text", data={"text": t})
+
+
+def failed(code) -> EventSnapshot:
+    return ev("wa_failed", data={"code": code})
+
+
+def run(lead, event):
+    return decide(lead, event, NOW)
+
+
+def kinds(actions):
+    return [type(a).__name__ for a in actions]
+
+
+HARD = Suppress(EMAIL, "email", "hard_bounce")
+STOP = StopAllOutreach()
+
+
+def optout_actions(reason):
+    return [SuppressAllChannels(reason), STOP, SetState(S.SUPPRESSED, reason)]
+
+
+# ---------------------------------------------------------------- actions
+
+
+def test_stop_all_outreach_flattens_to_toolstop_and_wa_cancel():
+    assert flatten([STOP, Classify()]) == [ToolStop(), WaCancelReminder(), Classify()]
+
+
+def test_alert_rejects_unknown_kind():
+    with pytest.raises(ValueError):
+        Alert("nope")
+    for k in ("wa_send_failed", "handoff", "hot_lead", "wa_sla_missed"):
+        Alert(k)
+
+
+def test_actions_are_frozen():
+    with pytest.raises(Exception):
+        AddScore(1).points = 2  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------- score.points_for
+
+
+@pytest.mark.parametrize("kind,tag,opens,read,pts", [
+    ("open", None, 0, False, 1), ("open", None, 1, False, 1), ("open", None, 2, False, 3),
+    ("open", None, 3, False, 0), ("click", "homepage", 0, False, 2),
+    ("click", "case_study", 0, False, 5), ("click", "product", 0, False, 5),
+    ("click", "pricing", 0, False, 10), ("click", "booking", 0, False, 10),
+    ("click", "unsubscribe", 0, False, 0), ("click", None, 0, False, 0),
+    ("wa_read", None, 0, False, 1), ("wa_read", None, 0, True, 0), ("reply", None, 0, False, 0),
+])
+def test_points_for(kind, tag, opens, read, pts):
+    assert points_for(kind, tag, opens, read) == pts
+
+
+# ---------------------------------------------------------------- snapshots
+
+
+def test_lead_snapshot_from_lead(session):
+    lead = make_lead(session, email="x@acme.com", consent_email=True, verify_status="catch_all",
+                     phone=PHONE, consent_whatsapp=True, state=S.ENGAGED, score=7,
+                     step_sent=2, active_channel="whatsapp", channel_switched=True,
+                     wa_human_owner="sam", wa_window_until=NOW.replace(hour=11),
+                     variant_flags={"human_opens": 2})
+    snap = LeadSnapshot.from_lead(lead, NOW)
+    assert snap.id == lead.id and snap.state is S.ENGAGED and snap.score == 7
+    assert snap.step_sent == 2 and snap.active_channel == "whatsapp" and snap.channel_switched
+    assert snap.has_usable_email and snap.has_wa_optin and snap.wa_window_open
+    assert snap.email == "x@acme.com" and snap.phone == PHONE and snap.wa_human_owner == "sam"
+    assert snap.flags["human_opens"] == 2
+    # snapshot is detached from the ORM dict
+    lead.variant_flags["human_opens"] = 9
+    assert snap.flags["human_opens"] == 2
+
+    lead.verify_status = "invalid"
+    lead.consent_whatsapp = False
+    lead.wa_window_until = NOW
+    snap2 = LeadSnapshot.from_lead(lead, NOW)
+    assert not snap2.has_usable_email and not snap2.has_wa_optin and not snap2.wa_window_open
+    lead.wa_window_until = None
+    assert not LeadSnapshot.from_lead(lead, NOW).wa_window_open
+
+
+def test_event_snapshot_from_event():
+    e = Event(lead_id=1, channel="email", kind="open", occurred_at=NOW, received_at=NOW,
+              step=2, tag=None, verdict="human", data={"x": 1})
+    snap = EventSnapshot.from_event(e)
+    assert (snap.kind, snap.channel, snap.tag, snap.verdict, snap.step) == (
+        "open", "email", None, "human", 2)
+    assert snap.occurred_at == NOW and snap.data["x"] == 1
+    e2 = Event(lead_id=1, channel="email", kind="reply", occurred_at=NOW, received_at=NOW)
+    assert EventSnapshot.from_event(e2).data == {}
+
+
+# ---------------------------------------------------------------- email rows
+
+
+def test_hard_bounce_no_wa():
+    assert run(lead_snap(), ev("bounce_hard")) == [
+        HARD, ToolStop(), SetState(S.SUPPRESSED, "hard_bounce")]
+
+
+def test_hard_bounce_with_wa_switches():
+    assert run(both(), ev("bounce_hard")) == [HARD, ToolStop(), SwitchChannel("bounce")]
+
+
+def test_hard_bounce_with_wa_already_switched_suppresses():
+    assert run(both(channel_switched=True), ev("bounce_hard")) == [
+        HARD, ToolStop(), SetState(S.SUPPRESSED, "hard_bounce")]
+
+
+def test_hard_bounce_terminal_only_suppresses_email():
+    for st in TERMINAL:
+        assert run(lead_snap(state=st), ev("bounce_hard")) == [HARD]
+
+
+def test_third_soft_bounce_is_hard():
+    assert run(lead_snap(flags={"soft_bounce_count": 2}), ev("bounce_soft")) == [
+        HARD, ToolStop(), SetState(S.SUPPRESSED, "hard_bounce")]
+    assert run(both(flags={"soft_bounce_count": 2}), ev("bounce_soft")) == [
+        HARD, ToolStop(), SwitchChannel("bounce")]
+
+
+def test_soft_bounce_waits():
+    assert run(lead_snap(), ev("bounce_soft")) == [SetFlag("soft_bounce_count", 1)]
+    assert run(lead_snap(flags={"soft_bounce_count": 1}), ev("bounce_soft")) == [
+        SetFlag("soft_bounce_count", 2)]
+
+
+def test_bot_click_ignored():
+    assert run(lead_snap(), click("pricing", verdict="bot")) == []
+
+
+def test_machine_open_ignored():
+    assert run(lead_snap(), ev("open", step=1, verdict="machine")) == []
+
+
+def test_bot_wa_read_ignored():
+    assert run(wa_lead(), ev("wa_read", verdict="bot")) == []
+
+
+def test_human_open():
+    assert run(lead_snap(), ev("open", step=1)) == [
+        SetFlag("human_opens", 1), AddScore(1), SetFlag("opened_steps", [1]), RefreshNextStep()]
+
+
+def test_open_after_cap_scores_nothing():
+    out = run(lead_snap(flags={"human_opens": 3, "opened_steps": [1]}), ev("open", step=2))
+    assert out == [SetFlag("human_opens", 4), SetFlag("opened_steps", [1, 2]), RefreshNextStep()]
+
+
+def test_third_open_team_invite():
+    out = run(lead_snap(score=2, flags={"human_opens": 2, "opened_steps": [2, 1]}),
+              ev("open", step=1))
+    assert out == [SetFlag("human_opens", 3), AddScore(3), SetVariant("team_invite"),
+                   SetFlag("opened_steps", [1, 2]), RefreshNextStep()]
+
+
+def test_third_open_no_variant_when_whatsapp_active():
+    out = run(both(active_channel="whatsapp", flags={"human_opens": 2}), ev("open", step=1))
+    assert SetVariant("team_invite") not in out and AddScore(3) in out
+
+
+def test_homepage_click():
+    assert run(lead_snap(), click("homepage")) == [AddScore(2)]
+
+
+def test_case_study_click():
+    assert run(lead_snap(), click("case_study")) == [AddScore(5), SetVariant("case_study")]
+
+
+def test_product_click():
+    assert run(lead_snap(), click("product")) == [AddScore(5), SetVariant("product")]
+
+
+def test_case_study_click_whatsapp_active_no_variant():
+    assert run(wa_lead(), click("case_study")) == [AddScore(5)]
+
+
+def test_pricing_click_hot():
+    assert run(lead_snap(), click("pricing")) == [
+        AddScore(10), Alert("hot_lead"), SetFlag("hot_alerted", True),
+        SetVariant("booking_slots"), SendReply("booking_slots")]
+
+
+def test_pricing_click_already_alerted_no_second_alert():
+    assert run(lead_snap(score=20, flags={"hot_alerted": True}), click("pricing")) == [
+        AddScore(10), SetFlag("hot_alerted", True),
+        SetVariant("booking_slots"), SendReply("booking_slots")]
+
+
+def test_pricing_click_crossing_hot_alerts_once():
+    out = run(lead_snap(score=10), click("pricing"))
+    assert kinds(out).count("Alert") == 1
+
+
+def test_pricing_click_whatsapp_window_open():
+    assert run(wa_lead(wa_window_open=True), click("pricing")) == [
+        AddScore(10), Alert("hot_lead"), SetFlag("hot_alerted", True),
+        WaSendText("booking_slots")]
+
+
+def test_pricing_click_whatsapp_window_closed_only_alert_and_score():
+    assert run(wa_lead(), click("pricing")) == [
+        AddScore(10), Alert("hot_lead"), SetFlag("hot_alerted", True)]
+
+
+def test_booking_click():
+    assert run(lead_snap(), click("booking")) == [AddScore(10)]
+
+
+def test_score_crossing_hot_alerts_once():
+    out = run(lead_snap(score=13), click("homepage"))
+    assert out == [AddScore(2), Alert("hot_lead"), SetFlag("hot_alerted", True)]
+    assert run(lead_snap(score=13, flags={"hot_alerted": True}), click("homepage")) == [
+        AddScore(2)]
+    # already hot: no crossing
+    assert run(lead_snap(score=15), click("homepage")) == [AddScore(2)]
+
+
+def test_email_reply():
+    assert run(lead_snap(), ev("reply")) == [
+        STOP, SetState(S.ENGAGED, "reply"), Classify(), PauseColleagues()]
+
+
+@pytest.mark.parametrize("st", [S.IN_SEQUENCE, S.PAUSED, S.NURTURE])
+def test_email_reply_from_outreach_states_engages(st):
+    assert run(lead_snap(state=st), ev("reply")) == [
+        STOP, SetState(S.ENGAGED, "reply"), Classify(), PauseColleagues()]
+
+
+@pytest.mark.parametrize("st", [S.ENGAGED, S.QUALIFYING, S.BOOKED])
+def test_email_reply_in_conversation_only_classifies(st):
+    assert run(lead_snap(state=st), ev("reply")) == [Classify()]
+
+
+@pytest.mark.parametrize("st", list(S))
+def test_unsubscribe_any_state(st):
+    out = run(lead_snap(state=st), ev("unsubscribe"))
+    if st in TERMINAL:
+        assert out == [SuppressAllChannels("unsubscribe")]
+    else:
+        assert out == optout_actions("unsubscribe")
+
+
+@pytest.mark.parametrize("verdict", ["human", "bot", "machine", None])
+def test_unsubscribe_link_click_any_verdict(verdict):
+    assert run(lead_snap(), click("unsubscribe", verdict=verdict)) == optout_actions(
+        "unsubscribe")
+    assert run(lead_snap(state=S.CLOSED), click("unsubscribe", verdict=verdict)) == [
+        SuppressAllChannels("unsubscribe")]
+
+
+def test_sent_records_step_and_refreshes():
+    assert run(lead_snap(), ev("sent", step=3)) == [SetStepSent(3), RefreshNextStep()]
+
+
+def test_sent_on_whatsapp_and_wa_receipts_do_nothing():
+    assert run(wa_lead(), ev("sent", channel="whatsapp", step=1)) == []
+    assert run(wa_lead(), ev("wa_sent")) == []
+    assert run(wa_lead(), ev("wa_delivered")) == []
+
+
+# ---------------------------------------------------------------- WhatsApp rows
+
+
+def test_wa_failed_not_on_whatsapp_with_email():
+    assert run(both(active_channel="whatsapp"), failed(131026)) == [
+        SwitchChannel("wa_undeliverable")]
+
+
+def test_wa_failed_not_on_whatsapp_no_email():
+    assert run(wa_lead(), failed(131026)) == [
+        Suppress(PHONE, "phone", "wa_undeliverable"), SetState(S.CLOSED, "unreachable")]
+
+
+def test_wa_failed_already_switched_closes():
+    assert run(both(active_channel="whatsapp", channel_switched=True), failed("131026")) == [
+        Suppress(PHONE, "phone", "wa_undeliverable"), SetState(S.CLOSED, "unreachable")]
+
+
+def test_wa_marketing_limit():
+    assert run(both(active_channel="whatsapp"), failed(131049)) == [
+        SwitchChannel("wa_marketing_limit")]
+    assert run(wa_lead(), failed("131049")) == [SetState(S.NURTURE, "wa_marketing_limit")]
+
+
+def test_wa_failed_131047_logged_only():
+    assert run(wa_lead(), failed(131047)) == []
+
+
+@pytest.mark.parametrize("code", [500, "abc", None])
+def test_wa_failed_other_code_alerts(code):
+    assert run(wa_lead(), failed(code)) == [Alert("wa_send_failed")]
+
+
+@pytest.mark.parametrize("st", [S.ENGAGED, S.QUALIFYING, S.BOOKED, S.NURTURE, S.PAUSED])
+def test_wa_failed_outside_in_sequence_ignored(st):
+    assert run(wa_lead(state=st), failed(131026)) == []
+
+
+def test_wa_user_stopped_marketing():
+    reason = "wa_user_stopped_marketing"
+    assert run(wa_lead(), failed(131050)) == optout_actions(reason)
+    assert run(wa_lead(state=S.ENGAGED), failed("131050")) == optout_actions(reason)
+    assert run(wa_lead(state=S.CLOSED), failed(131050)) == [SuppressAllChannels(reason)]
+
+
+def test_wa_button_book_demo():
+    assert run(wa_lead(wa_window_open=True), button("BOOK_DEMO")) == [
+        STOP, SetState(S.QUALIFYING, "book_demo"), WaSendText("booking_link"), PauseColleagues()]
+
+
+def test_wa_button_book_demo_from_nurture():
+    assert run(wa_lead(state=S.NURTURE), button("BOOK_DEMO")) == [
+        STOP, SetState(S.QUALIFYING, "book_demo"), WaSendText("booking_link"), PauseColleagues()]
+
+
+def test_wa_button_book_demo_from_paused_two_hops():
+    assert run(wa_lead(state=S.PAUSED), button("BOOK_DEMO")) == [
+        STOP, SetState(S.ENGAGED, "book_demo"), SetState(S.QUALIFYING, "book_demo"),
+        WaSendText("booking_link"), PauseColleagues()]
+
+
+def test_wa_button_book_demo_from_engaged():
+    assert run(wa_lead(state=S.ENGAGED), button("BOOK_DEMO")) == [
+        SetState(S.QUALIFYING, "book_demo"), WaSendText("booking_link")]
+
+
+@pytest.mark.parametrize("st", [S.QUALIFYING, S.BOOKED])
+def test_wa_button_book_demo_already_qualifying(st):
+    assert run(wa_lead(state=st), button("BOOK_DEMO")) == [WaSendText("booking_link")]
+
+
+def test_wa_button_ask_question():
+    assert run(wa_lead(), button("ASK_QUESTION")) == [
+        STOP, SetState(S.ENGAGED, "ask_question"), WaSendText("ask_away"), PauseColleagues()]
+
+
+@pytest.mark.parametrize("st", [S.PAUSED, S.NURTURE])
+def test_wa_button_ask_question_from_paused_nurture(st):
+    assert run(wa_lead(state=st), button("ASK_QUESTION")) == [
+        STOP, SetState(S.ENGAGED, "ask_question"), WaSendText("ask_away"), PauseColleagues()]
+
+
+@pytest.mark.parametrize("st", [S.ENGAGED, S.QUALIFYING, S.BOOKED])
+def test_wa_button_ask_question_in_conversation(st):
+    assert run(wa_lead(state=st), button("ASK_QUESTION")) == [WaSendText("ask_away")]
+
+
+def test_wa_button_unknown_payload():
+    assert run(wa_lead(), button("SOMETHING")) == [Alert("unsure")]
+
+
+@pytest.mark.parametrize("t", ["STOP ", "stop", " Unsubscribe", "OPT OUT", "optout", "Remove Me"])
+def test_wa_optout_keyword(t):
+    out = run(wa_lead(), text(t))
+    assert out == optout_actions("wa_optout")
+    assert Classify() not in out
+
+
+def test_wa_optout_keyword_must_be_whole_message():
+    out = run(wa_lead(), text("please stop sending"))
+    assert SuppressAllChannels("wa_optout") not in out and Classify() in out
+
+
+def test_wa_text_first_time():
+    assert run(wa_lead(), text("hi, tell me more")) == [
+        STOP, SetState(S.ENGAGED, "wa_text"), Classify(), PauseColleagues()]
+
+
+@pytest.mark.parametrize("st", [S.PAUSED, S.NURTURE])
+def test_wa_text_from_paused_nurture_engages(st):
+    assert run(wa_lead(state=st), text("hello")) == [
+        STOP, SetState(S.ENGAGED, "wa_text"), Classify(), PauseColleagues()]
+
+
+@pytest.mark.parametrize("st", [S.ENGAGED, S.QUALIFYING, S.BOOKED])
+def test_wa_text_in_bot_chat(st):
+    assert run(wa_lead(state=st), text("how much?")) == [BotReply()]
+
+
+@pytest.mark.parametrize("st", [S.ENGAGED, S.QUALIFYING, S.BOOKED])
+def test_wa_text_human_owns_chat(st):
+    assert run(wa_lead(state=st, wa_human_owner="sam"), text("how much?")) == []
+
+
+def test_wa_read_hint():
+    assert run(wa_lead(), ev("wa_read")) == [AddScore(1), SetFlag("wa_read_scored", True)]
+    assert run(wa_lead(flags={"wa_read_scored": True}), ev("wa_read")) == []
+
+
+# ---------------------------------------------------------------- cross-channel / terminal
+
+
+def test_email_reply_cancels_wa_reminder():
+    out = flatten(run(both(active_channel="whatsapp", channel_switched=True), ev("reply")))
+    assert WaCancelReminder() in out and ToolStop() in out
+
+
+def test_wa_tap_stops_email():
+    lead = both(active_channel="email", channel_switched=True)
+    out = flatten(run(lead, button("BOOK_DEMO")))
+    assert ToolStop() in out and WaCancelReminder() in out
+
+
+@pytest.mark.parametrize("st", sorted(TERMINAL, key=lambda s: s.value))
+@pytest.mark.parametrize("event", [
+    click("pricing"), button("BOOK_DEMO"), button("ASK_QUESTION"), ev("reply"),
+    text("hello"), ev("open", step=1), ev("wa_read"), ev("booking_created"),
+    ev("no_show"), ev("meeting_ended"), failed(131026), ev("sent", step=2),
+], ids=lambda e: e.kind)
+def test_terminal_state_no_actions(st, event):
+    assert run(both(state=st, wa_window_open=True), event) == []
+
+
+def test_terminal_still_records_optout():
+    assert run(wa_lead(state=S.CLOSED), text("stop")) == [SuppressAllChannels("wa_optout")]
+
+
+def test_booked_event():
+    assert run(lead_snap(), ev("booking_created")) == [
+        STOP, SetState(S.BOOKED, "booking_created"), Alert("booked"), PauseColleagues()]
+
+
+@pytest.mark.parametrize("st", [S.IN_SEQUENCE, S.ENGAGED, S.NURTURE, S.QUALIFYING])
+def test_booking_created_states(st):
+    assert run(lead_snap(state=st), ev("booking_created")) == [
+        STOP, SetState(S.BOOKED, "booking_created"), Alert("booked"), PauseColleagues()]
+
+
+def test_booking_created_from_paused_two_hops():
+    assert run(lead_snap(state=S.PAUSED), ev("booking_created")) == [
+        STOP, SetState(S.ENGAGED, "booking_created"), SetState(S.BOOKED, "booking_created"),
+        Alert("booked"), PauseColleagues()]
+
+
+def test_booking_created_already_booked():
+    assert run(lead_snap(state=S.BOOKED), ev("booking_created")) == []
+
+
+def test_no_show_first_email():
+    assert run(lead_snap(state=S.BOOKED), ev("no_show")) == [
+        SetFlag("no_show_count", 1), SetState(S.QUALIFYING, "no_show"), Alert("no_show"),
+        SendReply("reschedule")]
+
+
+def test_no_show_first_whatsapp_window_open():
+    assert run(wa_lead(state=S.BOOKED, wa_window_open=True), ev("no_show")) == [
+        SetFlag("no_show_count", 1), SetState(S.QUALIFYING, "no_show"), Alert("no_show"),
+        WaSendText("reschedule")]
+
+
+def test_no_show_first_whatsapp_window_closed_needs_human():
+    out = run(wa_lead(state=S.BOOKED), ev("no_show"))
+    assert out == [SetFlag("no_show_count", 1), SetState(S.QUALIFYING, "no_show"),
+                   Alert("no_show"), Alert("wa_human_needed")]
+
+
+def test_no_show_second_goes_nurture():
+    assert run(lead_snap(state=S.BOOKED, flags={"no_show_count": 1}), ev("no_show")) == [
+        SetFlag("no_show_count", 2), SetState(S.NURTURE, "no_show_x2"), Alert("no_show")]
+
+
+def test_meeting_ended_from_booked_hands_off():
+    assert run(lead_snap(state=S.BOOKED), ev("meeting_ended")) == [
+        SetState(S.HANDED_OFF, "attended"), HandOff()]
+
+
+@pytest.mark.parametrize("st", [S.IN_SEQUENCE, S.ENGAGED, S.QUALIFYING, S.NURTURE, S.PAUSED])
+def test_meeting_ended_other_states_nothing(st):
+    assert run(lead_snap(state=st), ev("meeting_ended")) == []
+
+
+def test_unknown_event_kind_nothing():
+    assert run(lead_snap(), ev("mystery")) == []
+
+
+# ---------------------------------------------------------------- invariants
+
+
+_ALL_EVENTS = [
+    ev("sent", step=1), ev("open", step=1), click("homepage"), click("case_study"),
+    click("pricing"), click("booking"), click("unsubscribe"), ev("reply"), ev("bounce_hard"),
+    ev("bounce_soft"), ev("unsubscribe"), ev("wa_sent"), ev("wa_delivered"), ev("wa_read"),
+    failed(131026), failed(131049), failed(131050), failed(131047), failed(1),
+    button("BOOK_DEMO"), button("ASK_QUESTION"), button("X"), text("stop"), text("hello"),
+    ev("booking_created"), ev("no_show"), ev("meeting_ended"),
+]
+_LEADS = [
+    lead_snap(), both(), wa_lead(), wa_lead(wa_window_open=True),
+    both(active_channel="whatsapp", channel_switched=True),
+    lead_snap(flags={"soft_bounce_count": 2, "no_show_count": 1, "human_opens": 2}),
+    wa_lead(wa_human_owner="sam"),
+]
+
+
+@pytest.mark.parametrize("st", list(S))
+def test_every_set_state_chain_is_allowed_and_never_self(st):
+    for base in _LEADS:
+        lead = replace(base, state=st)
+        for event in _ALL_EVENTS:
+            cur = st
+            for a in run(lead, event):
+                if isinstance(a, SetState):
+                    assert a.to != cur, (st, event.kind)
+                    assert a.to in ALLOWED[cur], (st, event.kind, a.to)
+                    cur = a.to
+
+
+def test_never_two_hot_alerts_and_deterministic():
+    for base in _LEADS:
+        for score in (0, 5, 10, 14, 15):
+            lead = replace(base, score=score)
+            for event in _ALL_EVENTS:
+                out = run(lead, event)
+                assert out == run(lead, event)
+                assert sum(1 for a in out if isinstance(a, Alert) and a.kind == "hot_lead") <= 1
+
+
+def test_add_score_only_positive():
+    for base in _LEADS:
+        for event in _ALL_EVENTS:
+            for a in run(replace(base, flags={"human_opens": 5, "wa_read_scored": True}), event):
+                if isinstance(a, AddScore):
+                    assert a.points > 0
+
+
+def test_apply_points_still_matches_points_for(session):
+    lead = make_lead(session)
+    assert apply_points(lead, ev("open")) == 1 and lead.variant_flags["human_opens"] == 1
