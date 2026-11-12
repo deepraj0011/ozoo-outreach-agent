@@ -46,6 +46,13 @@ def make_engine(url: str, **kwargs: Any) -> Engine:
             cur = dbapi_conn.cursor()
             cur.execute("PRAGMA foreign_keys=ON")
             cur.close()
+            # pysqlite never emits BEGIN itself, so a SAVEPOINT would open (and its RELEASE
+            # commit) the outer transaction. Take over transaction control (SQLAlchemy recipe).
+            dbapi_conn.isolation_level = None
+
+        @event.listens_for(engine, "begin")
+        def _begin(conn) -> None:  # pragma: no cover - trivial
+            conn.exec_driver_sql("BEGIN")
 
     return engine
 
