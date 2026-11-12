@@ -1,0 +1,17 @@
+# Security-scanner and privacy-proxy signatures used by outreach.botfilter.
+# Security vendors only: real mail clients (e.g. Outlook) must not be listed.
+ua_substrings:
+  - Barracuda
+  - Mimecast
+  - Proofpoint
+  - Symantec
+  - Trend Micro
+  - BingPreview
+
+# Add scanner IP ranges observed in logs.
+cidrs: []
+
+# Apple Mail Privacy Protection proxy ranges. 17.0.0.0/8 is Apple's block;
+# the full egress list is at https://mask-api.icloud.com/egress-ip-ranges.csv
+apple_proxy_cidrs:
+  - 17.0.0.0/8
