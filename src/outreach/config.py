@@ -145,6 +145,28 @@ class Settings(BaseSettings):
     # Approvals: EU cold email needs legal sign-off; until then EU leads get no email
     eu_email_approved: bool = False
 
+    # Worker (outreach.worker.tick): RUN_WORKER=1 runs it inside the web app every
+    # WORKER_INTERVAL_S seconds; or run `python -m outreach.worker --loop` as its own process.
+    run_worker: bool = False
+    worker_interval_s: float = Field(60.0, gt=0, le=3600)
+    worker_batch_size: int = Field(50, ge=1, le=1000)
+
+    @field_validator("business_tz")
+    @classmethod
+    def _business_tz_known(cls, v: str) -> str:
+        from .hours import business_zone
+
+        business_zone(v.strip())
+        return v.strip()
+
+    @field_validator("business_hours")
+    @classmethod
+    def _business_hours_valid(cls, v: str) -> str:
+        from .hours import parse_business_hours
+
+        parse_business_hours(v)
+        return v.strip()
+
     @field_validator("link_secret")
     @classmethod
     def _link_secret_strong(cls, v: str) -> str:

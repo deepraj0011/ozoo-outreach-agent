@@ -2,6 +2,7 @@
 intake, Microsoft Teams sales commands (outgoing webhook: wa / done / help), health."""
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import hashlib
@@ -10,8 +11,9 @@ import html
 import json
 import logging
 import re
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
+from typing import Any, AsyncIterator, Callable, Dict, Iterator, List, Optional, Tuple
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Request
@@ -28,7 +30,7 @@ from .chatbot import make_bot
 from .classifier import make_classifier
 from .config import Settings, get_settings
 from .db import init_db, make_engine
-from .emailtool.base import BadSignature, NormalizedEvent, ToolUnsupported
+from .emailtool.base import BadSignature, NormalizedEvent
 from .emailtool.instantly import InstantlyTool
 from .handoff import start_takeover
 from .ingest import IP_MAX, UA_MAX, ingest
@@ -37,6 +39,7 @@ from .jobs import JobQueue, run_job
 from .links import lead_token, parse_token
 from .llm import make_llm
 from .models import Event, Lead
+from .outreach import Outreach
 from .unsubscribe_page import CONFIRM_HTML, DONE_HTML, ERROR_HTML, HEADERS as PAGE_HEADERS, NOT_FOUND_HTML
 from .verify import EmailVerifier
 from .whatsapp.client import WaSendError, WhatsAppClient, WhatsAppNotAllowed, WindowClosed
@@ -107,33 +110,22 @@ def _fail(status: int) -> JSONResponse:
     return JSONResponse({"ok": False}, status_code=status)
 
 
-class _NotWired:
-    """Placeholder port until the owning task wires the real one; each call becomes an
-    integration_error alert via the executor."""
-
-    def __init__(self, name: str) -> None:
-        self._name = name
-
-    def __getattr__(self, attr: str) -> Callable[..., Any]:
-        def _call(*_a: Any, **_k: Any) -> Any:
-            raise ToolUnsupported(f"{self._name}.{attr} not wired yet")
-
-        return _call
-
-
 def default_deps(settings: Settings) -> Deps:
     if settings.tool_name != "instantly":
         raise ValueError(f"no adapter for tool {settings.tool_name!r} yet")
     llm = make_llm(settings)  # one client for the classifier and the chatbot (LLM_PROVIDER)
-    return Deps(
+    outreach = Outreach(settings)
+    deps = Deps(
         tool=InstantlyTool(settings.tool_api_key, settings.tool_webhook_secret),
         wa=WhatsAppSender(WhatsAppClient(settings), settings),
         alerter=TeamsAlerter(settings.teams_webhook_url),
-        outreach=_NotWired("outreach"),  # Task 12
+        outreach=outreach,
         classify=make_classifier(settings, llm),
         bot_reply=make_bot(settings, llm),
         jobs=JobQueue(),  # LLM calls never run inside a webhook request
     )
+    outreach.bind(deps)
+    return deps
 
 
 def verify_teams_signature(authorization: Optional[str], body: bytes, key: bytes) -> bool:
@@ -219,20 +211,10 @@ def _client_ip(request: Request) -> Optional[str]:
     return request.client.host[:IP_MAX] if request.client else None
 
 
-def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None, engine: Any = None, *,
-               clock: Callable[[], datetime] = _utcnow, scanners: Optional[Scanners] = None,
-               verifier: Any = None) -> FastAPI:
-    settings = settings or get_settings()
-    if engine is None:
-        engine = make_engine(settings.database_url)
-    init_db(engine)  # idempotent create_all
-    deps = deps or default_deps(settings)
-    scanners = scanners or load_scanners()
-    verifier = verifier or EmailVerifier(settings.zerobounce_api_key)
-    session_factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+def wire_deps(deps: Deps, settings: Settings, verifier: Any) -> Deps:
+    """Fill the ports create_app and the worker CLI both need (unless a test set them already)."""
     if deps.jobs is None:
         deps.jobs = JobQueue()  # always: classify / bot replies run after the response, never in it
-    home = settings.link_targets.get("homepage") or DEFAULT_HOME
     if deps.intake is None:
         # referrals from "wrong person" replies go through the same intake as POST /intake
         def _referral_intake(session: Session, payload: Dict[str, Any], now: datetime) -> Any:
@@ -247,12 +229,69 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
             start_takeover(session, lead, reason, deps, now)
 
         deps.takeover = _takeover
+    if isinstance(deps.outreach, Outreach) and deps.outreach.deps is None:
+        deps.outreach.bind(deps)
+    return deps
+
+
+WORKER_STOP_TIMEOUT_S = 30.0
+
+
+def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None, engine: Any = None, *,
+               clock: Callable[[], datetime] = _utcnow, scanners: Optional[Scanners] = None,
+               verifier: Any = None) -> FastAPI:
+    settings = settings or get_settings()
+    if engine is None:
+        engine = make_engine(settings.database_url)
+    init_db(engine)  # idempotent create_all
+    deps = deps or default_deps(settings)
+    scanners = scanners or load_scanners()
+    verifier = verifier or EmailVerifier(settings.zerobounce_api_key)
+    session_factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    wire_deps(deps, settings, verifier)
+    home = settings.link_targets.get("homepage") or DEFAULT_HOME
     teams_key = settings.teams_outgoing_key
     teams_allowed = settings.teams_allowed_aad_id_set
     teams_tenant = settings.teams_tenant_id.strip().lower()  # GUID: case-insensitive
     teams_channel = settings.teams_sales_channel_id.strip()
 
-    app = FastAPI(title="Ozoo outreach agent", docs_url=None, redoc_url=None, openapi_url=None)
+    async def _worker_loop(stop: asyncio.Event) -> None:
+        from . import worker  # looked up per tick (tests replace worker.tick)
+
+        logger.info("worker loop started (every %ss)", settings.worker_interval_s)
+        while not stop.is_set():
+            try:
+                # in a thread: the tick does blocking DB and HTTP work
+                await asyncio.to_thread(worker.tick, session_factory, deps, clock, settings)
+            except Exception as exc:  # noqa: BLE001 - the loop must survive any tick failure
+                logger.error("worker tick crashed: %s", type(exc).__name__)
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=settings.worker_interval_s)
+            except asyncio.TimeoutError:
+                pass
+        logger.info("worker loop stopped")
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        stop = asyncio.Event()
+        task: Optional[asyncio.Task] = None
+        if settings.run_worker:
+            task = asyncio.create_task(_worker_loop(stop))
+            app.state.worker_task = task
+        try:
+            yield
+        finally:
+            if task is not None:
+                stop.set()
+                try:
+                    await asyncio.wait_for(task, timeout=WORKER_STOP_TIMEOUT_S)
+                except asyncio.TimeoutError:
+                    logger.warning("worker loop did not stop within %ss; cancelled", WORKER_STOP_TIMEOUT_S)
+                except Exception as exc:  # noqa: BLE001 - shutdown must go on
+                    logger.error("worker loop failed on shutdown: %s", type(exc).__name__)
+
+    app = FastAPI(title="Ozoo outreach agent", docs_url=None, redoc_url=None, openapi_url=None,
+                  lifespan=lifespan)
 
     def get_session() -> Iterator[Session]:
         s = session_factory()

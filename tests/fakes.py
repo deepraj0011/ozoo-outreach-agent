@@ -109,6 +109,16 @@ class FakeOutreach(Recorder):
 class FakeAlerter(Recorder):
     """Mirrors TeamsAlerter's contract: writes the Alert row, records instead of posting."""
 
+    repost_ok = True
+
+    def repost(self, session, row, now) -> bool:
+        self._rec("repost", row.kind, row.lead_id)
+        return self.repost_ok
+
+    def post_text(self, header: str, lines, now) -> bool:
+        self._rec("post_text", header, "\n".join(lines))
+        return self.repost_ok
+
     def send(self, kind: str, text: str, lead, now, session=None) -> None:
         self._rec("send", kind, lead.id if lead is not None else None)
         if session is not None:

@@ -172,18 +172,42 @@ class TeamsAlerter:
             _Pending(self, row.id, kind, lead_id, build_card(header, untrusted), now,
                      sess.get_nested_transaction()))
 
-    def _post(self, bind: Any, p: _Pending) -> None:
+    def _deliver(self, card: Dict[str, Any], kind: str, lead_id: Optional[int]) -> bool:
+        """POST one card. Never raises; logs the exception type / HTTP status only."""
         try:
-            # The card was escaped once when queued; Alert rows keep the raw text, so a later
-            # re-post escapes exactly once too. Not idempotent: never retry a maybe-posted card.
-            resp = request_with_retry(self._client, "POST", self._url, json=p.card, idempotent=False,
+            resp = request_with_retry(self._client, "POST", self._url, json=card, idempotent=False,
                                       sleep=self._sleep)
-            if not 200 <= resp.status_code < 300:  # Workflows answers 202 Accepted
-                logger.warning("teams alert %s for lead %s: HTTP %s", p.kind, p.lead_id, resp.status_code)
-                return
         except Exception as exc:  # noqa: BLE001 - alerting must never break the caller
             # type only: httpx exception messages can contain the webhook URL and its sig
-            logger.warning("teams alert %s for lead %s failed: %s", p.kind, p.lead_id, type(exc).__name__)
+            logger.warning("teams alert %s for lead %s failed: %s", kind, lead_id, type(exc).__name__)
+            return False
+        if not 200 <= resp.status_code < 300:  # Workflows answers 202 Accepted
+            logger.warning("teams alert %s for lead %s: HTTP %s", kind, lead_id, resp.status_code)
+            return False
+        return True
+
+    def repost(self, session: Session, row: AlertRow, now: datetime) -> bool:
+        """Worker retry: post a stored, not-yet-posted Alert row now (synchronously). True when
+        Teams accepted it; the caller records posted_at."""
+        from .models import Lead
+
+        lead = session.get(Lead, row.lead_id) if row.lead_id is not None else None
+        untrusted = (row.text or "").split("\n")
+        if lead is not None:
+            header = f"Alert: {row.kind}, lead {row.lead_id}"
+            untrusted.insert(0, f"{lead.name} @ {lead.company}")
+        else:
+            header = f"Alert: {row.kind}, no lead"
+        return self._deliver(build_card(header, untrusted), row.kind, row.lead_id)
+
+    def post_text(self, header: str, lines: List[str], now: datetime) -> bool:
+        """Post a card with no Alert row (the worker's hourly integration-error digest)."""
+        return self._deliver(build_card(header, list(lines)), "digest", None)
+
+    def _post(self, bind: Any, p: _Pending) -> None:
+        # The card was escaped once when queued; Alert rows keep the raw text, so a later
+        # re-post escapes exactly once too. Not idempotent: never retry a maybe-posted card.
+        if not self._deliver(p.card, p.kind, p.lead_id):
             return
         try:
             with bind.begin() as conn:

@@ -394,6 +394,18 @@ def _on_meeting_ended(lead: LeadSnapshot, event: EventSnapshot) -> List[Action]:
     return [SetState(S.HANDED_OFF, "attended"), HandOff()]
 
 
+BOOKING_NUDGE_STATES = frozenset({S.IN_SEQUENCE, S.ENGAGED, S.QUALIFYING, S.NURTURE})
+
+
+def _on_booking_click_not_booked(lead: LeadSnapshot, event: EventSnapshot) -> List[Action]:
+    """Synthetic (worker): a human booking click 30 min ago and still no booking. Offer slots on the
+    active channel, or ask a person when it cannot be sent (WhatsApp window closed). A paused lead
+    is not messaged; a booked one needs nothing."""
+    if lead.state not in BOOKING_NUDGE_STATES:
+        return []
+    return _send(lead, "booking_slots")
+
+
 def _nothing(lead: LeadSnapshot, event: EventSnapshot) -> List[Action]:
     return []
 
@@ -416,6 +428,7 @@ _HANDLERS: Dict[str, Handler] = {
     "meeting_ended": _on_meeting_ended,
     "booking_rescheduled": _on_booking_rescheduled,
     "booking_cancelled": _on_booking_cancelled,
+    "booking_click_not_booked": _on_booking_click_not_booked,
 }
 
 _TIMED_HANDLERS: Dict[str, Callable[[LeadSnapshot, EventSnapshot, datetime], List[Action]]] = {

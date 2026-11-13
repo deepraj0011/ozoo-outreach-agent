@@ -635,3 +635,25 @@ def test_add_score_only_positive():
 def test_apply_points_still_matches_points_for(session):
     lead = make_lead(session)
     assert apply_points(lead, ev("open")) == 0 and lead.variant_flags["human_opens"] == 1
+
+
+# ---------------------------------------------------------------- Task 12: worker-detected conditions
+
+def test_booking_click_not_booked_email_sends_slots():
+    out = decide(lead_snap(), ev("booking_click_not_booked", channel="system"), NOW)
+    assert out == [SendReply("booking_slots")]
+
+
+def test_booking_click_not_booked_whatsapp_window_open_sends_text():
+    out = decide(wa_lead(wa_window_open=True), ev("booking_click_not_booked", channel="system"), NOW)
+    assert out == [WaSendText("booking_slots")]
+
+
+def test_booking_click_not_booked_whatsapp_window_closed_alerts():
+    out = decide(wa_lead(), ev("booking_click_not_booked", channel="system"), NOW)
+    assert [type(a) for a in out] == [Alert] and out[0].kind == "wa_human_needed"
+
+
+@pytest.mark.parametrize("st", [S.BOOKED, S.PAUSED, S.HANDED_OFF, S.SUPPRESSED])
+def test_booking_click_not_booked_quiet_states(st):
+    assert decide(lead_snap(state=st), ev("booking_click_not_booked", channel="system"), NOW) == []

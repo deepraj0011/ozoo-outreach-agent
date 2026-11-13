@@ -322,3 +322,38 @@ def test_unmatched_sender_alert_escaped_in_teams(session):
     posted = _posted(route)
     assert_inert(posted)
     assert "[x](https://evil.example)@evil.example" in row(session).text
+
+
+# ---------------------------------------------------------------- Task 12: worker re-post / digest
+
+@respx.mock
+def test_repost_posts_the_stored_row(session):
+    route = respx.post(URL).mock(return_value=httpx.Response(202))
+    lead = make_lead(session, name="Asha Rao", company="Acme")
+    r = AlertRow(lead_id=lead.id, kind="hot_lead", text="hot [x](http://evil.example)", created_at=NOW)
+    session.add(r)
+    session.flush()
+    assert alerter().repost(session, r, NOW) is True
+    texts = card_texts(route.calls[0].request)
+    assert texts[0] == f"Alert: hot_lead, lead {lead.id}" and texts[1] == "Asha Rao @ Acme"
+    assert "http://" not in texts[2]
+    assert r.posted_at is None  # the worker records posted_at
+
+
+@respx.mock
+def test_repost_failure_returns_false_without_leaking_url(session, caplog):
+    respx.post(URL).mock(side_effect=httpx.ConnectError("boom " + URL))
+    r = AlertRow(lead_id=None, kind="mailbox_paused", text="x", created_at=NOW)
+    session.add(r)
+    session.flush()
+    assert alerter().repost(session, r, NOW) is False
+    assert "sig=" not in caplog.text
+
+
+@respx.mock
+def test_post_text(session):
+    route = respx.post(URL).mock(return_value=httpx.Response(500))
+    assert alerter().post_text("Digest", ["a", "b"], NOW) is False
+    route.mock(return_value=httpx.Response(200))
+    assert alerter().post_text("Digest", ["a", "b"], NOW) is True
+    assert card_texts(route.calls[-1].request) == ["Digest", "a", "b"]

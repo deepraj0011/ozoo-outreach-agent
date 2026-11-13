@@ -147,3 +147,20 @@ class Job(Base):
     started_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime)
     finished_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime)
     last_error: Mapped[Optional[str]] = mapped_column(String(200))
+
+
+class WorkerLock(Base):
+    """Lease row: only one worker tick runs at a time (SQLite; Postgres uses an advisory lock)."""
+    __tablename__ = "worker_lock"
+
+    name: Mapped[str] = mapped_column(String(50), primary_key=True)
+    owner: Mapped[str] = mapped_column(String(64))
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+
+class WorkerMark(Base):
+    """When a periodic worker job (hourly digest, daily mailbox check) last ran."""
+    __tablename__ = "worker_mark"
+
+    name: Mapped[str] = mapped_column(String(50), primary_key=True)
+    at: Mapped[datetime] = mapped_column(UTCDateTime)

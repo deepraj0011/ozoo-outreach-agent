@@ -16,6 +16,9 @@ MULTI_TAG_WINDOW = timedelta(seconds=10)
 WHATSAPP_PREVIEW_UA_PREFIX = "WhatsApp/"
 APPLE_PROXY_UA = "Mozilla/5.0"
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_SCANNERS = REPO_ROOT / "config" / "scanners.yaml"
+
 IPNetwork = Union[ipaddress.IPv4Network, ipaddress.IPv6Network]
 
 
@@ -26,7 +29,8 @@ class Scanners:
     apple_proxy_cidrs: Tuple[IPNetwork, ...]
 
 
-def load_scanners(path: Union[str, Path] = "config/scanners.yaml") -> Scanners:
+def load_scanners(path: Union[str, Path] = DEFAULT_SCANNERS) -> Scanners:
+    """Default: the repo's config/scanners.yaml, resolved from this file (not the working directory)."""
     data = yaml.safe_load(Path(path).read_text()) or {}
     return Scanners(
         ua_substrings=tuple(str(x) for x in (data.get("ua_substrings") or [])),
