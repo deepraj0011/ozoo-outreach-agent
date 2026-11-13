@@ -72,7 +72,14 @@ NO_TIMELINE = 99  # "exploring", "not sure", unknown
 FIT_TEXT_MAX = 100
 _NUMBER = re.compile(r"\d{1,9}")
 _NOW_WORDS = re.compile(r"\b(now|immediately|asap|right away|urgent(ly)?)\b")
+# checked before _NOW_WORDS: "not now", "not right now", "not urgent", "no rush", "not immediately"
+_NEGATED_NOW = re.compile(r"\b(not|no|isn'?t|not\s+really)\s+(right\s+)?(now|immediately|asap|urgent(ly)?|rush|hurry)\b")
 _VAGUE_WORDS = re.compile(r"\b(exploring|not sure|unsure|just looking|no timeline|don'?t know)\b")
+_QUARTER = re.compile(r"\bq[1-4]\b")  # "Q1 2027": no month count we can trust
+# "under 50", "less than 50", "<50", "fewer than 50", "up to 50", "below 50": only an upper bound
+_UPPER_BOUND = re.compile(r"^\s*(under|less\s+than|fewer\s+than|below|up\s+to|<=?|≤)")
+_THOUSANDS = re.compile(r"(\d{1,6}(?:\.\d{1,3})?)\s*k\b")
+UPPER_BOUND_SIZE = 1  # conservative lower bound when only an upper bound is given
 _NON_ALNUM = re.compile(r"[^a-z0-9]+")
 
 SUMMARY_MAX = 3500
@@ -82,6 +89,7 @@ REPLY_SCAN = 50
 CHAT_MAX = 20
 CHAT_TEXT_MAX = 200
 ANSWER_MAX = 200
+FORM_LINE_MAX = 800
 
 
 # ====================================================================== signature + parsing
@@ -104,11 +112,22 @@ def _parse_ts(raw: Any) -> Optional[datetime]:
         return None
     try:
         dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    except ValueError:
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except (ValueError, OverflowError):  # e.g. 9999-12-31T23:59:59-05:00 overflows on conversion
         return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+
+
+def _time_field(obj: Mapping[str, Any], key: str) -> Optional[datetime]:
+    """Absent -> None; present but unreadable (bad format, out of range) -> ValueError (400)."""
+    raw = obj.get(key)
+    if raw is None or raw == "":
+        return None
+    dt = _parse_ts(raw)
+    if dt is None:
+        raise ValueError(f"unreadable {key}")
+    return dt
 
 
 def _id(raw: Any) -> Optional[str]:
@@ -286,8 +305,8 @@ def parse_cal_webhook(headers: Mapping[str, str], raw: bytes, secret: str, *,
     if responses:
         data["responses"] = responses
 
-    occurred = (_parse_ts(top.get("createdAt")) or
-                (_parse_ts(body.get("endTime")) if kind == "meeting_ended" else None) or received_at)
+    occurred = (_time_field(top, "createdAt") or
+                (_time_field(body, "endTime") if kind == "meeting_ended" else None) or received_at)
     if occurred is None:
         raise ValueError("webhook event without a time")
     logger.info("cal webhook: %s", kind)
@@ -306,11 +325,20 @@ def handle_cal_event(session: Session, events: Iterable[NormalizedEvent], deps: 
 # ====================================================================== fit
 
 def _size_lower(text: Optional[str]) -> Optional[int]:
-    """Lower bound of a company-size answer: "51-200" -> 51, "200+" -> 200, "1,000+" -> 1000."""
+    """Lower bound of a company-size answer: "51-200" -> 51, "200+" -> 200, "1,000+" -> 1000,
+    "10k+" -> 10000, "1k-5k" -> 1000, "under 50" / "<50" -> 1 (only an upper bound is known)."""
     if not isinstance(text, str):
         return None
-    m = _NUMBER.search(text[:FIT_TEXT_MAX].replace(",", ""))
-    return int(m.group(0)) if m else None
+    t = text[:FIT_TEXT_MAX].lower().replace(",", "")
+    m = _NUMBER.search(t)
+    if m is None:
+        return None
+    if _UPPER_BOUND.search(t):
+        return UPPER_BOUND_SIZE
+    k = _THOUSANDS.match(t, m.start())
+    if k is not None:
+        return int(float(k.group(1)) * 1000)
+    return int(m.group(0))
 
 
 def _months(text: Optional[str]) -> int:
@@ -318,6 +346,8 @@ def _months(text: Optional[str]) -> int:
     if not isinstance(text, str) or not text.strip():
         return NO_TIMELINE
     t = text[:FIT_TEXT_MAX].lower()
+    if _NEGATED_NOW.search(t) or _QUARTER.search(t):
+        return NO_TIMELINE
     if _NOW_WORDS.search(t):
         return 0
     if _VAGUE_WORDS.search(t):
@@ -383,10 +413,13 @@ def build_handoff_summary(session: Session, lead: Lead) -> str:
         d = form.data or {}
         answers = d.get("responses") if isinstance(d.get("responses"), dict) else {}
         head.append(f"Qualifying form: fit {_flat(d.get('fit'), 10) or '?'}")
-        head.append("Form answers: " + ("; ".join(f"{_flat(k, FIELD_KEY_MAX)}: {_flat(v, ANSWER_MAX)}"
-                                                 for k, v in answers.items()) or "none"))
+        answers_line = "Form answers: " + ("; ".join(f"{_flat(k, FIELD_KEY_MAX)}: {_flat(v, ANSWER_MAX)}"
+                                                    for k, v in answers.items()) or "none")
+        if len(answers_line) > FORM_LINE_MAX:
+            answers_line = answers_line[:FORM_LINE_MAX - 1] + "…"
     else:
         head.append("Qualifying form: none")
+        answers_line = None
 
     steps = sorted({s for s in session.scalars(
         select(Event.step).where(Event.lead_id == lead.id, Event.kind == "sent", Event.channel == "email",
@@ -404,6 +437,8 @@ def build_handoff_summary(session: Session, lead: Lead) -> str:
                 break
     head.append("Classified replies (newest first):" if replies else "Classified replies: none")
     head += replies
+    if answers_line:
+        head.append(answers_line)  # after the replies: long answers must not crowd out the rest
 
     rows = list(session.scalars(select(ChatMessage).where(ChatMessage.lead_id == lead.id)
                                 .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc()).limit(CHAT_MAX)))

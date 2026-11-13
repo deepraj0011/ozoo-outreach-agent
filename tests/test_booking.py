@@ -12,6 +12,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 from sqlalchemy import func, select
 
 from outreach.actions import (
@@ -19,7 +20,7 @@ from outreach.actions import (
 )
 from outreach.app import create_app
 from outreach.booking import (
-    SUMMARY_MAX, build_handoff_summary, fit_from_answers, make_handoff, parse_cal_webhook,
+    SUMMARY_MAX, _parse_ts, build_handoff_summary, fit_from_answers, make_handoff, parse_cal_webhook,
 )
 from outreach.botfilter import Scanners
 from outreach.db import SessionLocal
@@ -220,6 +221,26 @@ def test_booking_redirect_bad_token_goes_home(env):
     ("lots", "soon-ish", "low"),
     ("", "", "low"),
     ("9", "7 months", "low"),
+    # negated urgency is vague (99 months), never "now"
+    ("51-200", "not now", "medium"),
+    ("51-200", "not right now", "medium"),
+    ("51-200", "Not urgent", "medium"),
+    ("51-200", "no rush", "medium"),
+    ("51-200", "not immediately", "medium"),
+    ("1-10", "not now", "low"),
+    # upper-bound sizes take the conservative lower bound (1)
+    ("Under 50", "now", "medium"),
+    ("less than 50", "now", "medium"),
+    ("<50", "now", "medium"),
+    ("fewer than 50", "now", "medium"),
+    ("under 50", "exploring", "low"),
+    # "k" means thousands
+    ("10k+", "now", "high"),
+    ("1k-5k", "now", "high"),
+    ("1.5k", "exploring", "medium"),
+    # a quarter is vague
+    ("1-10", "Q1 2027", "low"),
+    ("51-200", "q3", "medium"),
 ])
 def test_fit_parsing_variants(size, timeline, fit):
     assert fit_from_answers(size, timeline, settings=SETTINGS) == fit
@@ -233,11 +254,11 @@ def test_fit_thresholds_from_settings():
 
 
 def test_fit_settings_validated():
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         make_settings(fit_high_min_size=-1)
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         make_settings(fit_high_min_size=5, fit_medium_min_size=10)
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         make_settings(fit_high_max_months=9, fit_medium_max_months=6)
 
 
@@ -759,3 +780,79 @@ def test_signature_other_formats_rejected(env, bad):
     if bad.isascii():  # the HTTP client cannot send non-ASCII header values
         client, _, _ = env
         assert post(client, body, headers={"X-Cal-Signature-256": bad.format(sig=hexsig)}).status_code == 401
+
+
+
+# ------------------------------------------------------------------ review fix round
+
+def test_sizes_parse_bounds():
+    from outreach.booking import _size_lower
+    assert [_size_lower(x) for x in ("Under 50", "less than 50", "<50", "fewer than 50", "10k+", "1k-5k")] == [
+        1, 1, 1, 1, 10000, 1000]
+
+
+def test_parse_ts_overflow_is_none():
+    assert _parse_ts("9999-12-31T23:59:59-05:00") is None
+
+
+def test_overflowing_timestamp_never_500(env):
+    client, s, _ = env
+    add_lead(s)
+    data = booking()
+    data["createdAt"] = "9999-12-31T23:59:59-05:00"
+    r = post(client, data)
+    assert r.status_code == 400
+
+
+def test_overflowing_end_time_meeting_ended_never_500(env):
+    client, _, _ = env
+    data = fixture("cal_meeting_ended.json")
+    data["endTime"] = "9999-12-31T23:59:59-05:00"
+    assert post(client, data).status_code == 400
+
+
+def test_handoff_summary_long_form_answers_keep_the_rest(session):
+    lead = make_lead(session, state=S.HANDED_OFF.value)
+    session.add(Event(lead_id=lead.id, channel="email", kind="sent", step=1, occurred_at=NOW, received_at=NOW,
+                      processed=True, data={}))
+    session.add(Event(lead_id=lead.id, channel="email", kind="reply", occurred_at=NOW, received_at=NOW,
+                      processed=True, data={"text": "reply-text", "classification": {"label": "question"}}))
+    session.add(Event(lead_id=lead.id, channel="cal", kind="form_submitted", occurred_at=NOW, received_at=NOW,
+                      processed=True, data={"fit": "high",
+                                            "responses": {f"field{i}": "a" * 500 for i in range(30)}}))
+    for i in range(20):
+        session.add(ChatMessage(lead_id=lead.id, direction="in", author="lead", text=f"chat{i} " + "c" * 100,
+                                created_at=NOW + timedelta(seconds=i)))
+    session.flush()
+    text = build_handoff_summary(session, lead)
+    assert len(text) <= SUMMARY_MAX
+    lines = text.split("\n")
+    form_line = next(ln for ln in lines if ln.startswith("Form answers: "))
+    assert len(form_line) <= 800
+    assert "Emails sent: steps 1" in text and "reply-text" in text and "chat19" in text
+    assert lines.index(form_line) > next(i for i, ln in enumerate(lines) if "reply-text" in ln)
+
+
+def test_rule_reschedule_from_qualifying_books():
+    out = decide(snap(state=S.QUALIFYING, flags={"booking_uid": "old"}),
+                 cal_ev("booking_rescheduled", uid="new", end="E"), NOW)
+    assert SetState(S.BOOKED, "booking_rescheduled") in out
+    assert SetFlag("booking_end", "E") in out and SetFlag("booking_uid", "new") in out
+    assert any(isinstance(a, Alert) and a.kind == "booked" for a in out)
+
+
+def test_no_show_then_cal_reschedule_link_rebooks_and_hands_off(env):
+    client, s, _ = env
+    lead = add_lead(s)
+    assert post(client, booking(uid="bk_1")).status_code == 200
+    assert post(client, no_show("bk_1")).status_code == 200
+    assert fresh(s, lead.id).state == S.QUALIFYING.value
+    assert post(client, booking("BOOKING_RESCHEDULED", uid="bk_2", endTime="2026-11-27T09:30:00Z")).status_code == 200
+    lead2 = fresh(s, lead.id)
+    assert lead2.state == S.BOOKED.value
+    assert lead2.variant_flags["booking_uid"] == "bk_2"
+    assert lead2.variant_flags["booking_end"] == "2026-11-27T09:30:00Z"
+    ended = fixture("cal_meeting_ended.json")
+    ended["uid"] = "bk_2"
+    assert post(client, ended).status_code == 200
+    assert fresh(s, lead.id).state == S.HANDED_OFF.value

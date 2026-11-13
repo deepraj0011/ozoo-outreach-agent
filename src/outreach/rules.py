@@ -347,6 +347,10 @@ def _on_booking_created(lead: LeadSnapshot, event: EventSnapshot) -> List[Action
 
 
 def _on_booking_rescheduled(lead: LeadSnapshot, event: EventSnapshot) -> List[Action]:
+    if lead.state == S.QUALIFYING:
+        # no current booking (after a no-show or cancel): Cal.com's own reschedule link rebooks
+        return [StopAllOutreach(), SetState(S.BOOKED, "booking_rescheduled"), *_booking_flags(event),
+                _alert(lead, "booked", "meeting rebooked"), PauseColleagues()]
     return _booking_flags(event)
 
 
