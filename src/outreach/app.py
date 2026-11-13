@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Iterator, Optional
 
 from fastapi import Depends, FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from sqlalchemy.orm import Session, sessionmaker
 from starlette.concurrency import run_in_threadpool
 
@@ -25,10 +25,14 @@ from .links import parse_token
 from .models import Event, Lead
 from .unsubscribe_page import CONFIRM_HTML, DONE_HTML, ERROR_HTML, HEADERS as PAGE_HEADERS, NOT_FOUND_HTML
 from .verify import EmailVerifier
+from .whatsapp.client import WhatsAppClient
+from .whatsapp.sender import WhatsAppSender
+from .whatsapp.webhook import parse_wa_webhook
 
 logger = logging.getLogger(__name__)
 
 MAX_BODY = 1024 * 1024  # 1 MiB
+MAX_CHALLENGE_LEN = 64
 DEFAULT_HOME = "https://ozoo.ai/"
 NO_STORE = {"Cache-Control": "no-store"}
 
@@ -85,7 +89,7 @@ def default_deps(settings: Settings) -> Deps:
         raise ValueError(f"no adapter for tool {settings.tool_name!r} yet")
     return Deps(
         tool=InstantlyTool(settings.tool_api_key, settings.tool_webhook_secret),
-        wa=_NotWired("wa"),  # Task 8
+        wa=WhatsAppSender(WhatsAppClient(settings), settings),
         alerter=SlackAlerter(settings.slack_webhook_url),
         outreach=_NotWired("outreach"),  # Task 12
     )
@@ -153,6 +157,43 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
             await run_in_threadpool(ingest, session, events, deps, now, scanners)
         except Exception as exc:  # noqa: BLE001 - provider retries; idempotency makes it safe
             logger.error("email webhook ingest failed: %s", type(exc).__name__)
+            return _fail(500)
+        return JSONResponse({"ok": True})
+
+    # ------------------------------------------------------------ WhatsApp webhook (Meta)
+    @app.get("/webhooks/whatsapp")
+    def whatsapp_verify(request: Request) -> Response:
+        q = request.query_params
+        token = q.get("hub.verify_token") or ""
+        if q.get("hub.mode") != "subscribe" or not hmac.compare_digest(
+                token.encode(), settings.wa_verify_token.encode()):
+            logger.warning("whatsapp verify rejected")
+            return PlainTextResponse("forbidden", status_code=403)
+        challenge = q.get("hub.challenge") or ""
+        if not (challenge.isascii() and challenge.isdigit() and len(challenge) <= MAX_CHALLENGE_LEN):
+            return PlainTextResponse("bad challenge", status_code=400)
+        return PlainTextResponse(challenge)
+
+    @app.post("/webhooks/whatsapp")
+    async def whatsapp_webhook(request: Request, session: Session = Depends(get_session)) -> Response:
+        try:
+            body = await _read_capped(request)
+        except _BodyTooLarge:
+            return _fail(413)
+        except _BadRequest:
+            return _fail(400)
+        try:
+            events = parse_wa_webhook(request.headers, body, settings.wa_app_secret)
+        except BadSignature:
+            logger.warning("whatsapp webhook rejected: bad signature")
+            return _fail(401)
+        except ValueError:
+            logger.warning("whatsapp webhook rejected: malformed body")
+            return _fail(400)
+        try:
+            await run_in_threadpool(ingest, session, events, deps, clock(), scanners)
+        except Exception as exc:  # noqa: BLE001 - Meta retries; idempotency makes it safe
+            logger.error("whatsapp webhook ingest failed: %s", type(exc).__name__)
             return _fail(500)
         return JSONResponse({"ok": True})
 

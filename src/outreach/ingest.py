@@ -141,7 +141,7 @@ def _ingest_one(session: Session, ev: NormalizedEvent, deps: Deps, now: datetime
         session.add(ChatMessage(
             lead_id=lead.id, direction="in", author="lead",
             text=str(row.data.get("text") or row.data.get("payload") or ""),
-            wa_message_id=row.data.get("wa_message_id"), created_at=ev.occurred_at,
+            wa_message_id=row.data.get("wamid"), created_at=ev.occurred_at,
         ))
 
     if ev.kind == "click":
