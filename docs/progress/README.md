@@ -22,13 +22,13 @@ Branch: `feat/outreach-agent-v1`. Plan: `docs/superpowers/plans/2026-11-12-outre
 | 10b | Replace Slack with Microsoft Teams (alerts + sales commands) | ✅ Done (1 fix round, verified) | `89df43c`, `98867c1` | 77 | [task-10b](tasks/task-10b-teams.md) |
 | 11 | Cal.com booking + handoff | ✅ Done (2 fix rounds, reviewed) | `7c4a09c`, `8236b23`, `b2ee102` | 157 | [task-11](tasks/task-11-calcom-booking.md) |
 | 9b | Pluggable AI model provider (company chooses: Claude, OpenAI, Azure OpenAI, any OpenAI-compatible) | ✅ Done (1 fix round, verified) | `9630116`, `1929218` | 144 | [task-09b](tasks/task-09b-pluggable-llm.md) |
-| 12a | Run AI calls as background jobs (not inside webhooks) | 🔨 Building | none | 0 | see decisions |
-| 12 | Outreach starter + worker + mailbox health | ⏳ To do | none | 0 | [task-12](tasks/task-12-worker-health.md) |
+| 12a | Run AI calls as background jobs (not inside webhooks) | ✅ Done (1 fix round, verified) | `b354fc1`, `b87c6bc` | 40 | [task-12a](tasks/task-12a-background-ai-jobs.md) |
+| 12 | Outreach starter + worker + mailbox health | 🔨 Building | none | 0 | [task-12](tasks/task-12-worker-health.md) |
 | 13 | Run locally + local end-to-end test (deploy deferred) | ⏳ To do | none | 0 | [task-13](tasks/task-13-deploy-e2e.md) |
 
-**Tests now:** 1126 passing (`.venv/bin/pytest -q`).
+**Tests now:** 1166 passing (`.venv/bin/pytest -q`).
 
-**What's next:** Task 12a (AI calls as background jobs) is being built. Then Task 12 (starter + worker + mailbox health) and Task 13 (run locally + local end-to-end test; deployment deferred by owner), then a final whole-branch review.
+**What's next:** Task 12 (starter + worker + mailbox health) and Task 13 (run locally + local end-to-end test; deployment deferred by owner), then a final whole-branch review.
 
 ## Files in this folder
 
