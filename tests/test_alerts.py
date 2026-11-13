@@ -113,3 +113,59 @@ def test_integration_error_rows_unposted(session):
     session.commit()
     r = row(session)
     assert r.kind == "integration_error" and r.posted_at is None and r.created_at == NOW
+
+
+@respx.mock
+def test_slack_not_posted_on_savepoint_release(session):
+    route = respx.post(URL).mock(return_value=httpx.Response(200))
+    lead = make_lead(session)
+    with session.begin_nested():
+        alerter().send("question", "q", lead, NOW, session=session)
+    assert route.call_count == 0  # savepoint released, outer transaction still open
+    session.commit()
+    assert route.call_count == 1
+    assert row(session).posted_at == NOW
+
+
+@respx.mock
+def test_executor_alert_posts_after_outer_commit(session):
+    from outreach.actions import Alert, execute
+    from tests.fakes import make_deps
+
+    route = respx.post(URL).mock(return_value=httpx.Response(200))
+    lead = make_lead(session)
+    session.commit()
+    execute(session, lead, [Alert("hot_lead", "hot")], make_deps(alerter=alerter()), NOW)
+    assert route.call_count == 0  # external() savepoint released; nothing posted yet
+    session.commit()
+    assert route.call_count == 1
+    assert row(session).posted_at == NOW
+
+
+@respx.mock
+def test_ingest_unmatched_alert_posts_after_commit_only_once(session):
+    from outreach.botfilter import Scanners
+    from outreach.emailtool.base import NormalizedEvent
+    from outreach.ingest import ingest
+    from tests.fakes import make_deps
+
+    route = respx.post(URL).mock(return_value=httpx.Response(200))
+    ev = NormalizedEvent(provider_event_id="u1", channel="email", kind="reply", occurred_at=NOW,
+                         email="nobody@nowhere.io", data={"text": "hi"})
+    ingest(session, [ev], make_deps(alerter=alerter()), NOW, Scanners((), (), ()))  # commits
+    assert route.call_count == 1
+    assert row(session).posted_at == NOW
+
+
+@respx.mock
+def test_executor_alert_not_posted_when_outer_rolls_back(session):
+    from outreach.actions import Alert, execute
+    from tests.fakes import make_deps
+
+    route = respx.post(URL).mock(return_value=httpx.Response(200))
+    lead = make_lead(session)
+    session.commit()
+    execute(session, lead, [Alert("hot_lead", "hot")], make_deps(alerter=alerter()), NOW)
+    session.rollback()
+    session.commit()
+    assert route.call_count == 0

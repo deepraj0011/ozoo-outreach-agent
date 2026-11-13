@@ -52,6 +52,10 @@ def _on_soft_rollback(session: Session, previous: SessionTransaction) -> None:
 
 
 def _on_after_commit(session: Session) -> None:
+    # SQLAlchemy 2.0 also dispatches after_commit when a SAVEPOINT is released; the nested
+    # transaction is still current then. Only the outermost commit makes rows durable.
+    if session.in_nested_transaction():
+        return
     pending: List[_Pending] = session.info.pop(_PENDING, [])
     if not pending:
         return
