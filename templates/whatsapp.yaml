@@ -1,0 +1,33 @@
+# WhatsApp templates (approved in Meta Business Manager) and free-form texts.
+# Template bodies live in Meta; here we only keep the name, language and the ORDER of the
+# body variables ({{1}}, {{2}}, ...). Allowed variables: first_name, company.
+# Free-form texts are sent only while the lead's 24 h window is open.
+# Placeholders in texts: {first_name} {company} {booking_link}
+# Never put a raw URL in a text: the booking URL is a tracked link added by the code
+# (as a CTA button for "booking_link"). Never mention opens, clicks or reads.
+templates:
+  ozoo_intro:
+    language: en
+    variables: [first_name, company]
+  ozoo_reminder:
+    language: en
+    variables: [first_name]
+
+# CTA button labels (Meta limit: 20 characters).
+buttons:
+  # MARKETING: replace
+  booking_link: "Book a demo"
+
+texts:
+  # MARKETING: replace
+  booking_link: "Great, {first_name}! Pick a time that suits you for a short demo of Ozoo.ai."
+  # MARKETING: replace
+  ask_away: "Sure, {first_name}. Ask me anything about Ozoo.ai and I will do my best to help."
+  # MARKETING: replace
+  handoff_notice: "Thanks, {first_name}. A member of our team will reply here shortly."
+  # MARKETING: replace
+  reschedule: "No problem, {first_name}. You can pick a new time for the demo here: {booking_link}"
+  # MARKETING: replace
+  booking_slots: "Happy to set up a demo for {company}. Choose any open slot here: {booking_link}"
+  # MARKETING: replace
+  not_ready_close: "Understood, {first_name}. Thanks for your time. We will be here if things change."
