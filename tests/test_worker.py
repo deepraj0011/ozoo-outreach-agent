@@ -327,7 +327,7 @@ def test_switched_lead_with_failed_enrolment_retried_next_tick(env):
     assert lead.active_channel == "email" and lead.tool_lead_id is None
     env.tool.fail.clear()
     run(env, NOW + timedelta(minutes=1))
-    assert tool_names(env) == ["add_lead", "add_lead"]
+    assert tool_names(env) == ["add_lead", "find_lead", "add_lead"]  # A4: looked up before re-adding
     assert get(env, lid).tool_lead_id is not None
 
 

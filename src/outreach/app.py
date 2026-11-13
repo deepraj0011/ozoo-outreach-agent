@@ -1,5 +1,6 @@
 """FastAPI app: email, WhatsApp and Cal.com webhooks, tracked-link redirect, scanner-safe unsubscribe,
-intake, Microsoft Teams sales commands (outgoing webhook: wa / done / help), health."""
+intake, Microsoft Teams sales commands (outgoing webhook: wa / done / retry / nurture / close / status /
+help), health."""
 from __future__ import annotations
 
 import asyncio
@@ -24,7 +25,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 from starlette.concurrency import run_in_threadpool
 
-from .actions import Deps, record_integration_error
+from .actions import (
+    TOOL_BLOCK_PENDING, TOOL_STOP_PENDING, Deps, SetState, StopAllOutreach, execute, record_integration_error,
+)
 from .alerts import ConsoleAlerter, TeamsAlerter
 from .booking import make_handoff, parse_cal_webhook
 from .botfilter import Scanners, load_scanners
@@ -44,7 +47,10 @@ from .llm import make_llm
 from .llm.local_fake import RuleBasedLLM
 from .localclock import default_clock
 from .models import Event, Lead
-from .outreach import Outreach
+from .outreach import (
+    FAILED_SUFFIX, INTRO_ATTEMPT, REMINDER_ATTEMPT, TRANSIENT_SUFFIX, WA_RETRY_AFTER, Outreach,
+)
+from .states import ALLOWED, LeadState
 from .unsubscribe_page import CONFIRM_HTML, DONE_HTML, ERROR_HTML, HEADERS as PAGE_HEADERS, NOT_FOUND_HTML
 from .verify import make_verifier
 from .whatsapp.client import WaSendError, WhatsAppClient, WhatsAppNotAllowed, WindowClosed
@@ -66,7 +72,18 @@ TEAMS_TS_MAX_LEN = 40
 WA_TEXT_MAX = 4096
 OWNER_MAX = 100  # Lead.wa_human_owner / wa_human_owner_name column size
 TEAMS_USAGE = ("Commands: wa LEAD_ID MESSAGE (send the lead a WhatsApp message and pause the bot), "
-               "done LEAD_ID (give the chat back to the bot), help.")
+               "done LEAD_ID (give the chat back to the bot), "
+               "retry LEAD_ID (clear failed-start flags so the worker starts the lead again), "
+               "nurture LEAD_ID (stop all outreach, move to nurture), "
+               "close LEAD_ID (stop all outreach, close the lead), "
+               "status LEAD_ID (state, channel and key flags), help.")
+# flags the retry command clears: start / send attempts and failures (start_new then tries again)
+RETRY_CLEARS = tuple(["start_attempts", "start_retry_at", "start_failed", WA_RETRY_AFTER, "stuck_alerted"] + [
+    k + suffix for k in (INTRO_ATTEMPT, REMINDER_ATTEMPT)
+    for suffix in ("", FAILED_SUFFIX, "_unconfirmed", TRANSIENT_SUFFIX)])
+# flag names shown by the status command (names only, never values that could hold contacts)
+STATUS_FLAGS = ("start_failed", "start_attempts", WA_RETRY_AFTER, INTRO_ATTEMPT, REMINDER_ATTEMPT,
+                TOOL_STOP_PENDING, TOOL_BLOCK_PENDING, "stuck_alerted", "takeover_at", "hot_alerted")
 NOT_ALLOWED = "Not allowed here."
 ALREADY_HANDLED = "Already handled."
 WINDOW_CLOSED_TEXT = "24h window closed — the lead must message first"
@@ -587,6 +604,59 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
         logger.info("teams done: lead %s given back to the bot", lead_id)
         return f"Lead {lead_id} is back with the bot."
 
+    def _locked_lead(session: Session, args: str) -> Tuple[Optional[Lead], Optional[str]]:
+        lead_id = _lead_id_arg(args) if args else None
+        if lead_id is None:
+            return None, TEAMS_USAGE
+        lead = session.get(Lead, lead_id, with_for_update=True, populate_existing=True)
+        if lead is None:
+            return None, f"Lead {lead_id} not found."
+        return lead, None
+
+    def _cmd_retry(session: Session, args: str) -> str:
+        lead, err = _locked_lead(session, args)
+        if lead is None:
+            return err or TEAMS_USAGE
+        if lead.state != LeadState.IN_SEQUENCE.value:
+            return f"Lead {lead.id} is {lead.state}; retry works only for leads in in_sequence."
+        flags = dict(lead.variant_flags or {})
+        for key in RETRY_CLEARS:
+            flags.pop(key, None)
+        lead.variant_flags = flags
+        logger.info("teams retry: lead %s start flags cleared", lead.id)
+        return f"Lead {lead.id}: start flags cleared; it will be retried on the next worker tick."
+
+    def _cmd_move(session: Session, args: str, to: LeadState, label: str, now: datetime) -> str:
+        lead, err = _locked_lead(session, args)
+        if lead is None:
+            return err or TEAMS_USAGE
+        frm = LeadState(lead.state)
+        if frm == to:
+            return f"Lead {lead.id} is already {to.value}."
+        if to not in ALLOWED[frm]:
+            return f"Lead {lead.id} is {frm.value}; it cannot be moved to {to.value} from there."
+        execute(session, lead, [StopAllOutreach(), SetState(to, "manual")], deps, now)
+        if lead.state != to.value:  # pragma: no cover - transition() refused after all
+            return f"Lead {lead.id} could not be moved to {to.value}."
+        logger.info("teams %s: lead %s -> %s", label, lead.id, to.value)
+        return f"Lead {lead.id}: outreach stopped, now {to.value}."
+
+    def _cmd_status(session: Session, args: str) -> str:
+        lead, err = _locked_lead(session, args)
+        if lead is None:
+            return err or TEAMS_USAGE
+        flags = lead.variant_flags or {}
+        shown = [k for k in STATUS_FLAGS if flags.get(k)]
+        extra = []
+        if lead.email_hold:
+            extra.append(f"email_hold={lead.email_hold}")
+        if lead.pause_reason:
+            extra.append(f"pause_reason={lead.pause_reason}")
+        return (f"lead {lead.id}: state={lead.state}, channel={lead.active_channel or 'none'}, "
+                f"switched={'yes' if lead.channel_switched else 'no'}, step={lead.step_sent or 0}"
+                + (", " + ", ".join(extra) if extra else "")
+                + f", flags: {', '.join(shown) if shown else 'none'}")
+
     def _teams_command(session: Session, activity_id: str, sent_at: datetime, raw_text: str, aad: str,
                        name: Optional[str], now: datetime) -> Tuple[str, Optional[_WaJob]]:
         """Replay check + command, committed together; any exception rolls both back."""
@@ -607,6 +677,14 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
             text, job = _cmd_wa(session, args, aad, name, now)
         elif verb == "done":
             text = _cmd_done(session, args, now)
+        elif verb == "retry":
+            text = _cmd_retry(session, args)
+        elif verb == "nurture":
+            text = _cmd_move(session, args, LeadState.NURTURE, "nurture", now)
+        elif verb == "close":
+            text = _cmd_move(session, args, LeadState.CLOSED, "close", now)
+        elif verb == "status":
+            text = _cmd_status(session, args)
         else:
             text = TEAMS_USAGE
         session.commit()

@@ -16,9 +16,10 @@ Flushes only; the caller commits. Logs carry lead ids and error types / codes, n
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .actions import (
@@ -26,10 +27,10 @@ from .actions import (
 )
 from .channels import fallback_channel
 from .config import Settings
-from .models import Event, Lead
+from .models import Event, Lead, Suppression
 from .rules import EventSnapshot, LeadSnapshot, decide
 from .sequencer import enroll, refresh_next_step, render_reply
-from .states import LeadState
+from .states import TERMINAL, LeadState
 from .whatsapp.client import WaSendError, WhatsAppNotAllowed
 
 logger = logging.getLogger(__name__)
@@ -42,6 +43,16 @@ INTRO_ATTEMPT = "wa_intro_attempted_at"
 REMINDER_ATTEMPT = "wa_reminder_attempted_at"
 # set when the attempt ended in a known failure (handled through decide); reconcile skips it
 FAILED_SUFFIX = "_failed"
+# Meta codes that mean "try again later" (rate limits, temporary errors): the attempt flag is cleared
+# and the send retried after WA_RETRY_BACKOFF; after that many transient failures it counts as permanent.
+WA_TRANSIENT_CODES = frozenset({130429, 131056, 131048, 131000, 1, 2, 4})
+WA_RETRY_BACKOFF = (timedelta(minutes=10), timedelta(hours=1), timedelta(hours=6))
+WA_RETRY_AFTER = "wa_retry_after"
+TRANSIENT_SUFFIX = "_transient"
+# written and committed before the email tool's add_lead; while set without a tool lead id, the next
+# start looks the lead up in the tool (find_lead) before adding it again
+EMAIL_ENROLL_ATTEMPT = "email_enroll_attempted_at"
+_TERMINAL_VALUES = frozenset(s.value for s in TERMINAL)
 
 BeforeSend = Optional[Callable[[], None]]
 
@@ -54,6 +65,30 @@ def set_flag(lead: Lead, key: str, value: Any) -> None:
 
 def _flags(lead: Lead) -> dict:
     return lead.variant_flags or {}
+
+
+def pop_flags(lead: Lead, *keys: str) -> None:
+    flags = dict(lead.variant_flags or {})
+    for k in keys:
+        flags.pop(k, None)
+    lead.variant_flags = flags
+
+
+def email_suppressed(session: Session, email: Optional[str]) -> bool:
+    if not email:
+        return False
+    return session.scalar(select(Suppression.id).where(
+        Suppression.value == email, Suppression.kind == "email").limit(1)) is not None
+
+
+def _ts(raw: Any) -> Optional[datetime]:
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
 # ---------------------------------------------------------------------- WhatsApp failures
@@ -72,10 +107,15 @@ def handle_wa_send_failure(session: Session, lead: Lead, code: Optional[int], te
 def send_template_once(session: Session, lead: Lead, name: str, attempt_key: str, sent_attr: str,
                        deps: Deps, now: datetime, *, before_send: BeforeSend = None) -> str:
     """Send WhatsApp template `name` at most once. Never raises. Returns
-    "already" (attempted before), "sent", "failed" (Meta refused: handled via decide),
-    "not_allowed" (no consent / suppressed: handled via decide) or "error" (outcome unknown)."""
+    "already" (attempted before), "wait" (a transient failure's back-off has not passed), "sent",
+    "retry" (transient Meta error: attempt cleared, retried after WA_RETRY_BACKOFF), "failed" (Meta
+    refused: handled via decide), "not_allowed" (no consent / suppressed: handled via decide) or
+    "error" (outcome unknown, including a 2xx without a message id: never resent)."""
     if _flags(lead).get(attempt_key) or getattr(lead, sent_attr) is not None:
         return "already"
+    retry_at = _ts(_flags(lead).get(WA_RETRY_AFTER))
+    if retry_at is not None and retry_at > now:
+        return "wait"
     set_flag(lead, attempt_key, now.isoformat())
     session.flush()
     if before_send is not None:
@@ -84,6 +124,23 @@ def send_template_once(session: Session, lead: Lead, name: str, attempt_key: str
         with session.begin_nested():
             deps.wa.send_template(session, lead, name, now)
     except WaSendError as exc:
+        if exc.code is None and 200 <= exc.status < 300:
+            # Meta took the request but gave no message id: it may have been sent. Never resend;
+            # the worker reconciles it from status webhooks (and gives up after 24 h).
+            logger.warning("lead %s: WhatsApp template %s: HTTP %s without message id", lead.id, name, exc.status)
+            record_integration_error(session, lead.id, f"lead {lead.id}: WhatsApp template {name}: no message "
+                                                       "id in the answer (not resent)", now)
+            return "error"
+        transient = int(_flags(lead).get(attempt_key + TRANSIENT_SUFFIX, 0)) + 1
+        if exc.code in WA_TRANSIENT_CODES and transient <= len(WA_RETRY_BACKOFF):
+            retry_at = now + WA_RETRY_BACKOFF[transient - 1]
+            pop_flags(lead, attempt_key)
+            set_flag(lead, attempt_key + TRANSIENT_SUFFIX, transient)
+            set_flag(lead, WA_RETRY_AFTER, retry_at.isoformat())
+            session.flush()
+            logger.warning("lead %s: WhatsApp template %s transient error (code %s, %s of %s); retry at %s",
+                           lead.id, name, exc.code, transient, len(WA_RETRY_BACKOFF), retry_at.isoformat())
+            return "retry"
         logger.warning("lead %s: WhatsApp template %s refused (code %s)", lead.id, name, exc.code)
         set_flag(lead, attempt_key + FAILED_SUFFIX, exc.code if exc.code is not None else "unknown")
         handle_wa_send_failure(session, lead, exc.code, name, deps, now)
@@ -100,8 +157,20 @@ def send_template_once(session: Session, lead: Lead, name: str, attempt_key: str
         return "error"
     if getattr(lead, sent_attr) is None:  # the real sender sets it; a bare port may not
         setattr(lead, sent_attr, now)
+    pop_flags(lead, WA_RETRY_AFTER, attempt_key + TRANSIENT_SUFFIX)
     session.flush()
     return "sent"
+
+
+def wa_gave_up(session: Session, lead: Lead, deps: Deps, now: datetime, *,
+               settings: Optional[Settings] = None) -> Optional[str]:
+    """WhatsApp failed for good and decide() left the lead in sequence on WhatsApp: move on now
+    (email if there is one, else NURTURE "wa_failed"), never leave it waiting forever."""
+    if lead.state != S.IN_SEQUENCE.value or lead.active_channel != "whatsapp":
+        return None
+    target = switch_channel(session, lead, "wa_failed", deps, now, settings=settings)
+    logger.info("lead %s: WhatsApp failed, moved to %s", lead.id, target or "nurture")
+    return target or "nurture"
 
 
 # ---------------------------------------------------------------------- start / switch
@@ -122,6 +191,31 @@ def start_outreach(session: Session, lead: Lead, deps: Deps, now: datetime, *,
             return "held"
         if lead.tool_lead_id:
             return "already"
+        if email_suppressed(session, lead.email):
+            logger.info("lead %s: email suppressed, not enrolled", lead.id)
+            return "suppressed"
+        find = getattr(deps.tool, "find_lead", None)
+        if _flags(lead).get(EMAIL_ENROLL_ATTEMPT) and find is not None and lead.email:
+            # an earlier add_lead may have reached the tool before we lost its answer: look first
+            try:
+                with session.begin_nested():
+                    found = find(lead.email)
+            except Exception as exc:  # noqa: BLE001 - unknown: do not add twice; retried
+                logger.warning("lead %s: tool lookup failed: %s", lead.id, type(exc).__name__)
+                record_integration_error(session, lead.id, f"lead {lead.id}: tool lookup failed: "
+                                                           f"{type(exc).__name__}", now)
+                return "error"
+            if found:
+                lead.tool_lead_id = str(found)
+                pop_flags(lead, EMAIL_ENROLL_ATTEMPT)
+                set_flag(lead, "enrolled_at", now.isoformat())
+                session.flush()
+                logger.info("lead %s: already in the email tool, enrolment recovered", lead.id)
+                return "started"
+        set_flag(lead, EMAIL_ENROLL_ATTEMPT, now.isoformat())
+        session.flush()
+        if before_send is not None:
+            before_send()  # the worker commits: the marker is durable before add_lead
         try:
             with session.begin_nested():
                 enroll(session, lead, deps.tool, now, settings=settings)
@@ -129,10 +223,15 @@ def start_outreach(session: Session, lead: Lead, deps: Deps, now: datetime, *,
             logger.warning("lead %s: enrol failed: %s", lead.id, type(exc).__name__)
             record_integration_error(session, lead.id, f"lead {lead.id}: enrol failed: {type(exc).__name__}", now)
             return "error"
+        pop_flags(lead, EMAIL_ENROLL_ATTEMPT)
+        session.flush()
         return "started"
     if channel == "whatsapp":
-        return send_template_once(session, lead, INTRO_TEMPLATE, INTRO_ATTEMPT, "wa_template_sent_at",
-                                  deps, now, before_send=before_send)
+        result = send_template_once(session, lead, INTRO_TEMPLATE, INTRO_ATTEMPT, "wa_template_sent_at",
+                                    deps, now, before_send=before_send)
+        if result in ("failed", "not_allowed"):
+            wa_gave_up(session, lead, deps, now, settings=settings)
+        return result
     logger.warning("lead %s: no active channel to start", lead.id)
     return "no_channel"
 
@@ -194,6 +293,10 @@ class Outreach:
         """Reply `key` (booking_link / booking_slots / reschedule) in the lead's email thread. If the
         tool cannot (no thread yet, or reply-in-thread unsupported), ask sales to email personally."""
         deps = self._deps()
+        if lead.state in _TERMINAL_VALUES or not lead.email or email_suppressed(session, lead.email):
+            # defence in depth: rules never ask for this, but nothing reaches an opted-out lead
+            logger.info("lead %s: email reply %s refused (terminal or suppressed)", lead.id, key)
+            return False
         sent = False
         if lead.tool_lead_id:
             body = render_reply(lead, key, settings=self.settings)

@@ -40,11 +40,18 @@ SessionLocal = sessionmaker(autoflush=False, expire_on_commit=False)
 def make_engine(url: str, **kwargs: Any) -> Engine:
     engine = create_engine(url, **kwargs)
     if engine.dialect.name == "sqlite":
+        database = engine.url.database or ""
+        file_db = database not in ("", ":memory:") and "mode=memory" not in str(engine.url)
 
         @event.listens_for(engine, "connect")
         def _fk_on(dbapi_conn, _record) -> None:  # pragma: no cover - trivial
             cur = dbapi_conn.cursor()
             cur.execute("PRAGMA foreign_keys=ON")
+            if file_db:
+                # the web app and the worker write the same file: readers never block the writer,
+                # and a writer waits up to 5 s for the lock instead of failing at once
+                cur.execute("PRAGMA journal_mode=WAL")
+                cur.execute("PRAGMA busy_timeout=5000")
             cur.close()
             # pysqlite never emits BEGIN itself, so a SAVEPOINT would open (and its RELEASE
             # commit) the outer transaction. Take over transaction control (SQLAlchemy recipe).

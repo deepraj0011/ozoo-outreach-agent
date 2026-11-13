@@ -19,6 +19,7 @@ from ..config import Settings, get_settings
 from ..links import make_link
 from ..models import ChatMessage, Lead, Suppression
 from ..sequencer import _clean, _fields
+from ..states import TERMINAL
 from .client import WhatsAppClient, WhatsAppNotAllowed, WindowClosed
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,7 @@ _URL_MARKERS = ("http", "www.")
 _VALUE_URL_MARKERS = ("http", "www.", "://")
 
 _cache: Dict[str, Dict[str, Any]] = {}
+_TERMINAL_VALUES = frozenset(s.value for s in TERMINAL)
 
 
 def validate_wa_templates(data: Any) -> Dict[str, Any]:
@@ -113,8 +115,13 @@ class WhatsAppSender:
         self.templates = validate_wa_templates(templates) if templates is not None else load_wa_templates()
 
     # ------------------------------------------------------------ helpers
-    def _require_consent(self, session: Session, lead: Lead) -> str:
-        """Checked before the window: an opt-out ("STOP") itself opens the 24 h window."""
+    def _require_consent(self, session: Session, lead: Lead, author: str = "bot") -> str:
+        """Checked before the window: an opt-out ("STOP") itself opens the 24 h window. Automated
+        sends (templates, bot texts) never go to a lead in a terminal state; a person (Teams `wa`)
+        still may, within consent and suppression."""
+        if author != "human" and lead.state in _TERMINAL_VALUES:
+            logger.info("lead %s: WhatsApp automated send refused, lead is %s", lead.id, lead.state)
+            raise WhatsAppNotAllowed(f"lead {lead.id}: terminal state")
         phone = lead.phone
         if not lead.consent_whatsapp or not phone:
             logger.info("lead %s: WhatsApp send refused, no consent or phone", lead.id)
@@ -152,7 +159,7 @@ class WhatsAppSender:
 
     # ------------------------------------------------------------ WaPort
     def send_text(self, session: Session, lead: Lead, key: str, now: datetime, author: str = "bot") -> str:
-        phone = self._require_consent(session, lead)
+        phone = self._require_consent(session, lead, author)
         self._require_window(lead, now)
         texts = self.templates["texts"]
         if key not in texts:
@@ -169,7 +176,7 @@ class WhatsAppSender:
         return wamid
 
     def send_raw_text(self, session: Session, lead: Lead, text: str, now: datetime, author: str = "human") -> str:
-        phone = self._require_consent(session, lead)
+        phone = self._require_consent(session, lead, author)
         self._require_window(lead, now)
         wamid = self.client.send_text(phone, text)
         self._log(session, lead, author, text, wamid, now)

@@ -151,7 +151,7 @@ def test_unsubscribe_post_suppresses_both_channels(env):
     assert rows == {("u@acme.com", "email"), ("+919812345678", "phone")}
     ev = s.scalars(select(Event).where(Event.kind == "unsubscribe")).one()
     assert ev.provider_event_id == f"unsub:{lead.id}:2" and ev.lead_id == lead.id and ev.processed
-    assert deps.tool.calls == [("stop", "T-1")]
+    assert deps.tool.calls == [("block", "u@acme.com"), ("stop", "T-1")]  # final review A1: block list
 
 
 def test_unsubscribe_post_twice_ok(env):
@@ -162,7 +162,7 @@ def test_unsubscribe_post_twice_ok(env):
     r = client.post(url)
     assert r.status_code == 200 and "unsubscribed" in r.text
     assert s.scalar(select(func.count()).select_from(Event).where(Event.kind == "unsubscribe")) == 1
-    assert deps.tool.calls == [("stop", "T-1")]
+    assert deps.tool.calls == [("block", "u@acme.com"), ("stop", "T-1")]  # final review A1: block list
 
 
 def test_unsubscribe_one_click_rfc8058(env):

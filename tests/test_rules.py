@@ -15,6 +15,7 @@ from outreach.rules import EventSnapshot, LeadSnapshot, decide
 from outreach.score import apply_points, points_for
 from outreach.states import ALLOWED, TERMINAL, LeadState as S
 from tests.conftest import NOW, make_lead
+NOW_ISO = NOW.isoformat()
 
 EMAIL = "lead@acme.com"
 PHONE = "+14155550100"
@@ -262,13 +263,13 @@ def test_case_study_click_whatsapp_active_no_variant():
 def test_pricing_click_hot():
     assert run(lead_snap(), click("pricing")) == [
         AddScore(10), Alert("hot_lead"), SetFlag("hot_alerted", True),
-        SetVariant("booking_slots"), SendReply("booking_slots")]
+        SetVariant("booking_slots"), SendReply("booking_slots"), SetFlag("booking_slots_at", NOW_ISO)]
 
 
 def test_pricing_click_already_alerted_no_second_alert():
     assert run(lead_snap(score=20, flags={"hot_alerted": True}), click("pricing")) == [
         AddScore(10), SetFlag("hot_alerted", True),
-        SetVariant("booking_slots"), SendReply("booking_slots")]
+        SetVariant("booking_slots"), SendReply("booking_slots"), SetFlag("booking_slots_at", NOW_ISO)]
 
 
 def test_pricing_click_crossing_hot_alerts_once():
@@ -279,7 +280,7 @@ def test_pricing_click_crossing_hot_alerts_once():
 def test_pricing_click_whatsapp_window_open():
     assert run(wa_lead(wa_window_open=True), click("pricing")) == [
         AddScore(10), Alert("hot_lead"), SetFlag("hot_alerted", True),
-        WaSendText("booking_slots")]
+        WaSendText("booking_slots"), SetFlag("booking_slots_at", NOW_ISO)]
 
 
 def test_pricing_click_whatsapp_window_closed_only_alert_and_score():
@@ -505,6 +506,8 @@ def test_wa_tap_stops_email():
 ], ids=lambda e: e.kind)
 def test_terminal_state_no_actions(st, event):
     want = [Alert("handoff")] if (st == S.HANDED_OFF and event.kind == "no_show") else []  # Task 11 ruling
+    if event.kind == "sent":
+        want = [ToolStop(), Alert("tool_stop_failed")]  # final review A1: the tool should not be sending
     assert run(both(state=st, wa_window_open=True), event) == want
 
 

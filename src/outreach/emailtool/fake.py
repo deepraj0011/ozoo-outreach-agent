@@ -24,6 +24,7 @@ class FakeEmailTool:
         self.fail: Set[str] = set()
         self.stats: Dict[str, Dict[str, int]] = {}
         self._ids = itertools.count(1)
+        self._by_email: Dict[str, str] = {}  # live tool leads, for find_lead
 
     def _rec(self, *call: Any) -> None:
         self.calls.append(call)
@@ -34,7 +35,11 @@ class FakeEmailTool:
 
     def add_lead(self, campaign_id: str, lead: Any, variables: Mapping[str, str]) -> str:
         self._rec("add_lead", campaign_id, getattr(lead, "id", None), dict(variables))
-        return f"{self.id_prefix}{next(self._ids)}"
+        tid = f"{self.id_prefix}{next(self._ids)}"
+        email = getattr(lead, "email", None)
+        if email:
+            self._by_email[email.lower()] = tid
+        return tid
 
     def update_variables(self, tool_lead_id: str, variables: Mapping[str, str]) -> None:
         self._rec("update_variables", tool_lead_id, dict(variables))
@@ -47,6 +52,14 @@ class FakeEmailTool:
 
     def stop(self, tool_lead_id: str) -> None:
         self._rec("stop", tool_lead_id)
+        self._by_email = {e: t for e, t in self._by_email.items() if t != tool_lead_id}
+
+    def block(self, email: str) -> None:
+        self._rec("block", email)
+
+    def find_lead(self, email: str) -> Optional[str]:
+        self._rec("find_lead", email)
+        return self._by_email.get((email or "").lower())
 
     def reply(self, tool_lead_id: str, body: str) -> bool:
         self._rec("reply", tool_lead_id, body)

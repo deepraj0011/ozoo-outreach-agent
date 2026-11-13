@@ -6,7 +6,7 @@ from datetime import timedelta
 import pytest
 
 from outreach import sequencer
-from outreach.actions import Alert, SetState, SwitchChannel
+from outreach.actions import Alert, SetState, SwitchChannel, ToolStop
 from outreach.emailtool.fake import FakeEmailTool
 from outreach.links import parse_token
 from outreach.sequencer import (
@@ -224,7 +224,7 @@ def test_end_route_hot(session):
     lead = make_lead(session, score=20)
     track, acts = end_of_sequence_route(lead, 2)
     assert track == "sales_personal"
-    assert acts[0] == SetState(LeadState.NURTURE, "end_hot")
+    assert acts[:2] == [ToolStop(), SetState(LeadState.NURTURE, "end_hot")]
     assert any(isinstance(a, Alert) and a.kind == "hot_no_reply" for a in acts)
 
 
@@ -238,13 +238,13 @@ def test_end_route_never_switches_to_whatsapp(session):
 
 def test_end_route_clicked(session):
     track, acts = end_of_sequence_route(make_lead(session, score=6), 1)
-    assert track == "warm_2_3w" and acts == [SetState(LeadState.NURTURE, "end_clicked")]
+    assert track == "warm_2_3w" and acts == [ToolStop(), SetState(LeadState.NURTURE, "end_clicked")]
 
 
 def test_end_route_no_clicks_monthly_whatever_the_opens(session):
     lead = make_lead(session, score=2, variant_flags={"human_opens": 5})
     track, acts = end_of_sequence_route(lead, 0)
-    assert track == "monthly" and acts == [SetState(LeadState.NURTURE, "end_silent")]
+    assert track == "monthly" and acts == [ToolStop(), SetState(LeadState.NURTURE, "end_silent")]
 
 
 # ---------------------------------------------------------------- Task 12 review: resume mid-sequence

@@ -97,6 +97,10 @@ def _insert(session: Session, row: Event) -> bool:
 
 def _ingest_one(session: Session, ev: NormalizedEvent, deps: Deps, now: datetime, scanners: Scanners) -> None:
     lead, how = match_lead(session, ev)
+    if lead is not None:
+        # lock the row (Postgres) and drop any stale copy in this session: decide/execute must see
+        # what a concurrent webhook or the worker committed (no lost updates)
+        session.refresh(lead, with_for_update=True)
     data = dict(ev.data or {})
     if how == "domain":
         # a colleague replied: keep who actually wrote (DB only, never logged)

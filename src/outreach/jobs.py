@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 from typing import Callable, List, Optional, Tuple
 
 from sqlalchemy import event as sa_event
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, SessionTransaction
 
@@ -167,6 +167,13 @@ def _newer_bot_job(s: Session, job: Job) -> bool:
                              Job.status.in_(("pending", "running", "done"))).limit(1)) is not None
 
 
+INBOUND_KINDS = ("reply", "wa_text", "wa_button", "booking_created")
+
+
+def _last_inbound_id(s: Session, lead_id: int) -> Optional[int]:
+    return s.scalar(select(func.max(Event.id)).where(Event.lead_id == lead_id, Event.kind.in_(INBOUND_KINDS)))
+
+
 def _skip_reason(session: Session, job: Job, lead: Optional[Lead], event: Optional[Event],
                  now: datetime) -> Optional[str]:
     """Why this job needs no LLM call any more (None = run it)."""
@@ -209,6 +216,8 @@ def _run_claimed(s: Session, job_id: int, attempt: int, deps: Deps, now: datetim
         return "obsolete"
     assert lead is not None
     kind, lead_id = job.kind, job.lead_id
+    # what the LLM is asked about: the lead's state and its newest inbound event right now
+    state_before, inbound_before = lead.state, _last_inbound_id(s, lead_id)
     actions: List[Action]
     if kind == "classify":
         if deps.classify is None:
@@ -219,6 +228,12 @@ def _run_claimed(s: Session, job_id: int, attempt: int, deps: Deps, now: datetim
         if deps.bot_reply is None:
             raise RuntimeError("chatbot not wired")
         actions = deps.bot_reply(s, lead, now)
+    # End the transaction that spanned the (slow) LLM call: nothing is decided on its snapshot. Only
+    # the classifier's annotation on the event is kept; everything below re-reads fresh rows.
+    event_data = dict(event.data or {}) if event is not None else None
+    s.rollback()
+    if event is not None and event_data is not None:
+        event.data = event_data
     # The LLM call may have taken a while: confirm the job is still ours before anything is applied
     # or sent, and that no newer message arrived meanwhile.
     if not _owns(s, job_id, attempt):
@@ -227,6 +242,22 @@ def _run_claimed(s: Session, job_id: int, attempt: int, deps: Deps, now: datetim
         s.rollback()  # discard the answer (and anything the port wrote)
         logger.info("job %s (bot_reply, lead %s) superseded by a newer message", job_id, lead_id)
         _finish(s, job_id, attempt, status="done", finished_at=now, last_error="superseded")
+        s.commit()
+        return "obsolete"
+    # The lead may have moved on meanwhile (a booking, a button tap, another reply): re-read it with a
+    # row lock and drop this result if it is stale. A newer inbound event has its own job.
+    s.refresh(lead, with_for_update=True)
+    if lead.state != state_before or _last_inbound_id(s, lead_id) != inbound_before:
+        s.rollback()
+        logger.info("job %s (%s, lead %s) superseded: the lead changed during the LLM call", job_id, kind, lead_id)
+        _finish(s, job_id, attempt, status="done", finished_at=now, last_error="superseded:state_changed")
+        s.commit()
+        return "obsolete"
+    reason = _skip_reason(s, job, lead, event, now)
+    if reason is not None:
+        s.rollback()
+        logger.info("job %s (%s, lead %s) dropped after the LLM call: %s", job_id, kind, lead_id, reason)
+        _finish(s, job_id, attempt, status="done", finished_at=now, last_error=f"skipped:{reason}"[:ERROR_MAX])
         s.commit()
         return "obsolete"
     if actions:

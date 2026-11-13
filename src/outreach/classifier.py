@@ -292,6 +292,23 @@ def _referral(rc: ReplyClass, lead: Lead) -> List[Action]:
     return []
 
 
+LINK_RESEND_AFTER = timedelta(hours=24)
+
+
+def _sent_within(lead: Lead, key: str, now: datetime, window: timedelta) -> bool:
+    """variant_flags["sent_texts"][key] (written by the executor on a successful send) is recent."""
+    raw = ((lead.variant_flags or {}).get("sent_texts") or {}).get(key)
+    try:
+        at = datetime.fromisoformat(str(raw).replace("Z", "+00:00")) if raw else None
+    except ValueError:
+        return False
+    if at is None:
+        return False
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=now.tzinfo)
+    return now - at < window
+
+
 def actions_for_class(rc: ReplyClass, lead: Lead, event: Event, now: datetime) -> List[Action]:
     """Pure: the actions for one classified reply."""
     if (event.data or {}).get("matched_by") == "domain":
@@ -322,6 +339,10 @@ def actions_for_class(rc: ReplyClass, lead: Lead, event: Event, now: datetime) -
         moved = move(S.QUALIFYING, "reply_interested")
         if moved is None:
             return review(S.QUALIFYING)
+        if state == S.QUALIFYING and _sent_within(lead, "booking_link", now, LINK_RESEND_AFTER):
+            # the link went out less than a day ago: tell sales instead of sending it again
+            return [Alert("engaged", f"lead {lead.id}: replied interested again; the booking link was sent "
+                                     "in the last 24 h — follow up personally if useful")]
         return [*moved, send("booking_link")]
     if label == "question":
         if email:

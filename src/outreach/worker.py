@@ -6,9 +6,11 @@ Jobs that touch leads handle at most `batch` leads per tick (default 50), oldest
 per lead, so one bad lead does not hold up the rest.
 
   start_new                  IN_SEQUENCE leads not started yet -> outreach.start_outreach
+                             (3 failed email starts -> alert + NURTURE "start_failed")
   process_settled_clicks     clicks older than 30 s: bot filter verdict, then decide/execute (points)
   booking_click_not_booked   30 min after a human booking click with no booking: slots reply, once
-  wa_unconfirmed             template sends with an unknown outcome: confirm from status webhooks
+  wa_unconfirmed             template sends with an unknown outcome: confirm from status webhooks;
+                             alert after 1 h, give up after 24 h (email fallback, else NURTURE)
   wa_reminder                WhatsApp intro 48 h ago, no inbound, no reminder -> `ozoo_reminder`
   wa_no_response             reminder 48 h ago, no inbound -> switch_channel("wa_no_response")
   resume_paused              PAUSED("ooo") whose pause_until has passed -> back in sequence
@@ -21,6 +23,14 @@ per lead, so one bad lead does not hold up the rest.
   run_due_jobs               jobs.run_due (background LLM jobs left over by requests)
   retry_alerts               re-post unposted alerts; hourly digest of integration errors
   check_mailboxes            daily bounce-rate check (health.check_mailboxes)
+  retry_tool_stops           failed email-tool stop / block-list calls, retried 5 min, 30 min, 2 h, then 6-hourly
+  stuck_leads                safety net: IN_SEQUENCE with nothing sent 3 days after the expected first
+                             send -> one stuck_lead alert per lead
+
+Every lead job re-loads its lead with a row lock (FOR UPDATE on Postgres, populate_existing) right
+before acting on it and re-checks the job's own selection predicate on that fresh row: a lead that
+changed since it was picked (a reply, a booking, a flag) is skipped, and nothing is written from a
+stale copy.
 
 Running the tick twice at the same `now` sends and alerts nothing twice: every send / alert is
 guarded by a timestamp column or a variant flag written in the same transaction (WhatsApp
@@ -48,7 +58,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from . import jobs
-from .actions import Alert, Deps, execute, record_integration_error
+from .actions import (
+    TOOL_BLOCK_PENDING, TOOL_REALERT_AFTER, TOOL_STOP_PENDING, Alert, Deps, SetState, execute,
+    record_integration_error, tool_retry_delay, tool_stop_failed_text,
+)
 from .botfilter import Scanners, classify_event, load_scanners
 from .chatbot import takeover_active
 from .config import Settings
@@ -58,12 +71,12 @@ from .hours import business_deadline, business_zone, parse_business_hours
 from .models import Alert as AlertRow
 from .models import ChatMessage, Event, Lead, WorkerLock, WorkerMark
 from .outreach import (
-    FAILED_SUFFIX, INTRO_ATTEMPT, INTRO_TEMPLATE, REMINDER_ATTEMPT, REMINDER_TEMPLATE, send_template_once,
-    set_flag, start_outreach, switch_channel,
+    FAILED_SUFFIX, INTRO_ATTEMPT, INTRO_TEMPLATE, REMINDER_ATTEMPT, REMINDER_TEMPLATE, WA_RETRY_AFTER,
+    handle_wa_send_failure, send_template_once, set_flag, start_outreach, switch_channel, wa_gave_up,
 )
 from .rules import EventSnapshot, LeadSnapshot, decide
 from .score import DECAY_AFTER, decay
-from .sequencer import END_WAIT_DAYS, SCHEDULE_DAYS, end_of_sequence_route, enroll
+from .sequencer import END_WAIT_DAYS, LAST_STEP, end_of_sequence_route, enroll
 from .states import TERMINAL, LeadState
 
 __all__ = ["tick", "main", "parse_business_hours", "business_zone", "business_deadline"]
@@ -84,10 +97,11 @@ BOOKING_NUDGE_LOOKBACK = timedelta(days=7)
 WA_REMINDER_AFTER = timedelta(hours=48)
 WA_NO_RESPONSE_AFTER = timedelta(hours=48)
 WA_UNCONFIRMED_AFTER = timedelta(hours=1)
+WA_UNCONFIRMED_GIVE_UP = timedelta(hours=24)  # after the unconfirmed alert
+STUCK_AFTER = timedelta(days=3)
 WA_STATUS_SKEW = timedelta(minutes=5)  # Meta's status time vs our clock
 WA_STATUS_KINDS = ("wa_sent", "wa_delivered", "wa_read")
 END_WAIT = timedelta(days=END_WAIT_DAYS)
-LAST_STEP = max(SCHEDULE_DAYS)
 SLA = timedelta(hours=1)
 SLA_REALERT = timedelta(minutes=30)
 ATTENDED_AFTER = timedelta(hours=2)
@@ -194,6 +208,34 @@ def _each(ctx: Ctx, session: Session, name: str, rows: Iterable[Any], fn: Callab
     return n
 
 
+def _fresh(session: Session, lead_id: int, qualifies: Callable[[Lead], bool]) -> Optional[Lead]:
+    """The lead re-read from the database with a row lock (FOR UPDATE on Postgres; SQLite serialises
+    writers), replacing any stale copy in the session; None if it no longer qualifies for the job."""
+    lead = session.scalars(select(Lead).where(Lead.id == lead_id).with_for_update()
+                           .execution_options(populate_existing=True)).first()
+    if lead is None or not qualifies(lead):
+        return None
+    return lead
+
+
+def _each_lead(ctx: Ctx, session: Session, name: str, leads: Iterable[Lead], qualifies: Callable[[Lead], bool],
+               fn: Callable[[Lead], bool]) -> int:
+    """_each over leads, each re-loaded fresh and locked, and re-checked with `qualifies` first."""
+    def one(lead: Lead) -> bool:
+        session.commit()  # end the read that picked the batch: the lock and re-read get a fresh snapshot
+        fresh = _fresh(session, lead.id, qualifies)
+        if fresh is None:
+            logger.info("worker %s: lead %s changed since it was picked; skipped", name, lead.id)
+            return False
+        return fn(fresh)
+
+    return _each(ctx, session, name, leads, one)
+
+
+def _before(at: Optional[datetime], cutoff: datetime) -> bool:
+    return at is not None and at <= cutoff
+
+
 def _no_inbound_since(session: Session, lead: Lead, since: Optional[datetime]) -> bool:
     if since is None:
         return False
@@ -230,8 +272,10 @@ def _start_failed(ctx: Ctx, session: Session, lead: Lead) -> None:
         return
     set_flag(lead, "start_failed", ctx.now.isoformat())
     logger.error("lead %s: outreach could not start after %s attempts", lead.id, attempts)
+    # never left IN_SEQUENCE with nothing going out: alert, then nurture
     execute(session, lead, [Alert("unsure", f"lead {lead.id}: outreach could not start after {attempts} "
-                                            "attempts (email tool / campaign settings?); please check")],
+                                            "attempts (email tool / campaign settings?); moved to nurture"),
+                            SetState(S.NURTURE, "start_failed")],
             ctx.deps, ctx.now)
 
 
@@ -245,9 +289,20 @@ def _start_new(ctx: Ctx, session: Session) -> int:
         .order_by(Lead.created_at, Lead.id))
 
     def keep(lead: Lead) -> bool:
+        if lead.state != S.IN_SEQUENCE.value:
+            return False
+        if lead.active_channel == "email":
+            if lead.tool_lead_id is not None or lead.email_hold is not None:
+                return False
+        elif lead.active_channel != "whatsapp" or lead.wa_template_sent_at is not None:
+            return False
         f = _flags(lead)
-        if lead.active_channel == "whatsapp" and f.get(INTRO_ATTEMPT):
-            return False  # attempted: never resent (wa_unconfirmed reconciles it)
+        if lead.active_channel == "whatsapp":
+            if f.get(INTRO_ATTEMPT):
+                return False  # attempted: never resent (wa_unconfirmed reconciles it)
+            wait = _ts(f.get(WA_RETRY_AFTER))
+            if wait is not None and wait > ctx.now:
+                return False  # transient Meta error: backing off
         if f.get("start_failed"):
             return False
         retry = _ts(f.get("start_retry_at"))
@@ -255,12 +310,13 @@ def _start_new(ctx: Ctx, session: Session) -> int:
 
     def one(lead: Lead) -> bool:
         result = start_outreach(session, lead, ctx.deps, ctx.now, settings=ctx.settings, before_send=session.commit)
-        if lead.active_channel == "email" and lead.tool_lead_id is None and result in ("error", "started"):
+        if (lead.state == S.IN_SEQUENCE.value and lead.active_channel == "email" and lead.tool_lead_id is None
+                and result in ("error", "started", "suppressed")):
             _start_failed(ctx, session, lead)
         logger.info("lead %s: start %s", lead.id, result)
         return True
 
-    return _each(ctx, session, "start_new", _pick(session, stmt, keep, ctx.batch), one)
+    return _each_lead(ctx, session, "start_new", _pick(session, stmt, keep, ctx.batch), keep, one)
 
 
 # ====================================================================== 2. settled clicks
@@ -293,7 +349,7 @@ def _process_settled_clicks(ctx: Ctx, session: Session) -> int:
         .order_by(Event.received_at, Event.id).limit(ctx.batch)))
 
     def settle(ev: Event) -> None:
-        lead = session.get(Lead, ev.lead_id) if ev.lead_id is not None else None
+        lead = _fresh(session, ev.lead_id, lambda ld: True) if ev.lead_id is not None else None
         ev.verdict = classify_event(ev, _sent_at(session, ev, lead), _siblings(session, ev), ctx.scanners)
         if lead is not None and ev.tag != "unsubscribe":
             actions = decide(LeadSnapshot.from_lead(lead, ctx.now), EventSnapshot.from_event(ev), ctx.now)
@@ -340,7 +396,9 @@ def _booking_click_not_booked(ctx: Ctx, session: Session) -> int:
         return lead is not None and not _flags(lead).get("booking_nudge_at")
 
     def one(ev: Event) -> bool:
-        lead = session.get(Lead, ev.lead_id)
+        lead = _fresh(session, ev.lead_id, lambda ld: not _flags(ld).get("booking_nudge_at"))
+        if lead is None:
+            return False
         booked = session.scalar(select(Event.id).where(
             Event.lead_id == lead.id, Event.kind == "booking_created", Event.occurred_at >= ev.occurred_at)
             .limit(1)) is not None
@@ -390,11 +448,15 @@ def _wa_unconfirmed(ctx: Ctx, session: Session) -> int:
 
     def pending(lead: Lead) -> List[Tuple[str, str, str, datetime]]:
         out = []
+        if lead.state != S.IN_SEQUENCE.value or lead.active_channel != "whatsapp":
+            return out
         f = _flags(lead)
         for key, attr, name in _TEMPLATE_SENDS:
             at = _ts(f.get(key))
-            if (at is not None and getattr(lead, attr) is None and not f.get(key + FAILED_SUFFIX)
-                    and not f.get(key + "_unconfirmed")):
+            if at is None or getattr(lead, attr) is not None or f.get(key + FAILED_SUFFIX):
+                continue
+            alerted = _ts(f.get(key + "_unconfirmed"))
+            if alerted is None or ctx.now - alerted >= WA_UNCONFIRMED_GIVE_UP:
                 out.append((key, attr, name, at))
         return out
 
@@ -406,6 +468,13 @@ def _wa_unconfirmed(ctx: Ctx, session: Session) -> int:
                 setattr(lead, attr, status)
                 logger.info("lead %s: WhatsApp %s confirmed by status webhook", lead.id, name)
                 done = True
+            elif _flags(lead).get(key + "_unconfirmed"):
+                # still nothing 24 h after the alert: treat as failed (synthetic wa_failed, then move on)
+                set_flag(lead, key + FAILED_SUFFIX, "unconfirmed")
+                handle_wa_send_failure(session, lead, None, name, ctx.deps, ctx.now)
+                target = wa_gave_up(session, lead, ctx.deps, ctx.now, settings=ctx.settings)
+                logger.warning("lead %s: WhatsApp %s never confirmed; gave up (%s)", lead.id, name, target)
+                return True
             elif ctx.now - at >= WA_UNCONFIRMED_AFTER:
                 set_flag(lead, key + "_unconfirmed", ctx.now.isoformat())
                 execute(session, lead, [Alert("wa_send_failed", (
@@ -416,7 +485,10 @@ def _wa_unconfirmed(ctx: Ctx, session: Session) -> int:
                 done = True
         return done
 
-    return _each(ctx, session, "wa_unconfirmed", _pick(session, stmt, lambda ld: bool(pending(ld)), ctx.batch), one)
+    def qualifies(lead: Lead) -> bool:
+        return bool(pending(lead))
+
+    return _each_lead(ctx, session, "wa_unconfirmed", _pick(session, stmt, qualifies, ctx.batch), qualifies, one)
 
 
 def _wa_reminder(ctx: Ctx, session: Session) -> int:
@@ -427,22 +499,25 @@ def _wa_reminder(ctx: Ctx, session: Session) -> int:
 
     def keep(lead: Lead) -> bool:
         f = _flags(lead)
-        return (not f.get("wa_reminder_cancelled") and not f.get(REMINDER_ATTEMPT)
+        wait = _ts(f.get(WA_RETRY_AFTER))
+        return (lead.state == S.IN_SEQUENCE.value and lead.active_channel == "whatsapp"
+                and _before(lead.wa_template_sent_at, ctx.now - _delay(ctx, "wa_reminder_after"))
+                and lead.wa_reminder_sent_at is None
+                and not f.get("wa_reminder_cancelled") and not f.get(REMINDER_ATTEMPT)
+                and (wait is None or wait <= ctx.now)
                 and _no_inbound_since(session, lead, lead.wa_template_sent_at))
 
     def one(lead: Lead) -> bool:
         result = send_template_once(session, lead, REMINDER_TEMPLATE, REMINDER_ATTEMPT, "wa_reminder_sent_at",
                                     ctx.deps, ctx.now, before_send=session.commit)
         logger.info("lead %s: WhatsApp reminder %s", lead.id, result)
-        if (result in ("failed", "not_allowed") and lead.state == S.IN_SEQUENCE.value
-                and lead.active_channel == "whatsapp"):
+        if result in ("failed", "not_allowed"):
             # refused and decide() did not move the lead: WhatsApp is done, move on now rather than
             # wait for a no-response that can never come
-            target = switch_channel(session, lead, "wa_no_response", ctx.deps, ctx.now, settings=ctx.settings)
-            logger.info("lead %s: reminder refused, switched to %s", lead.id, target or "nurture")
+            wa_gave_up(session, lead, ctx.deps, ctx.now, settings=ctx.settings)
         return result == "sent"
 
-    return _each(ctx, session, "wa_reminder", _pick(session, stmt, keep, ctx.batch), one)
+    return _each_lead(ctx, session, "wa_reminder", _pick(session, stmt, keep, ctx.batch), keep, one)
 
 
 def _wa_no_response(ctx: Ctx, session: Session) -> int:
@@ -452,14 +527,16 @@ def _wa_no_response(ctx: Ctx, session: Session) -> int:
         .order_by(Lead.created_at, Lead.id))
 
     def keep(lead: Lead) -> bool:
-        return _no_inbound_since(session, lead, lead.wa_template_sent_at or lead.wa_reminder_sent_at)
+        return (lead.state == S.IN_SEQUENCE.value and lead.active_channel == "whatsapp"
+                and _before(lead.wa_reminder_sent_at, ctx.now - _delay(ctx, "wa_no_response_after"))
+                and _no_inbound_since(session, lead, lead.wa_template_sent_at or lead.wa_reminder_sent_at))
 
     def one(lead: Lead) -> bool:
         target = switch_channel(session, lead, "wa_no_response", ctx.deps, ctx.now, settings=ctx.settings)
         logger.info("lead %s: no WhatsApp response, switched to %s", lead.id, target or "nurture")
         return True
 
-    return _each(ctx, session, "wa_no_response", _pick(session, stmt, keep, ctx.batch), one)
+    return _each_lead(ctx, session, "wa_no_response", _pick(session, stmt, keep, ctx.batch), keep, one)
 
 
 # ====================================================================== 6. holds
@@ -468,6 +545,10 @@ def _resume_paused(ctx: Ctx, session: Session) -> int:
     leads = list(session.scalars(select(Lead).where(
         Lead.state == S.PAUSED.value, Lead.pause_reason == "ooo", Lead.pause_until.is_not(None),
         Lead.pause_until <= ctx.now).order_by(Lead.pause_until, Lead.id).limit(ctx.batch)))
+
+    def qualifies(lead: Lead) -> bool:
+        return (lead.state == S.PAUSED.value and lead.pause_reason == "ooo"
+                and _before(lead.pause_until, ctx.now))
 
     def one(lead: Lead) -> bool:
         old_tool_id = lead.tool_lead_id if lead.active_channel == "email" else None
@@ -482,7 +563,7 @@ def _resume_paused(ctx: Ctx, session: Session) -> int:
             _re_enrol(ctx, session, lead)
         return True
 
-    return _each(ctx, session, "resume_paused", leads, one)
+    return _each_lead(ctx, session, "resume_paused", leads, qualifies, one)
 
 
 def _re_enrol(ctx: Ctx, session: Session, lead: Lead) -> None:
@@ -516,6 +597,11 @@ def _end_of_sequence(ctx: Ctx, session: Session) -> int:
         Lead.state == S.IN_SEQUENCE.value, Lead.active_channel == "email", Lead.step_sent >= LAST_STEP,
         Lead.last_sent_at <= ctx.now - _delay(ctx, "end_of_sequence_wait")).order_by(Lead.last_sent_at, Lead.id).limit(ctx.batch)))
 
+    def qualifies(lead: Lead) -> bool:
+        return (lead.state == S.IN_SEQUENCE.value and lead.active_channel == "email"
+                and (lead.step_sent or 0) >= LAST_STEP
+                and _before(lead.last_sent_at, ctx.now - _delay(ctx, "end_of_sequence_wait")))
+
     def one(lead: Lead) -> bool:
         clicks = session.scalar(select(func.count(Event.id)).where(
             Event.lead_id == lead.id, Event.kind == "click", Event.verdict == "human")) or 0
@@ -525,7 +611,7 @@ def _end_of_sequence(ctx: Ctx, session: Session) -> int:
         logger.info("lead %s: sequence ended, route %s", lead.id, route)
         return True
 
-    return _each(ctx, session, "end_of_sequence", leads, one)
+    return _each_lead(ctx, session, "end_of_sequence", leads, qualifies, one)
 
 
 # ====================================================================== 8. WhatsApp human SLA
@@ -551,7 +637,7 @@ def _wa_sla(ctx: Ctx, session: Session) -> int:
         .order_by(Lead.created_at, Lead.id))
 
     def due(lead: Lead) -> bool:
-        if not takeover_active(lead):
+        if lead.state in _TERMINAL_VALUES or not lead.phone or not takeover_active(lead):
             return False
         f = _flags(lead)
         takeover_at = _ts(f.get("takeover_at"))
@@ -583,7 +669,7 @@ def _wa_sla(ctx: Ctx, session: Session) -> int:
         logger.warning("lead %s: WhatsApp SLA missed%s", lead.id, " (again)" if again else "")
         return True
 
-    return _each(ctx, session, "wa_sla", _pick(session, stmt, due, ctx.batch), one)
+    return _each_lead(ctx, session, "wa_sla", _pick(session, stmt, due, ctx.batch), due, one)
 
 
 # ====================================================================== 9. attended check
@@ -595,7 +681,7 @@ def _attended_check(ctx: Ctx, session: Session) -> int:
 
     def keep(lead: Lead) -> bool:
         end = _ts(_flags(lead).get("booking_end"))
-        return end is not None and ctx.now - end > ATTENDED_AFTER
+        return lead.state == S.BOOKED.value and end is not None and ctx.now - end > ATTENDED_AFTER
 
     def one(lead: Lead) -> bool:
         uid = _flags(lead).get("booking_uid")
@@ -609,7 +695,7 @@ def _attended_check(ctx: Ctx, session: Session) -> int:
         logger.info("lead %s: meeting over without MEETING_ENDED, handed off", lead.id)
         return bool(actions)
 
-    return _each(ctx, session, "attended_check", _pick(session, stmt, keep, ctx.batch), one)
+    return _each_lead(ctx, session, "attended_check", _pick(session, stmt, keep, ctx.batch), keep, one)
 
 
 # ====================================================================== 10. decay
@@ -619,10 +705,15 @@ def _decay_scores(ctx: Ctx, session: Session) -> int:
         Lead.score > 0, Lead.state.not_in(_TERMINAL_VALUES),
         func.coalesce(Lead.last_human_event_at, Lead.created_at) <= ctx.now - DECAY_AFTER)
         .order_by(Lead.created_at, Lead.id))
-    changed = _pick(session, stmt, lambda lead: decay(lead, ctx.now), ctx.batch)  # decay() applies it
+    def qualifies(lead: Lead) -> bool:
+        last = lead.last_human_event_at or lead.created_at
+        return (lead.score or 0) > 0 and lead.state not in _TERMINAL_VALUES and _before(last, ctx.now - DECAY_AFTER)
+
+    candidates = list(session.scalars(stmt.limit(ctx.batch)))
+    changed = _each_lead(ctx, session, "decay_scores", candidates, qualifies, lambda lead: decay(lead, ctx.now))
     if changed:
-        logger.info("worker: %s score(s) decayed", len(changed))
-    return len(changed)
+        logger.info("worker: %s score(s) decayed", changed)
+    return changed
 
 
 # ====================================================================== 11. background jobs
@@ -695,6 +786,110 @@ def _check_mailboxes(ctx: Ctx, session: Session) -> int:
     return len(flagged)
 
 
+# ====================================================================== 14. email-tool stop / block retries
+
+_TOOL_RETRIES = ((TOOL_STOP_PENDING, "stop"), (TOOL_BLOCK_PENDING, "block"))
+
+
+def _retry_tool_stops(ctx: Ctx, session: Session) -> int:
+    stmt = (select(Lead).where(or_(Lead.variant_flags[TOOL_STOP_PENDING].as_string().is_not(None),
+                                   Lead.variant_flags[TOOL_BLOCK_PENDING].as_string().is_not(None)))
+            .order_by(Lead.id))
+
+    def due_keys(lead: Lead) -> List[Tuple[str, str]]:
+        out = []
+        for key, method in _TOOL_RETRIES:
+            p = _flags(lead).get(key)
+            if isinstance(p, dict) and p.get("items"):
+                at = _ts(p.get("next_at"))
+                if at is None or at <= ctx.now:
+                    out.append((key, method))
+        return out
+
+    def qualifies(lead: Lead) -> bool:
+        return bool(due_keys(lead))
+
+    def one(lead: Lead) -> bool:
+        for key, method in due_keys(lead):
+            p = dict(_flags(lead)[key])
+            fn = getattr(ctx.deps.tool, method, None)
+            left = []
+            for item in p.get("items") or []:
+                try:
+                    if fn is None:
+                        raise RuntimeError(f"tool has no {method}")
+                    with session.begin_nested():
+                        fn(item)
+                except Exception as exc:  # noqa: BLE001 - kept and retried later
+                    logger.warning("lead %s: tool.%s retry failed: %s", lead.id, method, type(exc).__name__)
+                    left.append(item)
+            if not left:
+                flags = dict(_flags(lead))
+                flags.pop(key, None)
+                lead.variant_flags = flags
+                logger.info("lead %s: tool.%s retry succeeded", lead.id, method)
+                continue
+            attempts = int(p.get("attempts", 1)) + 1
+            p.update(items=left, attempts=attempts, next_at=(ctx.now + tool_retry_delay(attempts)).isoformat())
+            if attempts - 1 >= TOOL_REALERT_AFTER and not p.get("realerted"):
+                p["realerted"] = ctx.now.isoformat()
+                set_flag(lead, key, p)
+                what = "stop" if method == "stop" else "block-list"
+                execute(session, lead, [Alert("tool_stop_failed", tool_stop_failed_text(lead.id, what) +
+                                              f" (still failing after {attempts} tries)")], ctx.deps, ctx.now)
+            else:
+                set_flag(lead, key, p)
+        return True
+
+    return _each_lead(ctx, session, "retry_tool_stops", _pick(session, stmt, qualifies, ctx.batch), qualifies, one)
+
+
+# ====================================================================== 15. stuck leads
+
+def _entered_sequence(session: Session, lead: Lead) -> datetime:
+    at = session.scalar(select(func.max(Event.occurred_at)).where(
+        Event.lead_id == lead.id, Event.kind == "state_change",
+        Event.data["to"].as_string() == S.IN_SEQUENCE.value))
+    return at or lead.created_at
+
+
+def _stuck_since(session: Session, lead: Lead) -> Optional[datetime]:
+    """When the lead's first send on its active channel was due (None = it has sent)."""
+    if lead.active_channel == "email":
+        if (lead.step_sent or 0) > 0 or lead.email_hold:
+            return None
+    elif lead.active_channel == "whatsapp":
+        if lead.wa_template_sent_at is not None:
+            return None
+    switched = _ts((_flags(lead).get("switched") or {}).get("at")) if isinstance(_flags(lead).get("switched"),
+                                                                                  dict) else None
+    times = [t for t in (_entered_sequence(session, lead), lead.wa_template_sent_at, lead.wa_reminder_sent_at,
+                         switched) if t is not None]
+    return max(times) if times else None
+
+
+def _stuck_leads(ctx: Ctx, session: Session) -> int:
+    stmt = (select(Lead).where(Lead.state == S.IN_SEQUENCE.value, Lead.created_at <= ctx.now - STUCK_AFTER)
+            .order_by(Lead.created_at, Lead.id))
+
+    def qualifies(lead: Lead) -> bool:
+        if lead.state != S.IN_SEQUENCE.value or _flags(lead).get("stuck_alerted"):
+            return False
+        since = _stuck_since(session, lead)
+        return since is not None and ctx.now - since > STUCK_AFTER
+
+    def one(lead: Lead) -> bool:
+        set_flag(lead, "stuck_alerted", ctx.now.isoformat())
+        execute(session, lead, [Alert("stuck_lead", (
+            f"lead {lead.id}: in sequence on {lead.active_channel or 'no channel'} but nothing has gone out "
+            f"for over {STUCK_AFTER.days} days; check it (Teams: status {lead.id} / retry {lead.id} / "
+            f"nurture {lead.id})"))], ctx.deps, ctx.now)
+        logger.warning("lead %s: stuck in sequence, alerted", lead.id)
+        return True
+
+    return _each_lead(ctx, session, "stuck_leads", _pick(session, stmt, qualifies, ctx.batch), qualifies, one)
+
+
 JobFn = Callable[[Ctx, Session], int]
 
 JOBS: Sequence[Tuple[str, JobFn]] = (
@@ -714,6 +909,8 @@ JOBS: Sequence[Tuple[str, JobFn]] = (
     ("run_due_jobs", _run_due_jobs),
     ("retry_alerts", _retry_alerts),
     ("check_mailboxes", _check_mailboxes),
+    ("retry_tool_stops", _retry_tool_stops),
+    ("stuck_leads", _stuck_leads),
 )
 
 

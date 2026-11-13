@@ -159,6 +159,21 @@ def _score(lead: LeadSnapshot, points: int, *, force_hot_alert: bool = False) ->
 
 # ------------------------------------------------------------------ pre-guard (ruling G)
 
+def _sent_after_stop(lead: LeadSnapshot, event: EventSnapshot) -> List[Action]:
+    """The email tool sent for a lead that should get no email (not in sequence on email, terminal
+    included): the stop did not take. Re-issue it and tell a person; keep the step for the record."""
+    out: List[Action] = []
+    if lead.state not in TERMINAL and event.step is not None:
+        try:
+            offset = int(lead.flags.get("step_offset", 0))
+        except (TypeError, ValueError):
+            offset = 0
+        out.append(SetStepSent(event.step + offset))
+    return out + [ToolStop(), _alert(lead, "tool_stop_failed", (
+        f"the email tool sent an email while the lead is {lead.state.value}; the stop was re-issued — "
+        "stop the lead manually in the email tool if this repeats"))]
+
+
 def _optout_reason(event: EventSnapshot) -> Optional[str]:
     if event.kind == "unsubscribe":
         return "unsubscribe"
@@ -208,6 +223,9 @@ def _pre_guard(lead: LeadSnapshot, event: EventSnapshot) -> Optional[List[Action
         return _hard_bounce(lead)
     if event.kind == "bounce_soft":
         return _soft_bounce(lead)
+    if event.kind == "sent" and event.channel == "email" and (
+            lead.state != S.IN_SEQUENCE or lead.active_channel != "email"):
+        return _sent_after_stop(lead, event)
     if event.kind == "booking_created" and lead.state in TERMINAL:
         return [_alert(lead, "booked", "booking from lead in terminal state")]
     if event.kind == "no_show" and lead.state == S.HANDED_OFF:
@@ -249,16 +267,38 @@ def _on_open(lead: LeadSnapshot, event: EventSnapshot) -> List[Action]:
     return [SetFlag("human_opens", opens + 1)]
 
 
+BOOKING_SLOTS_AT = "booking_slots_at"
+BOOKING_SLOTS_EVERY = timedelta(days=7)
+NO_SLOTS_STATES = frozenset({S.PAUSED, S.NURTURE}) | TERMINAL
+
+
+def _slots_due(lead: LeadSnapshot, at: datetime) -> bool:
+    """The booking-slots reply goes out at most once per BOOKING_SLOTS_EVERY, never to a paused,
+    nurture or terminal lead."""
+    if lead.state in NO_SLOTS_STATES:
+        return False
+    raw = lead.flags.get(BOOKING_SLOTS_AT)
+    try:
+        last = datetime.fromisoformat(str(raw).replace("Z", "+00:00")) if raw else None
+    except ValueError:
+        last = None
+    if last is not None and last.tzinfo is None:
+        last = last.replace(tzinfo=at.tzinfo)
+    return last is None or at - last >= BOOKING_SLOTS_EVERY
+
+
 def _on_click(lead: LeadSnapshot, event: EventSnapshot) -> List[Action]:
     tag = event.tag
     pts = points_for("click", tag, 0, False)
     if tag == "pricing":
         out = _score(lead, pts, force_hot_alert=True)
         out += _variant(lead, "booking_slots")
+        if not _slots_due(lead, event.occurred_at):
+            return out
         if lead.active_channel == "email":
-            out.append(SendReply("booking_slots"))
+            out += [SendReply("booking_slots"), SetFlag(BOOKING_SLOTS_AT, event.occurred_at.isoformat())]
         elif lead.active_channel == "whatsapp" and lead.wa_window_open:
-            out.append(WaSendText("booking_slots"))
+            out += [WaSendText("booking_slots"), SetFlag(BOOKING_SLOTS_AT, event.occurred_at.isoformat())]
         # WA window closed: the hot_lead alert / score is enough (ruling E)
         return out
     out = _score(lead, pts)

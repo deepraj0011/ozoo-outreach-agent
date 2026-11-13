@@ -109,8 +109,7 @@ def test_classifier_whatsapp_unsure_starts_takeover(session):
 # ---------------------------------------------------------------- Teams outgoing-webhook commands
 
 _ids = itertools.count(1)
-USAGE = ("Commands: wa LEAD_ID MESSAGE (send the lead a WhatsApp message and pause the bot), "
-         "done LEAD_ID (give the chat back to the bot), help.")
+from outreach.app import TEAMS_USAGE as USAGE  # noqa: E402
 
 
 def teams_ts(dt: datetime) -> str:

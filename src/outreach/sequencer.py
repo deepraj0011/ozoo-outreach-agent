@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import yaml
 from sqlalchemy.orm import Session
 
-from .actions import Action, Alert, SetState
+from .actions import Action, Alert, SetState, ToolStop
 from .config import Settings, get_settings
 from .links import make_link
 from .models import Lead
@@ -206,12 +206,14 @@ def refresh_next_step(
 
 def end_of_sequence_route(lead: Lead, human_clicks: int) -> Tuple[str, List[Action]]:
     """After Email 4 + 5 days with no reply. Opens are not used (unreliable), and there is
-    no WhatsApp step here: opted-in leads already got WhatsApp on day 1."""
+    no WhatsApp step here: opted-in leads already got WhatsApp on day 1. The tool lead is stopped
+    first (its campaign has nothing left to send; a failed stop is retried by the worker)."""
     if band(lead.score) == "hot":
         return "sales_personal", [
+            ToolStop(),
             SetState(LeadState.NURTURE, "end_hot"),
             Alert("hot_no_reply", "Hot lead finished the sequence without replying"),
         ]
     if human_clicks > 0:
-        return "warm_2_3w", [SetState(LeadState.NURTURE, "end_clicked")]
-    return "monthly", [SetState(LeadState.NURTURE, "end_silent")]
+        return "warm_2_3w", [ToolStop(), SetState(LeadState.NURTURE, "end_clicked")]
+    return "monthly", [ToolStop(), SetState(LeadState.NURTURE, "end_silent")]

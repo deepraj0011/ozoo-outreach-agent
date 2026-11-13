@@ -165,7 +165,25 @@ class InstantlyTool:
         raise ToolUnsupported("instantly per-lead resume")
 
     def stop(self, tool_lead_id: str) -> None:
-        self._ok("DELETE", f"/leads/{tool_lead_id}")
+        resp = self._call("DELETE", f"/leads/{tool_lead_id}")
+        if resp.status_code == 404:  # UNVERIFIED: a deleted lead answers 404; already stopped
+            return
+        resp.raise_for_status()
+
+    def block(self, email: str) -> None:
+        # UNVERIFIED: POST /block-lists-entries with {"bl_value": email} (Instantly v2 block list).
+        self._ok("POST", "/block-lists-entries", json={"bl_value": email})
+
+    def find_lead(self, email: str) -> Optional[str]:
+        """The tool lead id for `email`, or None when the tool has no such lead."""
+        # UNVERIFIED: POST /leads/list with a search filter; items carry "id" and "email".
+        resp = self._ok("POST", "/leads/list", json={"search": email, "limit": 10})
+        data = resp.json()
+        items = data.get("items") if isinstance(data, dict) else None
+        for item in items or []:
+            if isinstance(item, dict) and str(item.get("email", "")).lower() == email.lower() and item.get("id"):
+                return str(item["id"])
+        return None
 
     def reply(self, tool_lead_id: str, body: str) -> bool:
         """Reply in thread to the lead's latest email. False if C4 is not usable."""

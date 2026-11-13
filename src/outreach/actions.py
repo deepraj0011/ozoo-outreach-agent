@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Optional, Protocol, Tuple, Union
 
 from sqlalchemy import select
@@ -24,7 +24,55 @@ ALERT_KINDS = frozenset({
     "hot_lead", "hot_no_reply", "question", "unsure", "unmatched_reply", "unmatched_inbound",
     "unmatched_booking", "unmatched_form", "mailbox_paused", "mailbox_unhealthy", "booked", "no_show", "wa_human_needed",
     "wa_sla_missed", "wa_send_failed", "handoff", "integration_error",
+    "tool_stop_failed", "engaged", "stuck_lead", "verify_failed",
 })
+
+# A failed stop / block-list call at the email tool is retried by the worker (retry_tool_stops)
+# until it works: variant_flags[key] = {"items": [...], "attempts": failures, "next_at": iso}.
+TOOL_STOP_PENDING = "tool_stop_pending"
+TOOL_BLOCK_PENDING = "tool_block_pending"
+TOOL_RETRY_BACKOFF = (timedelta(minutes=5), timedelta(minutes=30), timedelta(hours=2))
+TOOL_RETRY_EVERY = timedelta(hours=6)
+TOOL_REALERT_AFTER = 3  # failed retries before the one extra alert
+SENT_TEXTS = "sent_texts"  # {text key: iso time of the last successful send}
+
+
+def tool_retry_delay(failures: int) -> timedelta:
+    """Wait after the `failures`-th failure: 5 min, 30 min, 2 h, then every 6 h."""
+    return TOOL_RETRY_BACKOFF[failures - 1] if 1 <= failures <= len(TOOL_RETRY_BACKOFF) else TOOL_RETRY_EVERY
+
+
+def tool_stop_failed_text(lead_id: int, what: str = "stop") -> str:
+    return (f"lead {lead_id} may still receive emails from the email tool — the {what} call failed and "
+            "will be retried; stop it manually if this repeats")
+
+
+def mark_tool_pending(lead: Any, key: str, item: str, now: datetime) -> bool:
+    """Add `item` to the pending retry list. True when the list was empty before (first failure)."""
+    flags = dict(lead.variant_flags or {})
+    cur = flags.get(key) if isinstance(flags.get(key), dict) else None
+    if cur is None:
+        flags[key] = {"items": [item], "attempts": 1, "next_at": (now + tool_retry_delay(1)).isoformat()}
+    else:
+        items = list(cur.get("items") or [])
+        if item not in items:
+            items.append(item)
+        flags[key] = {**cur, "items": items}
+    lead.variant_flags = flags
+    return cur is None
+
+
+def clear_tool_pending(lead: Any, key: str, item: str) -> None:
+    flags = dict(lead.variant_flags or {})
+    cur = flags.get(key)
+    if not isinstance(cur, dict):
+        return
+    items = [i for i in (cur.get("items") or []) if i != item]
+    if items:
+        flags[key] = {**cur, "items": items}
+    else:
+        flags.pop(key, None)
+    lead.variant_flags = flags
 
 
 # --- state and suppression
@@ -318,11 +366,38 @@ class _Run:
                     self.session.add(Suppression(value=value, kind=kind, reason=reason, created_at=self.now))
             except IntegrityError:
                 pass  # concurrent insert of the same value: already suppressed
+            else:
+                if kind == "email":
+                    self.tool_block(value)
         # ruling 11: the channel becomes unusable on the lead itself
         if kind == "email" and value == self.lead.email:
             self.lead.verify_status = "invalid"
         elif kind == "phone" and value == self.lead.phone:
             self.lead.consent_whatsapp = False
+
+    def tool_stop(self, tool_id: str) -> None:
+        """Stop (delete) the tool lead; a failure is flagged for the worker's retry and alerted now."""
+        if self.external("tool.stop", self.deps.tool.stop, tool_id) is _FAILED:
+            mark_tool_pending(self.lead, TOOL_STOP_PENDING, tool_id, self.now)
+            self.alert("tool_stop_failed", tool_stop_failed_text(self.lead.id))
+        else:
+            clear_tool_pending(self.lead, TOOL_STOP_PENDING, tool_id)
+
+    def tool_block(self, email: str) -> None:
+        """Add an opted-out / bounced address to the tool's block list (defence in depth)."""
+        block = getattr(self.deps.tool, "block", None)
+        if block is None:
+            return
+        if self.external("tool.block", block, email) is _FAILED:
+            mark_tool_pending(self.lead, TOOL_BLOCK_PENDING, email, self.now)
+            self.alert("tool_stop_failed", tool_stop_failed_text(self.lead.id, "block-list"))
+
+    def sent_text(self, key: str) -> None:
+        flags = dict(self.lead.variant_flags or {})
+        sent = dict(flags.get(SENT_TEXTS) or {})
+        sent[key] = self.now.isoformat()
+        flags[SENT_TEXTS] = sent
+        self.lead.variant_flags = flags
 
     def followup(self, what: str, fn: Optional[Callable[..., List[Action]]], *args: Any) -> None:
         if fn is None:
@@ -389,7 +464,7 @@ class _Run:
             self.suppress(lead.phone, "phone", a.reason)
         elif isinstance(a, ToolStop):
             if lead.tool_lead_id:
-                self.external("tool.stop", deps.tool.stop, lead.tool_lead_id)
+                self.tool_stop(lead.tool_lead_id)
         elif isinstance(a, ToolPause):
             lead.pause_until = a.until
             if lead.tool_lead_id:
@@ -400,7 +475,8 @@ class _Run:
         elif isinstance(a, WaCancelReminder):
             self.flags()["wa_reminder_cancelled"] = True
         elif isinstance(a, WaSendText):
-            self.external("wa.send_text", deps.wa.send_text, s, lead, a.text_key, self.now)
+            if self.external("wa.send_text", deps.wa.send_text, s, lead, a.text_key, self.now) is not _FAILED:
+                self.sent_text(a.text_key)
         elif isinstance(a, WaSendRaw):
             sent = self.external("wa.send_raw_text", deps.wa.send_raw_text, s, lead, a.text, self.now, a.author)
             if sent is not _FAILED and a.author == "bot":
@@ -408,7 +484,10 @@ class _Run:
         elif isinstance(a, WaSendTemplate):
             self.external("wa.send_template", deps.wa.send_template, s, lead, a.name, self.now)
         elif isinstance(a, SendReply):
-            self.external("outreach.send_email_text", deps.outreach.send_email_text, s, lead, a.template, self.now)
+            sent = self.external("outreach.send_email_text", deps.outreach.send_email_text, s, lead, a.template,
+                                 self.now)
+            if sent is not _FAILED and sent is not False:
+                self.sent_text(a.template)
         elif isinstance(a, SwitchChannel):
             self.external("outreach.switch", deps.outreach.switch, s, lead, a.reason, self.now)
         elif isinstance(a, RefreshNextStep):
