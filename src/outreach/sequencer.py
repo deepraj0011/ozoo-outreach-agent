@@ -21,7 +21,7 @@ from .states import LeadState
 logger = logging.getLogger(__name__)
 
 SCHEDULE_DAYS = {1: 0, 2: 4, 3: 9, 4: 15}
-END_WAIT_DAYS = 5
+END_WAIT_DAYS = 5  # = config.DELAY_DEFAULTS_S["end_of_sequence_wait"] (docs only; the worker reads config)
 VARIANT_PRIORITY = ("booking_slots", "case_study", "product")
 STEP_VARIANTS = ("standard", "case_study", "product", "booking_slots")
 ALLOWED_PLACEHOLDERS = frozenset({

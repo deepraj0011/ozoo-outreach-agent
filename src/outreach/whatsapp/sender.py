@@ -19,7 +19,7 @@ from ..config import Settings, get_settings
 from ..links import make_link
 from ..models import ChatMessage, Lead, Suppression
 from ..sequencer import _clean, _fields
-from ..states import TERMINAL
+from ..states import TERMINAL_VALUES
 from .client import WhatsAppClient, WhatsAppNotAllowed, WindowClosed
 
 logger = logging.getLogger(__name__)
@@ -41,7 +41,7 @@ _URL_MARKERS = ("http", "www.")
 _VALUE_URL_MARKERS = ("http", "www.", "://")
 
 _cache: Dict[str, Dict[str, Any]] = {}
-_TERMINAL_VALUES = frozenset(s.value for s in TERMINAL)
+_TERMINAL_VALUES = TERMINAL_VALUES  # states.TERMINAL as strings
 
 
 def validate_wa_templates(data: Any) -> Dict[str, Any]:

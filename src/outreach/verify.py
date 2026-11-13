@@ -22,8 +22,14 @@ _MAP = {
 }
 
 
+# ZeroBounce could not answer (unreachable, HTTP error, error body, no credits). Distinct from
+# ZeroBounce's own "unknown" verdict: the address was never checked, so it is never sendable
+# (intake holds it, the worker's retry_verification tries again).
+VERIFY_ERROR = "verify_error"
+
+
 class EmailVerifier:
-    """ZeroBounce email verification. Any failure maps to "unknown"."""
+    """ZeroBounce email verification. A failure to verify maps to VERIFY_ERROR."""
 
     def __init__(self, api_key: str, client: Optional[httpx.Client] = None) -> None:
         self._api_key = api_key
@@ -38,12 +44,17 @@ class EmailVerifier:
                 resp = httpx.get(ZEROBOUNCE_URL, params=params, timeout=10.0)
             if resp.status_code != 200:
                 logger.warning("email verification returned HTTP %s", resp.status_code)
-                return "unknown"
-            status = str(resp.json().get("status", "")).lower()
+                return VERIFY_ERROR
+            body = resp.json()
+            if not isinstance(body, dict) or body.get("error") or not body.get("status"):
+                # e.g. {"error": "Invalid API key or your account ran out of credits"}
+                logger.warning("email verification returned an error body")
+                return VERIFY_ERROR
+            status = str(body.get("status", "")).lower()
             return _MAP.get(status, "unknown")
         except Exception as exc:  # noqa: BLE001 - never leak address/key; fail soft
             logger.warning("email verification failed: %s", type(exc).__name__)
-            return "unknown"
+            return VERIFY_ERROR
 
 
 class FakeVerifier:

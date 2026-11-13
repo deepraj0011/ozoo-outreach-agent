@@ -15,7 +15,8 @@ import outreach.app as app_mod
 from outreach.actions import Alert, BotReply, Classify, SetState, WaSendRaw, execute
 from outreach.app import create_app, default_deps
 from outreach.botfilter import Scanners
-from outreach.db import SessionLocal, init_db, make_engine
+from outreach.db import init_db, make_engine
+from tests.fakes import TestSession
 from outreach.emailtool.base import NormalizedEvent
 from outreach.emailtool.instantly import SECRET_HEADER
 from outreach.handoff import start_takeover
@@ -57,7 +58,7 @@ class Counter:
 def env():
     engine = make_app_engine()
     factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
-    s = SessionLocal(bind=engine)
+    s = TestSession(bind=engine)
     yield engine, factory, s
     s.close()
     engine.dispose()
@@ -188,7 +189,7 @@ def test_webhook_makes_no_llm_call_in_the_request(monkeypatch):
     c = Counter([SetState(S.QUALIFYING, "reply_interested"), Alert("hot_lead", "interested")])
     deps = make_deps(classify=c.classify)
     engine, client = _email_app(deps)
-    s = SessionLocal(bind=engine)
+    s = TestSession(bind=engine)
     lead = make_lead(s, email="lead@example.com")
     s.commit()
     scheduled = []
@@ -216,7 +217,7 @@ def test_webhook_background_task_runs_the_job():
     c = Counter([SetState(S.QUALIFYING, "reply_interested"), Alert("hot_lead", "interested")])
     deps = make_deps(classify=c.classify)
     engine, client = _email_app(deps)
-    s = SessionLocal(bind=engine)
+    s = TestSession(bind=engine)
     lead = make_lead(s, email="lead@example.com")
     s.commit()
     assert _post_reply(client).status_code == 200  # TestClient runs background tasks before returning
@@ -244,7 +245,7 @@ def test_whatsapp_webhook_schedules_bot_job(monkeypatch):
     engine = make_app_engine()
     app = create_app(make_settings(), deps=deps, engine=engine, clock=lambda: NOW, scanners=SCANNERS)
     client = TestClient(app, raise_server_exceptions=False)
-    s = SessionLocal(bind=engine)
+    s = TestSession(bind=engine)
     data = json.loads((Path(__file__).parent / "fixtures" / "wa_text.json").read_text())
     msg = data["entry"][0]["changes"][0]["value"]["messages"][0]
     wa_lead(s, phone="+" + msg["from"].lstrip("+"))

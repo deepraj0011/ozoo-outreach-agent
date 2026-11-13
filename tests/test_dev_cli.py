@@ -11,7 +11,8 @@ from sqlalchemy import select
 from outreach import dev
 from outreach.app import create_app
 from outreach.config import Settings
-from outreach.db import SessionLocal, make_engine
+from outreach.db import make_engine
+from tests.fakes import TestSession
 from outreach.models import Lead
 
 @pytest.fixture
@@ -78,7 +79,7 @@ def test_seed_show_tick_advance(envfile, capsys):
     assert out.count("accepted") == 4 and "held_eu" in out
     s = settings_of(envfile)
     engine = make_engine(s.database_url)
-    with SessionLocal(bind=engine) as ses:
+    with TestSession(bind=engine) as ses:
         leads = list(ses.scalars(select(Lead).order_by(Lead.id)))
         assert len(leads) == 5
         assert all(ld.email is None or ld.email.endswith("example.com") for ld in leads)

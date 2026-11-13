@@ -6,6 +6,7 @@ import json
 from datetime import datetime, timezone
 from typing import Any, List, Optional, Tuple
 
+from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from outreach.config import Settings
@@ -61,6 +62,10 @@ def make_settings(**overrides: Any) -> Settings:
     )
     values.update(overrides)
     return Settings(_env_file=None, **values)
+
+
+# tests' session factory (bind=engine per call); the app builds its own sessionmaker per engine
+TestSession = sessionmaker(autoflush=False, expire_on_commit=False)
 
 
 def make_app_engine():

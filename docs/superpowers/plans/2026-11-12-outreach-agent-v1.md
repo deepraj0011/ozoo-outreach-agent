@@ -18,6 +18,12 @@
 > 5. Paused colleagues restart per `holds.colleague_resume_at` (table in spec §11). Task 12's tick must call `holds.resume_account_holds` and, when `EU_EMAIL_APPROVED` is on, `holds.release_eu_holds`. Task 9 must use the state-change reasons `not_now` (with `nurture_until`), `not_interested`, `wrong_person`; Task 11 / CRM uses `sales_rejected` and `low_fit`.
 > 6. Task 10b (2026-11-13): Slack replaced by Microsoft Teams — see docs/progress/decisions.md
 > 7. Task 9b (2026-11-13): LLM provider is configurable (anthropic, openai, azure_openai, openai_compatible); Claude is no longer hard-wired.
+> 8. Final review fix round (2026-11-13), **go-live checklist additions**:
+>    - Instantly endpoints marked UNVERIFIED in `emailtool/instantly.py` must be confirmed on a trial account: `POST /block-lists-entries` (`tool.block`, called on every email opt-out / hard bounce), `POST /leads/list` search (`tool.find_lead`, used before re-adding a lead whose enrolment answer was lost), `DELETE /leads/{id}` answering 404 for an already deleted lead (treated as stopped), and per-lead pause / resume (still unsupported: a human pauses in the UI).
+>    - **No migrations** (no Alembic): `init_db` only creates missing tables. New tables are safe (`alert_attempt`); any column change on an existing database needs a manual `ALTER TABLE` or a fresh database before go-live.
+>    - **Access log:** production must disable uvicorn's access log (`--no-access-log`, as `scripts/run_local` does) or redact `/r/`, `/u/` and `/intake` paths: tracked-link tokens are in the URL.
+>    - **Proxy headers:** set `TRUST_PROXY_HEADERS=1` only behind a proxy you run that sets `X-Forwarded-For`; otherwise the click IP is the socket peer.
+>    - Dependencies: `pyproject.toml` holds compatible ranges; `requirements.lock` the exact tested versions (install from it for deploys).
 
 ## Global Constraints
 

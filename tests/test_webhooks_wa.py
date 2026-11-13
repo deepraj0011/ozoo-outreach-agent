@@ -15,7 +15,7 @@ from sqlalchemy import func, select
 
 from outreach.app import create_app
 from outreach.botfilter import Scanners
-from outreach.db import SessionLocal
+from tests.fakes import TestSession
 from outreach.emailtool.base import BadSignature
 from outreach.models import Alert as AlertRow
 from outreach.models import ChatMessage, Event, Lead
@@ -53,7 +53,7 @@ def env():
     deps = make_deps()
     app = create_app(make_settings(), deps=deps, engine=engine, clock=lambda: NOW, scanners=SCANNERS)
     client = TestClient(app, raise_server_exceptions=False)
-    s = SessionLocal(bind=engine)
+    s = TestSession(bind=engine)
     yield client, s, deps
     s.close()
     engine.dispose()

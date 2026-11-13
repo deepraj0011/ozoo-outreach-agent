@@ -5,7 +5,7 @@ from typing import Any, Optional
 
 from sqlalchemy import DateTime, Engine, create_engine, event
 from sqlalchemy.engine import Dialect
-from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.types import TypeDecorator
 
 
@@ -32,9 +32,6 @@ class UTCDateTime(TypeDecorator):
 
 class Base(DeclarativeBase):
     pass
-
-
-SessionLocal = sessionmaker(autoflush=False, expire_on_commit=False)
 
 
 def make_engine(url: str, **kwargs: Any) -> Engine:

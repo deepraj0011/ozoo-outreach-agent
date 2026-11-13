@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from outreach.score import apply_points, band, decay
+from outreach.score import band, decay, points_for
 from tests.conftest import NOW, make_lead
 
 
@@ -13,46 +13,23 @@ def ev(kind, tag=None, verdict="human", at=NOW):
     return SimpleNamespace(kind=kind, tag=tag, verdict=verdict, occurred_at=at)
 
 
-def test_opens_score_nothing(session):
-    lead = make_lead(session)
-    assert [apply_points(lead, ev("open")) for _ in range(5)] == [0, 0, 0, 0, 0]
-    assert lead.score == 0
-    assert lead.variant_flags["human_opens"] == 5
+def test_opens_score_nothing():
+    assert points_for("open", None, 5, False) == 0
 
 
 @pytest.mark.parametrize("tag,pts", [("homepage", 2), ("case_study", 5), ("product", 5),
                                      ("pricing", 10), ("booking", 10), ("unsubscribe", 0)])
-def test_tag_points(session, tag, pts):
-    lead = make_lead(session)
-    assert apply_points(lead, ev("click", tag)) == pts
-    assert lead.score == pts
+def test_tag_points(tag, pts):
+    assert points_for("click", tag, 0, False) == pts
 
 
-def test_wa_read_counts_once(session):
-    lead = make_lead(session)
-    assert apply_points(lead, ev("wa_read")) == 1
-    assert apply_points(lead, ev("wa_read")) == 0
-    assert lead.score == 1
+def test_wa_read_counts_once():
+    assert points_for("wa_read", None, 0, False) == 1
+    assert points_for("wa_read", None, 0, True) == 0
 
 
-def test_non_human_scores_nothing(session):
-    lead = make_lead(session)
-    for v in ("bot", "machine", None):
-        assert apply_points(lead, ev("click", "pricing", verdict=v)) == 0
-    assert lead.score == 0 and lead.last_human_event_at is None
-
-
-def test_other_kinds_zero(session):
-    lead = make_lead(session)
-    assert apply_points(lead, ev("reply")) == 0
-    assert lead.last_human_event_at is None
-
-
-def test_sets_last_human_event_at(session):
-    lead = make_lead(session)
-    t = NOW + timedelta(days=1)
-    apply_points(lead, ev("click", "homepage", at=t))
-    assert lead.last_human_event_at == t
+def test_other_kinds_zero():
+    assert points_for("reply", None, 0, False) == 0
 
 
 def test_decay_halves_after_30_days(session):

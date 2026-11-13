@@ -106,6 +106,11 @@ class Settings(BaseSettings):
     verify_mode: Optional[Mode] = None  # fake: every address valid unless it has "bounce" / "invalid"
     # Local fake clock (python -m outreach.dev advance); read only when app_env is local.
     fake_clock_file: Optional[str] = None
+    # APP_ENV=local with EMAIL_MODE / WHATSAPP_MODE real sends to real people: TIME_SCALE, the fake
+    # clock and shorter-than-spec delays are refused (and a clock offset ignored) unless this is 1.
+    allow_real_local: bool = False
+    # Trust X-Forwarded-For for the click IP only behind a proxy you run (default: the socket peer).
+    trust_proxy_headers: bool = False
 
     # Core
     database_url: str
@@ -138,9 +143,8 @@ class Settings(BaseSettings):
     zerobounce_api_key: str = ""  # required when verify_mode is real
     intake_api_key: str
 
-    # Cal.com
+    # Cal.com (the booking page is LINK_TARGETS["booking"], required)
     cal_webhook_secret: str
-    cal_booking_url: str
     # Qualifying-form fit (sales lead confirms; the Cal.com routing form uses the same rule):
     # high = size >= fit_high_min_size AND months <= fit_high_max_months;
     # medium = size >= fit_medium_min_size OR months <= fit_medium_max_months; else low.
@@ -211,11 +215,42 @@ class Settings(BaseSettings):
             short = [f"{n}_s" for n, default in DELAY_DEFAULTS_S.items() if getattr(self, f"{n}_s") < default]
             if short:
                 raise ValueError(f"shorter-than-spec delays are not allowed in production: {', '.join(short)}")
+        if (self.app_env == "local" and "real" in (self.email_mode, self.whatsapp_mode)
+                and not self.allow_real_local):
+            bad = []
+            if self.time_scale != 1.0:
+                bad.append("time_scale")
+            if self.fake_clock_file:
+                bad.append("fake_clock_file")
+            bad += [f"{n}_s" for n, default in DELAY_DEFAULTS_S.items() if getattr(self, f"{n}_s") < default]
+            if bad:
+                raise ValueError("real email / WhatsApp sending in local mode refuses "
+                                 f"{', '.join(bad)} (real people would get messages early); "
+                                 "set ALLOW_REAL_LOCAL=1 to override")
         missing = [f"{f} (because {mode} is real)" for mode, fields in REAL_MODE_REQUIRES.items()
                    if getattr(self, mode) == "real" for f in fields
                    if getattr(self, f) is None or (isinstance(getattr(self, f), str) and not getattr(self, f).strip())]
         if missing:
             raise ValueError(f"must not be blank: {', '.join(missing)}")
+        return self
+
+    @property
+    def real_sending(self) -> bool:
+        """Email or WhatsApp goes to real people (a real provider)."""
+        return "real" in (self.email_mode, self.whatsapp_mode)
+
+    @model_validator(mode="after")
+    def _links(self) -> "Settings":
+        """The booking target is required (never a silent fall back to the homepage); in production
+        LINK_BASE_URL and every link target must be https. Messages name keys, never URLs."""
+        if not (self.link_targets.get("booking") or "").strip():
+            raise ValueError('link_targets must contain "booking" (the Cal.com booking page)')
+        if self.app_env == "production":
+            urls = {"link_base_url": self.link_base_url,
+                    **{f"link_targets[{k}]": v for k, v in self.link_targets.items()}}
+            bad = [name for name, url in urls.items() if urlsplit(str(url).strip()).scheme != "https"]
+            if bad:
+                raise ValueError(f"must be https in production: {', '.join(sorted(bad))}")
         return self
 
     def delay(self, name: str) -> timedelta:

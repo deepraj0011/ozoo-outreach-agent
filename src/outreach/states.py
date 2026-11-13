@@ -28,6 +28,7 @@ class LeadState(str, Enum):
 S = LeadState
 
 TERMINAL = frozenset({S.REJECTED, S.SUPPRESSED, S.CLOSED, S.HANDED_OFF, S.ARCHIVED})
+TERMINAL_VALUES = frozenset(s.value for s in TERMINAL)  # for SQL filters and string comparisons
 
 _PAIRS = [
     # section 11 diagram

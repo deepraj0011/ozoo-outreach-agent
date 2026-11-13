@@ -143,16 +143,16 @@ def test_primary_when_both_param(session):
     assert run(session, p, primary_when_both="email").channel == "email"
 
 
-def test_zerobounce_error_returns_unknown():
+def test_zerobounce_error_returns_verify_error():  # final review B1: never "unknown" (sendable)
     with respx.mock:
         respx.get("https://api.zerobounce.net/v2/validate").mock(return_value=httpx.Response(500))
-        assert EmailVerifier("k").check("a@b.com") == "unknown"
+        assert EmailVerifier("k").check("a@b.com") == "verify_error"
 
 
-def test_zerobounce_exception_returns_unknown():
+def test_zerobounce_exception_returns_verify_error():
     with respx.mock:
         respx.get("https://api.zerobounce.net/v2/validate").mock(side_effect=httpx.ConnectError("x"))
-        assert EmailVerifier("k").check("a@b.com") == "unknown"
+        assert EmailVerifier("k").check("a@b.com") == "verify_error"
 
 
 def test_zerobounce_status_mapping():

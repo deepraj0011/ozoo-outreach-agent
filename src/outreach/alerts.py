@@ -216,11 +216,6 @@ class TeamsAlerter:
             logger.warning("alert %s posted_at not recorded: %s", p.alert_id, type(exc).__name__)
 
 
-def unposted_alert_ids(session: Session) -> List[int]:
-    """Alert rows not yet on Teams (for the worker's retry / digest)."""
-    return list(session.scalars(select(AlertRow.id).where(AlertRow.posted_at.is_(None))))
-
-
 CONSOLE_LINE_MAX = 160
 
 

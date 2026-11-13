@@ -12,7 +12,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from types import MappingProxyType
-from typing import Any, Callable, Dict, List, Mapping, Optional
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 from .actions import (
     Action, AddScore, Alert, BotReply, Classify, HandOff, PauseColleagues, RefreshNextStep,
@@ -21,6 +21,7 @@ from .actions import (
 )
 from .channels import email_usable, whatsapp_usable
 from .score import band, points_for
+from .sequencer import LAST_STEP
 from .states import TERMINAL, LeadState
 
 logger = logging.getLogger(__name__)
@@ -236,7 +237,7 @@ def _pre_guard(lead: LeadSnapshot, event: EventSnapshot) -> Optional[List[Action
 
 # ------------------------------------------------------------------ per-kind handlers
 
-LAST_EMAIL_STEP = 4
+LAST_EMAIL_STEP = LAST_STEP  # one constant: sequencer.LAST_STEP
 
 
 def _on_sent(lead: LeadSnapshot, event: EventSnapshot) -> List[Action]:
@@ -287,11 +288,26 @@ def _slots_due(lead: LeadSnapshot, at: datetime) -> bool:
     return last is None or at - last >= BOOKING_SLOTS_EVERY
 
 
+CLICK_POINTS_MAX_PER_TAG = 2  # e.g. pricing scores at most twice per lead
+CLICK_POINTS = "click_points"  # {tag: clicks that scored}
+
+
+def _click_points(lead: LeadSnapshot, tag: Optional[str]) -> Tuple[int, List[Action]]:
+    """Points for a human click, capped per tag per lead, and the flag update that counts it."""
+    pts = points_for("click", tag, 0, False)
+    raw = lead.flags.get(CLICK_POINTS)
+    counts = dict(raw) if isinstance(raw, Mapping) else {}
+    n = int(counts.get(tag or "", 0) or 0)
+    if pts <= 0 or n >= CLICK_POINTS_MAX_PER_TAG:
+        return 0, []
+    return pts, [SetFlag(CLICK_POINTS, {**counts, tag or "": n + 1})]
+
+
 def _on_click(lead: LeadSnapshot, event: EventSnapshot) -> List[Action]:
     tag = event.tag
-    pts = points_for("click", tag, 0, False)
+    pts, counted = _click_points(lead, tag)
     if tag == "pricing":
-        out = _score(lead, pts, force_hot_alert=True)
+        out = _score(lead, pts, force_hot_alert=True) + counted
         out += _variant(lead, "booking_slots")
         if not _slots_due(lead, event.occurred_at):
             return out
@@ -301,7 +317,7 @@ def _on_click(lead: LeadSnapshot, event: EventSnapshot) -> List[Action]:
             out += [WaSendText("booking_slots"), SetFlag(BOOKING_SLOTS_AT, event.occurred_at.isoformat())]
         # WA window closed: the hot_lead alert / score is enough (ruling E)
         return out
-    out = _score(lead, pts)
+    out = _score(lead, pts) + counted
     if tag in ("case_study", "product"):
         out += _variant(lead, tag)
     return out

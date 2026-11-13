@@ -19,7 +19,7 @@ from .intake import FREE_MAIL_DOMAINS
 from .jobs import discard_enqueued, take_enqueued
 from .models import ChatMessage, Event, Lead
 from .rules import EventSnapshot, LeadSnapshot, decide
-from .states import TERMINAL
+from .states import TERMINAL_VALUES
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ UNMATCHED_ALERTS = {"reply": "unmatched_reply", "wa_text": "unmatched_inbound", 
                     "booking_created": "unmatched_booking", "form_submitted": "unmatched_form"}
 # only a promising stranger is worth a person's time: low-fit forms are stored, never alerted
 UNMATCHED_FORM_FITS = frozenset({"high", "medium"})
-_TERMINAL_VALUES = tuple(s.value for s in TERMINAL)
+_TERMINAL_VALUES = TERMINAL_VALUES  # states.TERMINAL as strings
 UA_MAX = 512
 IP_MAX = 64
 

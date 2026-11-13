@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 
 from outreach.app import create_app
 from outreach.botfilter import Scanners
-from outreach.db import SessionLocal
+from tests.fakes import TestSession
 from outreach.models import Lead
 from tests.conftest import NOW
 from tests.fakes import INTAKE_KEY, make_app_engine, make_deps, make_settings
@@ -23,7 +23,7 @@ def env():
     app = create_app(make_settings(), deps=make_deps(), engine=engine, clock=lambda: NOW,
                      scanners=Scanners((), (), ()), verifier=FakeVerifier())
     client = TestClient(app, raise_server_exceptions=False)
-    s = SessionLocal(bind=engine)
+    s = TestSession(bind=engine)
     yield client, s
     s.close()
     engine.dispose()

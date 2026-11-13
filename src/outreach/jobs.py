@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session, SessionTransaction
 from .actions import Action, Alert, Deps, StartTakeover, execute, record_integration_error
 from .chatbot import takeover_active
 from .models import Event, Job, Lead
-from .states import TERMINAL
+from .states import TERMINAL_VALUES
 from .whatsapp.sender import phone_suppressed, window_open
 
 logger = logging.getLogger(__name__)
@@ -35,7 +35,7 @@ STALE_AFTER = timedelta(minutes=10)
 DEFAULT_GRACE = timedelta(minutes=2)
 MAX_CHAIN = 2  # classify -> bot_reply -> (nothing else enqueues today)
 ERROR_MAX = 200
-_TERMINAL_VALUES = frozenset(s.value for s in TERMINAL)
+_TERMINAL_VALUES = TERMINAL_VALUES  # states.TERMINAL as strings
 _ENQUEUED = "outreach_jobs_enqueued"
 _HOOKED = "outreach_jobs_hooked"
 

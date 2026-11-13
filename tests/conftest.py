@@ -7,7 +7,8 @@ import pytest
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
-from outreach.db import SessionLocal, init_db, make_engine
+from outreach.db import init_db, make_engine
+from tests.fakes import TestSession
 from outreach.models import Lead
 from outreach.states import LeadState
 
@@ -35,7 +36,7 @@ def _no_network(monkeypatch):
 def session():
     engine = make_engine("sqlite://", poolclass=StaticPool)
     init_db(engine)
-    s = SessionLocal(bind=engine)
+    s = TestSession(bind=engine)
     try:
         yield s
     finally:

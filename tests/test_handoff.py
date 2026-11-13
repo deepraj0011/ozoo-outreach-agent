@@ -17,7 +17,7 @@ from sqlalchemy import select
 from outreach.actions import StartTakeover, WaSendText
 from outreach.app import create_app
 from outreach.classifier import ReplyClass, actions_for_class
-from outreach.db import SessionLocal
+from tests.fakes import TestSession
 from outreach.handoff import start_takeover
 from outreach.models import Alert as AlertRow
 from outreach.models import ChatMessage, Event, Lead, Suppression
@@ -150,7 +150,7 @@ def env():
     deps = make_deps(wa=wa)
     app = create_app(SETTINGS, deps=deps, engine=engine, clock=lambda: NOW, scanners=SCANNERS)
     client = TestClient(app, raise_server_exceptions=False)
-    s = SessionLocal(bind=engine)
+    s = TestSession(bind=engine)
     yield client, s, deps, wa
     s.close()
     engine.dispose()
@@ -332,7 +332,7 @@ def test_teams_allow_lists_normalised():
                              teams_allowed_aad_ids=" AAD-RAJ , aad-mina ")
     app = create_app(settings, deps=make_deps(wa=wa), engine=engine, clock=lambda: NOW, scanners=SCANNERS)
     client = TestClient(app, raise_server_exceptions=False)
-    s = SessionLocal(bind=engine)
+    s = TestSession(bind=engine)
     try:
         lid = add_lead(s).id
         act = activity(f"wa {lid} hi", tenant="72f988bf-86f1-41af-91ab-2d7cd011db47 ", aad=" aad-raj")
@@ -462,7 +462,7 @@ def test_teams_wa_window_closes_before_background_send():
 
     app = create_app(SETTINGS, deps=deps, engine=engine, clock=clock, scanners=SCANNERS)
     client = TestClient(app, raise_server_exceptions=False)
-    s = SessionLocal(bind=engine)
+    s = TestSession(bind=engine)
     try:
         lid = add_lead(s).id  # window open until NOW + 10 h
         assert reply(cmd(client, f"wa {lid} hello")) == f"Sending to lead {lid}…"

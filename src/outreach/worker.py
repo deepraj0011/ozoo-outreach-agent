@@ -24,6 +24,8 @@ per lead, so one bad lead does not hold up the rest.
   retry_alerts               re-post unposted alerts; hourly digest of integration errors
   check_mailboxes            daily bounce-rate check (health.check_mailboxes)
   retry_tool_stops           failed email-tool stop / block-list calls, retried 5 min, 30 min, 2 h, then 6-hourly
+  retry_verification         leads held as verify_error: re-verify 15 min, 1 h, 6 h, 24 h after intake, then
+                             one verify_failed alert (the lead stays held)
   stuck_leads                safety net: IN_SEQUENCE with nothing sent 3 days after the expected first
                              send -> one stuck_lead alert per lead
 
@@ -64,20 +66,23 @@ from .actions import (
 )
 from .botfilter import Scanners, classify_event, load_scanners
 from .chatbot import takeover_active
-from .config import Settings
+from .config import DELAY_DEFAULTS_S, Settings
 from .health import check_mailboxes
 from .holds import INBOUND_KINDS, _restart, release_eu_holds, resume_account_holds
+from .intake import EU_HOLD, VERIFY_HOLD
+from .channels import EMAIL_OK_STATUSES
+from .verify import VERIFY_ERROR
 from .hours import business_deadline, business_zone, parse_business_hours
 from .models import Alert as AlertRow
-from .models import ChatMessage, Event, Lead, WorkerLock, WorkerMark
+from .models import AlertAttempt, ChatMessage, Event, Lead, WorkerLock, WorkerMark
 from .outreach import (
     FAILED_SUFFIX, INTRO_ATTEMPT, INTRO_TEMPLATE, REMINDER_ATTEMPT, REMINDER_TEMPLATE, WA_RETRY_AFTER,
     handle_wa_send_failure, send_template_once, set_flag, start_outreach, switch_channel, wa_gave_up,
 )
 from .rules import EventSnapshot, LeadSnapshot, decide
 from .score import DECAY_AFTER, decay
-from .sequencer import END_WAIT_DAYS, LAST_STEP, end_of_sequence_route, enroll
-from .states import TERMINAL, LeadState
+from .sequencer import LAST_STEP, end_of_sequence_route, enroll
+from .states import TERMINAL_VALUES, LeadState
 
 __all__ = ["tick", "main", "parse_business_hours", "business_zone", "business_deadline"]
 
@@ -89,24 +94,25 @@ NowFn = Callable[[], datetime]
 
 DEFAULT_BATCH = 50
 SCAN_CHUNK = 200
-CLICK_SETTLE = timedelta(seconds=30)
+CLICK_SETTLE = timedelta(seconds=DELAY_DEFAULTS_S["click_settle"])
 CLICK_MAX_FAILURES = 3
 SIBLING_WINDOW = timedelta(seconds=10)
-BOOKING_NUDGE_AFTER = timedelta(minutes=30)
+BOOKING_NUDGE_AFTER = timedelta(seconds=DELAY_DEFAULTS_S["booking_nudge_after"])
 BOOKING_NUDGE_LOOKBACK = timedelta(days=7)
-WA_REMINDER_AFTER = timedelta(hours=48)
-WA_NO_RESPONSE_AFTER = timedelta(hours=48)
+WA_REMINDER_AFTER = timedelta(seconds=DELAY_DEFAULTS_S["wa_reminder_after"])
+WA_NO_RESPONSE_AFTER = timedelta(seconds=DELAY_DEFAULTS_S["wa_no_response_after"])
 WA_UNCONFIRMED_AFTER = timedelta(hours=1)
 WA_UNCONFIRMED_GIVE_UP = timedelta(hours=24)  # after the unconfirmed alert
 STUCK_AFTER = timedelta(days=3)
 WA_STATUS_SKEW = timedelta(minutes=5)  # Meta's status time vs our clock
 WA_STATUS_KINDS = ("wa_sent", "wa_delivered", "wa_read")
-END_WAIT = timedelta(days=END_WAIT_DAYS)
+END_WAIT = timedelta(seconds=DELAY_DEFAULTS_S["end_of_sequence_wait"])
 SLA = timedelta(hours=1)
 SLA_REALERT = timedelta(minutes=30)
 ATTENDED_AFTER = timedelta(hours=2)
 ALERT_RETRY_AFTER = timedelta(minutes=1)
 ALERT_RETRY_MAX = 20
+ALERT_REPOST_MAX = 5  # tries per alert, then it is given up and listed in the digest
 DIGEST_EVERY = timedelta(hours=1)
 DIGEST_LATEST = 5
 DIGEST_TEXT_MAX = 150
@@ -116,7 +122,7 @@ START_RETRY = timedelta(minutes=10)
 LOCK_NAME = "tick"
 LOCK_LEASE = timedelta(minutes=15)
 PG_LOCK_KEY = 0x0207_7E11  # any constant bigint, the same for every worker of this app
-_TERMINAL_VALUES = tuple(s.value for s in TERMINAL)
+_TERMINAL_VALUES = TERMINAL_VALUES  # states.TERMINAL as strings
 
 
 @dataclass
@@ -146,16 +152,10 @@ def _ts(raw: Any) -> Optional[datetime]:
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
-_DELAY_DEFAULTS = {"click_settle": CLICK_SETTLE, "booking_nudge_after": BOOKING_NUDGE_AFTER,
-                   "wa_reminder_after": WA_REMINDER_AFTER, "wa_no_response_after": WA_NO_RESPONSE_AFTER,
-                   "end_of_sequence_wait": END_WAIT}
-
-
 def _delay(ctx: Ctx, name: str) -> timedelta:
-    """Settings.delay(name) (overrides / TIME_SCALE; defaults are the constants above), or the
-    constant for a settings object without it."""
-    fn = getattr(ctx.settings, "delay", None)
-    return fn(name) if callable(fn) else _DELAY_DEFAULTS[name]
+    """Settings.delay(name): config.DELAY_DEFAULTS_S (the single source of the spec delays), after
+    any override / TIME_SCALE."""
+    return ctx.settings.delay(name)
 
 
 def _flags(lead: Lead) -> Dict[str, Any]:
@@ -729,13 +729,23 @@ def _retry_alerts(ctx: Ctx, session: Session) -> int:
     repost = getattr(alerter, "repost", None)
     n = 0
     if repost is not None:
+        given_up = select(AlertAttempt.alert_id).where(AlertAttempt.gave_up_at.is_not(None))
         rows = list(session.scalars(select(AlertRow).where(
             AlertRow.posted_at.is_(None), AlertRow.kind != "integration_error",
-            AlertRow.created_at <= ctx.now - ALERT_RETRY_AFTER)
+            AlertRow.created_at <= ctx.now - ALERT_RETRY_AFTER, AlertRow.id.not_in(given_up))
             .order_by(AlertRow.created_at, AlertRow.id).limit(ALERT_RETRY_MAX)))
 
         def one(row: AlertRow) -> bool:
+            att = session.get(AlertAttempt, row.id)
+            if att is None:
+                att = AlertAttempt(alert_id=row.id, attempts=0)
+                session.add(att)
+            att.attempts = (att.attempts or 0) + 1
             if not repost(session, row, ctx.now):
+                if att.attempts >= ALERT_REPOST_MAX:
+                    att.gave_up_at = ctx.now
+                    logger.error("alert %s (lead %s): not posted after %s tries; given up", row.id, row.lead_id,
+                                 att.attempts)
                 return False
             row.posted_at = ctx.now
             return True
@@ -755,7 +765,9 @@ def _integration_digest(ctx: Ctx, session: Session) -> int:
     base = select(AlertRow).where(AlertRow.posted_at.is_(None), AlertRow.kind == "integration_error",
                                   AlertRow.created_at <= ctx.now)
     count = session.scalar(select(func.count()).select_from(base.subquery())) or 0
-    if not count:
+    gave_up = list(session.scalars(select(AlertAttempt).where(
+        AlertAttempt.gave_up_at.is_not(None), AlertAttempt.reported_at.is_(None)).order_by(AlertAttempt.alert_id)))
+    if not count and not gave_up:
         return 0
     max_id = session.scalar(select(func.max(AlertRow.id)).where(
         AlertRow.posted_at.is_(None), AlertRow.kind == "integration_error", AlertRow.created_at <= ctx.now))
@@ -763,14 +775,24 @@ def _integration_digest(ctx: Ctx, session: Session) -> int:
     lines = [f"{count} integration error(s) since the last digest; latest {len(latest)}:"]
     lines += [f"{r.kind} (lead {r.lead_id if r.lead_id is not None else 'none'}): {(r.text or '')[:DIGEST_TEXT_MAX]}"
               for r in latest]
+    if gave_up:
+        lines.append(f"{len(gave_up)} alert(s) could not be posted after {ALERT_REPOST_MAX} tries (gave up):")
+        for att in gave_up[:DIGEST_LATEST]:
+            r = session.get(AlertRow, att.alert_id)
+            if r is not None:
+                lines.append(f"{r.kind} (lead {r.lead_id if r.lead_id is not None else 'none'}): "
+                             f"{(r.text or '')[:DIGEST_TEXT_MAX]}")
     _set_mark(session, "integration_digest", ctx.now)
     session.commit()  # one attempt an hour, even if Teams is down
     if not post_text("Integration errors (hourly digest)", lines, ctx.now):
         logger.warning("worker: integration digest not posted (%s error(s) pending)", count)
         return 0
-    session.execute(update(AlertRow).where(
-        AlertRow.posted_at.is_(None), AlertRow.kind == "integration_error", AlertRow.id <= max_id)
-        .values(posted_at=ctx.now).execution_options(synchronize_session=False))
+    if max_id is not None:
+        session.execute(update(AlertRow).where(
+            AlertRow.posted_at.is_(None), AlertRow.kind == "integration_error", AlertRow.id <= max_id)
+            .values(posted_at=ctx.now).execution_options(synchronize_session=False))
+    for att in gave_up:
+        att.reported_at = ctx.now
     logger.info("worker: integration digest posted (%s error(s))", count)
     return 1
 
@@ -844,7 +866,80 @@ def _retry_tool_stops(ctx: Ctx, session: Session) -> int:
     return _each_lead(ctx, session, "retry_tool_stops", _pick(session, stmt, qualifies, ctx.batch), qualifies, one)
 
 
-# ====================================================================== 15. stuck leads
+# ====================================================================== 15. verification retries
+
+VERIFY_RETRY_BACKOFF = (timedelta(minutes=15), timedelta(hours=1), timedelta(hours=6), timedelta(hours=24))
+VERIFY_RETRY = "verify_retry"  # {"attempts": n, "next_at": iso, "alerted": iso}
+
+
+def _verify_next(lead: Lead) -> Optional[datetime]:
+    """When the next re-verification is due; None once the retries are used up."""
+    r = _flags(lead).get(VERIFY_RETRY) if isinstance(_flags(lead).get(VERIFY_RETRY), dict) else {}
+    n = int(r.get("attempts", 0))
+    if n >= len(VERIFY_RETRY_BACKOFF):
+        return None
+    return _ts(r.get("next_at")) or (lead.created_at + VERIFY_RETRY_BACKOFF[0])
+
+
+def _verified(ctx: Ctx, session: Session, lead: Lead, status: str) -> None:
+    """Verification answered: record it, lift the hold (EU leads keep their EU hold) and restart a
+    lead that was paused only for it."""
+    lead.verify_status = status
+    flags = dict(_flags(lead))
+    flags.pop(VERIFY_RETRY, None)
+    lead.variant_flags = flags
+    eu_hold = lead.is_eu and not ctx.settings.eu_email_approved
+    lead.email_hold = EU_HOLD if eu_hold else None
+    if lead.state == S.PAUSED.value and lead.pause_reason == VERIFY_HOLD:
+        if eu_hold:
+            lead.pause_reason = EU_HOLD
+        else:
+            _restart(session, lead, ctx.deps.tool, ctx.now, "verified")  # start_new picks it up
+            if status not in EMAIL_OK_STATUSES:  # email-only lead with a bad address: nothing to send
+                execute(session, lead, [SetState(S.CLOSED, "invalid_email")], ctx.deps, ctx.now)
+    logger.info("lead %s: email verified (%s), hold lifted", lead.id, status)
+
+
+def _retry_verification(ctx: Ctx, session: Session) -> int:
+    verify = ctx.deps.verify
+    if verify is None:
+        return 0
+    stmt = select(Lead).where(Lead.email_hold == VERIFY_HOLD).order_by(Lead.created_at, Lead.id)
+
+    def qualifies(lead: Lead) -> bool:
+        if lead.email_hold != VERIFY_HOLD or lead.state in _TERMINAL_VALUES or not lead.email:
+            return False
+        due = _verify_next(lead)
+        return due is not None and due <= ctx.now
+
+    def one(lead: Lead) -> bool:
+        status = verify(lead.email)
+        if status != VERIFY_ERROR:
+            _verified(ctx, session, lead, status)
+            return True
+        r = dict(_flags(lead).get(VERIFY_RETRY) or {})
+        n = int(r.get("attempts", 0)) + 1
+        r["attempts"] = n
+        if n < len(VERIFY_RETRY_BACKOFF):
+            r["next_at"] = (lead.created_at + VERIFY_RETRY_BACKOFF[n]).isoformat()
+            set_flag(lead, VERIFY_RETRY, r)
+            logger.warning("lead %s: email verification still failing (%s of %s)", lead.id, n,
+                           len(VERIFY_RETRY_BACKOFF))
+            return True
+        r["alerted"] = ctx.now.isoformat()
+        set_flag(lead, VERIFY_RETRY, r)
+        execute(session, lead, [Alert("verify_failed", (
+            f"lead {lead.id}: the email could not be verified after {n} tries (ZeroBounce unreachable, "
+            "error or out of credits); the email stays held. Check ZeroBounce, then use: retry "
+            f"{lead.id}"))], ctx.deps, ctx.now)
+        logger.error("lead %s: email verification gave up after %s tries", lead.id, n)
+        return True
+
+    return _each_lead(ctx, session, "retry_verification", _pick(session, stmt, qualifies, ctx.batch), qualifies,
+                      one)
+
+
+# ====================================================================== 16. stuck leads
 
 def _entered_sequence(session: Session, lead: Lead) -> datetime:
     at = session.scalar(select(func.max(Event.occurred_at)).where(
@@ -910,6 +1005,7 @@ JOBS: Sequence[Tuple[str, JobFn]] = (
     ("retry_alerts", _retry_alerts),
     ("check_mailboxes", _check_mailboxes),
     ("retry_tool_stops", _retry_tool_stops),
+    ("retry_verification", _retry_verification),
     ("stuck_leads", _stuck_leads),
 )
 
@@ -1071,7 +1167,9 @@ def main(argv: Optional[List[str]] = None, *, settings: Optional[Settings] = Non
     mode.add_argument("--once", action="store_true", help="run one tick and exit")
     mode.add_argument("--loop", action="store_true", help="tick every WORKER_INTERVAL_S seconds")
     args = parser.parse_args(argv)
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    from .logging_setup import configure as configure_logging
+
+    configure_logging()
 
     from .app import wire_deps  # late import: app imports this module's tick lazily too
     from .config import get_settings

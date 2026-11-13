@@ -30,7 +30,7 @@ from .config import Settings
 from .models import Event, Lead, Suppression
 from .rules import EventSnapshot, LeadSnapshot, decide
 from .sequencer import enroll, refresh_next_step, render_reply
-from .states import TERMINAL, LeadState
+from .states import TERMINAL_VALUES, LeadState
 from .whatsapp.client import WaSendError, WhatsAppNotAllowed
 
 logger = logging.getLogger(__name__)
@@ -52,7 +52,7 @@ TRANSIENT_SUFFIX = "_transient"
 # written and committed before the email tool's add_lead; while set without a tool lead id, the next
 # start looks the lead up in the tool (find_lead) before adding it again
 EMAIL_ENROLL_ATTEMPT = "email_enroll_attempted_at"
-_TERMINAL_VALUES = frozenset(s.value for s in TERMINAL)
+_TERMINAL_VALUES = TERMINAL_VALUES  # states.TERMINAL as strings
 
 BeforeSend = Optional[Callable[[], None]]
 

@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 
 from outreach.app import create_app
 from outreach.botfilter import Scanners
-from outreach.db import SessionLocal
+from tests.fakes import TestSession
 from outreach.links import make_link
 from outreach.models import Event, Lead, Suppression
 from tests.conftest import NOW, make_lead
@@ -22,7 +22,7 @@ def env():
     deps = make_deps()
     app = create_app(SETTINGS, deps=deps, engine=engine, clock=lambda: NOW, scanners=SCANNERS)
     client = TestClient(app, raise_server_exceptions=False, follow_redirects=False)
-    s = SessionLocal(bind=engine)
+    s = TestSession(bind=engine)
     yield client, s, deps, engine
     s.close()
     engine.dispose()
@@ -48,7 +48,8 @@ def test_redirect_logs_and_302(env):
     assert r.headers["cache-control"] == "no-store"
     ev = s.scalars(select(Event)).one()
     assert (ev.lead_id, ev.kind, ev.tag, ev.step, ev.channel) == (lead.id, "click", "pricing", 2, "email")
-    assert ev.ip == "198.51.100.9" and ev.user_agent == "Mozilla/5.0 Test"
+    assert ev.ip == "testclient"  # final review B4: X-Forwarded-For ignored unless trusted
+    assert ev.user_agent == "Mozilla/5.0 Test"
     assert ev.processed is False and ev.occurred_at == NOW
     assert deps.outreach.calls == [] and deps.tool.calls == []  # deferred to worker
 
@@ -73,7 +74,7 @@ def test_bad_token_goes_home(env):
 def test_missing_target_goes_home(env):
     client, s, _, engine = env
     lead = lead_in(s)
-    app = create_app(make_settings(link_targets={"homepage": "https://ozoo.ai/"}), deps=make_deps(),
+    app = create_app(make_settings(link_targets={"homepage": "https://ozoo.ai/", "booking": "https://cal.com/x"}), deps=make_deps(),
                      engine=engine, clock=lambda: NOW, scanners=SCANNERS)
     # token signed with same secret
     r = TestClient(app, follow_redirects=False).get(f"/r/{token(lead.id, 1, 'case_study')}")

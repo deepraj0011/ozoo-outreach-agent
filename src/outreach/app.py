@@ -46,11 +46,12 @@ from .links import lead_token, parse_token
 from .llm import make_llm
 from .llm.local_fake import RuleBasedLLM
 from .localclock import default_clock
+from .logging_setup import configure as configure_logging
 from .models import Event, Lead
 from .outreach import (
     FAILED_SUFFIX, INTRO_ATTEMPT, REMINDER_ATTEMPT, TRANSIENT_SUFFIX, WA_RETRY_AFTER, Outreach,
 )
-from .states import ALLOWED, LeadState
+from .states import ALLOWED, TERMINAL_VALUES, LeadState
 from .unsubscribe_page import CONFIRM_HTML, DONE_HTML, ERROR_HTML, HEADERS as PAGE_HEADERS, NOT_FOUND_HTML
 from .verify import make_verifier
 from .whatsapp.client import WaSendError, WhatsAppClient, WhatsAppNotAllowed, WindowClosed
@@ -237,12 +238,15 @@ def with_lead_token(target: str, lead_id: int, settings: Settings) -> str:
     return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
 
 
-def _client_ip(request: Request) -> Optional[str]:
-    fwd = request.headers.get("x-forwarded-for")
-    if fwd:
-        first = fwd.split(",")[0].strip()
-        if first:
-            return first[:IP_MAX]
+def _client_ip(request: Request, trust_proxy: bool = False) -> Optional[str]:
+    """The clicker's IP for the bot filter. X-Forwarded-For is client-controlled: read it only when
+    TRUST_PROXY_HEADERS=1 (behind a proxy you run that sets it); else the socket peer."""
+    if trust_proxy:
+        fwd = request.headers.get("x-forwarded-for")
+        if fwd:
+            first = fwd.split(",")[0].strip()
+            if first:
+                return first[:IP_MAX]
     return request.client.host[:IP_MAX] if request.client else None
 
 
@@ -254,11 +258,14 @@ def wire_deps(deps: Deps, settings: Settings, verifier: Any) -> Deps:
         # referrals from "wrong person" replies go through the same intake as POST /intake
         def _referral_intake(session: Session, payload: Dict[str, Any], now: datetime) -> Any:
             return intake_lead(session, payload, verifier, now, primary_when_both=settings.primary_when_both,
-                               eu_email_approved=settings.eu_email_approved)
+                               eu_email_approved=settings.eu_email_approved, tz_groups=settings.campaign_ids,
+                               default_tz_group=settings.default_tz_group)
 
         deps.intake = _referral_intake
     if deps.handoff is None:
         deps.handoff = make_handoff(deps.alerter)
+    if deps.verify is None:
+        deps.verify = getattr(verifier, "check", None)
     if deps.takeover is None:
         def _takeover(session: Session, lead: Lead, reason: str, now: datetime) -> None:
             start_takeover(session, lead, reason, deps, now)
@@ -272,22 +279,12 @@ def wire_deps(deps: Deps, settings: Settings, verifier: Any) -> Deps:
 WORKER_STOP_TIMEOUT_S = 30.0
 
 
-def _local_logging() -> None:
-    """APP_ENV=local: show the app's INFO logs (ids and event kinds only) on the console."""
-    pkg = logging.getLogger("outreach")
-    if not pkg.handlers and not logging.getLogger().handlers:
-        handler = logging.StreamHandler()
-        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
-        pkg.addHandler(handler)
-    pkg.setLevel(logging.INFO)
-
-
 def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None, engine: Any = None, *,
                clock: Callable[[], datetime] = _utcnow, scanners: Optional[Scanners] = None,
                verifier: Any = None) -> FastAPI:
     settings = settings or get_settings()
+    configure_logging()  # the outreach logger at LOG_LEVEL (ids and kinds only)
     if settings.app_env == "local":
-        _local_logging()
         if clock is _utcnow:
             clock = default_clock(settings)  # the fake clock (python -m outreach.dev advance)
     if engine is None:
@@ -390,7 +387,7 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
         except BadSignature:
             logger.warning("email webhook rejected: bad signature")
             return _fail(401)
-        except ValueError:
+        except (ValueError, RecursionError):
             logger.warning("email webhook rejected: malformed body")
             return _fail(400)
         try:
@@ -429,7 +426,7 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
         except BadSignature:
             logger.warning("whatsapp webhook rejected: bad signature")
             return _fail(401)
-        except ValueError:
+        except (ValueError, RecursionError):
             logger.warning("whatsapp webhook rejected: malformed body")
             return _fail(400)
         try:
@@ -457,7 +454,7 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
         except BadSignature:
             logger.warning("cal webhook rejected: bad signature")
             return _fail(401)
-        except ValueError:
+        except (ValueError, RecursionError):
             logger.warning("cal webhook rejected: malformed body")
             return _fail(400)
         try:
@@ -481,7 +478,7 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
             ua = request.headers.get("user-agent")
             session.add(Event(
                 lead_id=lead_id if exists else None, channel=channel, kind="click", tag=tag, step=step,
-                occurred_at=now, received_at=now, ip=_client_ip(request),
+                occurred_at=now, received_at=now, ip=_client_ip(request, settings.trust_proxy_headers),
                 user_agent=ua[:UA_MAX] if ua else None,
                 # unsubscribe clicks are never acted on (ruling 9); others wait for the worker
                 processed=tag == "unsubscribe", data={},
@@ -534,7 +531,8 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
     # ------------------------------------------------------------ intake
     def _do_intake(session: Session, payload: Any, now: datetime) -> Any:
         result = intake_lead(session, payload, verifier, now, primary_when_both=settings.primary_when_both,
-                             eu_email_approved=settings.eu_email_approved)
+                             eu_email_approved=settings.eu_email_approved, tz_groups=settings.campaign_ids,
+                             default_tz_group=settings.default_tz_group)
         session.commit()
         return result
 
@@ -548,7 +546,7 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
             payload = json.loads(body)
         except _BodyTooLarge:
             return _fail(413)
-        except (_BadRequest, ValueError):
+        except (_BadRequest, ValueError, RecursionError):  # RecursionError: deeply nested JSON
             return _fail(400)
         try:
             r = await run_in_threadpool(_do_intake, session, payload, clock())
@@ -617,6 +615,12 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
         lead, err = _locked_lead(session, args)
         if lead is None:
             return err or TEAMS_USAGE
+        if lead.email_hold == "verify_error" and lead.state not in TERMINAL_VALUES:
+            flags = dict(lead.variant_flags or {})
+            flags.pop("verify_retry", None)  # the worker re-verifies on its next tick
+            lead.variant_flags = flags
+            logger.info("teams retry: lead %s verification restarted", lead.id)
+            return f"Lead {lead.id}: email verification will be retried on the next worker tick."
         if lead.state != LeadState.IN_SEQUENCE.value:
             return f"Lead {lead.id} is {lead.state}; retry works only for leads in in_sequence."
         flags = dict(lead.variant_flags or {})

@@ -13,4 +13,4 @@ export RUN_WORKER=1
 export WORKER_INTERVAL_S="${WORKER_INTERVAL_S:-10}"
 export PYTHONUNBUFFERED=1
 exec "$ROOT/.venv/bin/uvicorn" --factory outreach.app:create_app --env-file "$ENV_FILE" \
-  --host 127.0.0.1 --port "${PORT:-8000}" "$@"
+  --host 127.0.0.1 --port "${PORT:-8000}" --no-access-log "$@"

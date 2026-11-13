@@ -23,7 +23,7 @@ from outreach.booking import (
     SUMMARY_MAX, _parse_ts, build_handoff_summary, fit_from_answers, make_handoff, parse_cal_webhook,
 )
 from outreach.botfilter import Scanners
-from outreach.db import SessionLocal
+from tests.fakes import TestSession
 from outreach.emailtool.base import BadSignature
 from outreach.links import lead_token, make_link, parse_lead_token, parse_token
 from outreach.models import Alert as AlertRow
@@ -92,7 +92,7 @@ def env():
     deps = make_deps()
     app = create_app(SETTINGS, deps=deps, engine=engine, clock=lambda: NOW, scanners=SCANNERS)
     client = TestClient(app, raise_server_exceptions=False, follow_redirects=False)
-    s = SessionLocal(bind=engine)
+    s = TestSession(bind=engine)
     yield client, s, deps
     s.close()
     engine.dispose()

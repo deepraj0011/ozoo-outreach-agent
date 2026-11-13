@@ -128,6 +128,18 @@ class Alert(Base):
     resolved_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime)
 
 
+class AlertAttempt(Base):
+    """Worker re-post attempts for an unposted alert (its own table: create_all adds it to an existing
+    database, no migration). After ALERT_REPOST_MAX tries the alert is given up and listed once in
+    the integration digest."""
+    __tablename__ = "alert_attempt"
+
+    alert_id: Mapped[int] = mapped_column(ForeignKey("alert.id"), primary_key=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    gave_up_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime)
+    reported_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime)  # in a digest
+
+
 class Job(Base):
     """A background LLM call (reply classification or a chatbot answer), run after the webhook
     request by outreach.jobs. last_error holds an exception type name only, never prompt or lead text."""

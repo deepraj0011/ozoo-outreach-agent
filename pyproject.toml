@@ -6,20 +6,21 @@ build-backend = "setuptools.build_meta"
 name = "outreach"
 version = "0.1.0"
 requires-python = ">=3.10"
+# compatible ranges (~= major.minor) of the versions tested; exact pins in requirements.lock
 dependencies = [
-  "fastapi",
-  "uvicorn[standard]",
-  "sqlalchemy>=2",
-  "httpx",
-  "anthropic",
-  "openai",
-  "pydantic-settings",
-  "pyyaml",
-  "phonenumbers",
+  "fastapi~=0.162.5",
+  "uvicorn[standard]~=0.54.0",
+  "sqlalchemy~=2.0",
+  "httpx~=0.28.1",
+  "anthropic~=2.8",
+  "openai~=3.50",
+  "pydantic-settings~=2.15",
+  "pyyaml~=6.0",
+  "phonenumbers~=9.0",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "respx"]
+dev = ["pytest~=9.2", "respx~=0.23.1"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

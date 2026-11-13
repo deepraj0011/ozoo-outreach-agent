@@ -48,13 +48,11 @@ def test_end_of_sequence_uses_settings(env):
     assert get(env, lid).state == S.NURTURE.value
 
 
-def test_settings_without_delay_fields_fall_back_to_defaults(env):
-    from types import SimpleNamespace
+def test_worker_delay_defaults_come_from_config():
+    # final review B5: one source for the spec delays (config.DELAY_DEFAULTS_S)
+    from outreach import worker
+    from outreach.config import DELAY_DEFAULTS_S
 
-    bare = SimpleNamespace(eu_email_approved=False, business_hours="Mon-Fri 09:00-18:00",
-                           business_tz="Asia/Kolkata", worker_batch_size=50)
-    wa_started(env, NOW)
-    run(env, NOW + timedelta(hours=47), settings=bare)
-    assert templates_sent(env) == []
-    run(env, NOW + timedelta(hours=48), settings=bare)
-    assert templates_sent(env) == ["ozoo_reminder"]
+    assert worker.WA_REMINDER_AFTER == timedelta(seconds=DELAY_DEFAULTS_S["wa_reminder_after"])
+    assert worker.END_WAIT == timedelta(seconds=DELAY_DEFAULTS_S["end_of_sequence_wait"])
+    assert not hasattr(worker, "_DELAY_DEFAULTS")

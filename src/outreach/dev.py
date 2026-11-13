@@ -87,7 +87,6 @@ def _local_values(db: Path, clock: Optional[Path]) -> Dict[str, str]:
         "DEFAULT_TZ_GROUP": "default",
         "INTAKE_API_KEY": secrets.token_urlsafe(32),
         "CAL_WEBHOOK_SECRET": secrets.token_urlsafe(32),
-        "CAL_BOOKING_URL": "https://example.com/book",
         "TEAMS_OUTGOING_SECRET": base64.b64encode(secrets.token_bytes(32)).decode(),
         "TEAMS_TENANT_ID": "local-tenant",
         "TEAMS_SALES_CHANNEL_ID": "19:local-sales@thread.tacv2",
@@ -316,7 +315,8 @@ def _event_detail(e: Event) -> str:
 
 def cmd_tick(args: argparse.Namespace, settings: Settings) -> int:
     from . import worker
-    from .app import _local_logging, default_deps, wire_deps
+    from .app import default_deps, wire_deps
+    from .logging_setup import configure as _local_logging
     from .verify import make_verifier
 
     _local_logging()
@@ -459,8 +459,9 @@ def _parser() -> argparse.ArgumentParser:
     sm.add_argument("--text")
     sm.add_argument("--step", type=int)
     sm.add_argument("--minutes-ago", type=float, default=10.0, help="email-sent: when it went out (default 10)")
-    sm.add_argument("--hard", action="store_true", help="email-bounce: hard (the default)")
-    sm.add_argument("--soft", action="store_true", help="email-bounce: soft")
+    bounce = sm.add_mutually_exclusive_group()
+    bounce.add_argument("--hard", action="store_true", help="email-bounce: hard (the default)")
+    bounce.add_argument("--soft", action="store_true", help="email-bounce: soft (3 soft = hard)")
     sm.add_argument("--ip", help="email-open: client IP (17.x.x.x = Apple Mail privacy proxy)")
     sm.add_argument("--tag", choices=sorted(devsim_tags()), help="click: link purpose")
     sm.add_argument("--channel", choices=("email", "whatsapp"), help="click: channel in the link")

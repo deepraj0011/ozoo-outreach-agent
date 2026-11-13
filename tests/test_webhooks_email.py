@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 
 from outreach.app import create_app
 from outreach.botfilter import Scanners, load_scanners
-from outreach.db import SessionLocal
+from tests.fakes import TestSession
 from outreach.emailtool.base import NormalizedEvent
 from outreach.emailtool.instantly import SECRET_HEADER
 from outreach.ingest import ingest
@@ -28,7 +28,7 @@ def env():
     deps = make_deps()
     app = create_app(make_settings(), deps=deps, engine=engine, clock=lambda: NOW, scanners=SCANNERS)
     client = TestClient(app, raise_server_exceptions=False)
-    s = SessionLocal(bind=engine)
+    s = TestSession(bind=engine)
     yield client, s, deps
     s.close()
     engine.dispose()

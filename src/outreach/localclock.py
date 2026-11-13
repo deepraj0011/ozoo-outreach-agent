@@ -28,9 +28,13 @@ def utcnow() -> datetime:
 class LocalClock:
     """Callable now_fn: real time + the stored offset."""
 
-    def __init__(self, path: Union[str, Path], real_now: Callable[[], datetime] = utcnow) -> None:
+    def __init__(self, path: Union[str, Path], real_now: Callable[[], datetime] = utcnow, *,
+                 ignore_offset: bool = False) -> None:
         self.path = Path(path)
         self._real_now = real_now
+        # real sending is on: an offset would send real messages early; it is ignored (warned once)
+        self.ignore_offset = ignore_offset
+        self._warned = False
 
     def offset(self) -> timedelta:
         try:
@@ -45,7 +49,14 @@ class LocalClock:
         return off if abs(off) <= MAX_OFFSET else timedelta(0)
 
     def __call__(self) -> datetime:
-        return self._real_now() + self.offset()
+        off = self.offset()
+        if self.ignore_offset:
+            if off and not self._warned:
+                self._warned = True
+                logger.warning("local clock offset ignored: real email / WhatsApp sending is on "
+                               "(set ALLOW_REAL_LOCAL=1 to use it)")
+            return self._real_now()
+        return self._real_now() + off
 
     def _write(self, off: timedelta) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -74,5 +85,6 @@ def clock_file(settings: Any) -> Path:
 def default_clock(settings: Any) -> Callable[[], datetime]:
     """The app's now_fn: the fake clock only when APP_ENV=local, else real UTC time."""
     if getattr(settings, "app_env", "production") == "local":
-        return LocalClock(clock_file(settings))
+        guard = bool(getattr(settings, "real_sending", False)) and not getattr(settings, "allow_real_local", False)
+        return LocalClock(clock_file(settings), ignore_offset=guard)
     return utcnow

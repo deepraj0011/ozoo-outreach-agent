@@ -8,7 +8,7 @@ import pytest
 import respx
 from sqlalchemy import select
 
-from outreach.alerts import TeamsAlerter, unposted_alert_ids
+from outreach.alerts import TeamsAlerter
 from outreach.models import Alert as AlertRow
 from tests.conftest import NOW, make_lead
 from tests.fakes import TEAMS_WEBHOOK_URL
@@ -100,7 +100,6 @@ def test_teams_failure_leaves_posted_at_null(session, caplog):
         session.commit()  # never raises
     r = row(session)
     assert r.kind == "booked" and r.posted_at is None
-    assert unposted_alert_ids(session) == [r.id]
     assert "Secret Name" not in caplog.text and "secret@acme.com" not in caplog.text
 
 

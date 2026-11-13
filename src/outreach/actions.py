@@ -295,6 +295,8 @@ class Deps:
     # set in production (create_app / default_deps): Classify / BotReply become background jobs
     # (outreach.jobs) instead of an LLM call inside the webhook request. None = inline (unit tests).
     jobs: Optional["JobQueue"] = None
+    # email verification (verify.EmailVerifier.check): the worker re-verifies leads held as verify_error
+    verify: Optional[Callable[[str], str]] = None
 
 
 _FAILED = object()

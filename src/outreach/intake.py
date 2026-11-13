@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import re
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import or_, select
@@ -26,25 +26,27 @@ FREE_MAIL_DOMAINS = frozenset(
 _HOLD_STATES = (LeadState.ENGAGED.value, LeadState.QUALIFYING.value, LeadState.BOOKED.value,
                 LeadState.HANDED_OFF.value)
 EU_HOLD = "eu_approval"
+VERIFY_HOLD = "verify_error"  # ZeroBounce could not answer: held until the worker re-verifies
 _EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+\-']+@[A-Za-z0-9\-]+(\.[A-Za-z0-9\-]+)*\.[A-Za-z]{2,}$")
 
 
 class IntakePayload(BaseModel):
     model_config = ConfigDict(extra="ignore", str_strip_whitespace=True)
 
+    # max_length = the Lead column size (tests/test_final_review_b.py checks they stay equal)
     name: str = Field(min_length=1, max_length=200)
     company: str = Field(min_length=1, max_length=200)
     role: str = Field(min_length=1, max_length=200)
-    source: str = Field(min_length=1, max_length=200)
-    email: Optional[str] = Field(default=None, max_length=254)
-    phone: Optional[str] = Field(default=None, max_length=200)
-    country: Optional[str] = Field(default=None, max_length=200)
+    source: str = Field(min_length=1, max_length=100)
+    email: Optional[str] = Field(default=None, max_length=320)
+    phone: Optional[str] = Field(default=None, max_length=32)
+    country: Optional[str] = Field(default=None, max_length=64)  # not stored; used to parse the phone
     consent_email: bool = False
     consent_whatsapp: bool = False
     consent_at: Optional[datetime] = None
-    industry: Optional[str] = Field(default=None, max_length=200)
-    size: Optional[str] = Field(default=None, max_length=200)
-    timezone_group: Optional[str] = Field(default=None, max_length=200)
+    industry: Optional[str] = Field(default=None, max_length=100)
+    size: Optional[str] = Field(default=None, max_length=50)
+    timezone_group: Optional[str] = Field(default=None, max_length=50)
 
 
 class IntakeResult:
@@ -73,7 +75,11 @@ def _find_existing(session: Session, email: Optional[str], phone: Optional[str])
 
 
 def intake_lead(session: Session, payload: dict, verifier, now: datetime,
-                primary_when_both: str = "whatsapp", eu_email_approved: bool = False) -> IntakeResult:
+                primary_when_both: str = "whatsapp", eu_email_approved: bool = False, *,
+                tz_groups: Optional[Iterable[str]] = None, default_tz_group: Optional[str] = None) -> IntakeResult:
+    """tz_groups: the configured campaign groups (CAMPAIGN_IDS keys). An unknown timezone_group falls
+    back to default_tz_group (the given value is recorded in variant_flags), or is rejected when
+    there is no default. None skips the check."""
     try:
         p = IntakePayload.model_validate(payload)
     except ValidationError as exc:
@@ -82,6 +88,11 @@ def intake_lead(session: Session, payload: dict, verifier, now: datetime,
     except Exception:  # noqa: BLE001 - never raise to the caller
         return _rejected("invalid payload")
 
+    tz_group, tz_note = p.timezone_group, None
+    if tz_groups is not None and tz_group is not None and tz_group not in set(tz_groups):
+        if not default_tz_group:
+            return _rejected("unknown timezone_group")
+        tz_group, tz_note = default_tz_group, tz_group
     email: Optional[str] = p.email.lower() if p.email else None
     if email and not _EMAIL_RE.match(email):
         email = None
@@ -117,7 +128,7 @@ def intake_lead(session: Session, payload: dict, verifier, now: datetime,
         consent_at=p.consent_at,
         industry=p.industry,
         size=p.size,
-        timezone_group=p.timezone_group,
+        timezone_group=tz_group,
         verify_status=verify_status,
         is_eu=eu,
         email_hold=EU_HOLD if eu and not eu_email_approved else None,
@@ -127,13 +138,20 @@ def intake_lead(session: Session, payload: dict, verifier, now: datetime,
         channel_switched=False,
         created_at=now,
     )
+    if verify_status == VERIFY_HOLD:
+        lead.email_hold = VERIFY_HOLD  # never sendable until verified (worker: retry_verification)
+    if tz_note is not None:
+        lead.variant_flags = {**(lead.variant_flags or {}), "timezone_group_unknown": tz_note}
     channel = choose_channel(lead, primary_when_both)
-    eu_held = False
+    held: Optional[str] = None
     if channel is None and lead.email_hold:
+        hold, status = lead.email_hold, lead.verify_status
         lead.email_hold = None
+        if hold == VERIFY_HOLD:
+            lead.verify_status = "valid"  # would it be an email lead once verified?
         if choose_channel(lead, primary_when_both) == "email":
-            channel, eu_held = "email", True  # valid email, waiting for EU approval
-        lead.email_hold = EU_HOLD
+            channel, held = "email", hold  # email only, waiting for approval / verification
+        lead.email_hold, lead.verify_status = hold, status
     if channel is None:
         return _rejected("no usable channel")
 
@@ -148,11 +166,16 @@ def intake_lead(session: Session, payload: dict, verifier, now: datetime,
         return IntakeResult(existing.id if existing else None, "skipped_duplicate",
                             None, "duplicate")
 
-    if eu_held:
+    if held == EU_HOLD:
         lead.pause_reason = EU_HOLD
         transition(session, lead, LeadState.PAUSED, "eu_hold", now)
         logger.info("lead %s held until EU email is approved", lead.id)
         return IntakeResult(lead.id, "held_eu", channel, EU_HOLD)
+    if held == VERIFY_HOLD:
+        lead.pause_reason = VERIFY_HOLD
+        transition(session, lead, LeadState.PAUSED, "verify_hold", now)
+        logger.info("lead %s held until its email can be verified", lead.id)
+        return IntakeResult(lead.id, "held_verify", channel, VERIFY_HOLD)
 
     blocker: Optional[int] = None
     if lead.domain and lead.domain not in FREE_MAIL_DOMAINS:

@@ -12,7 +12,7 @@ from outreach.actions import (
 )
 from outreach.models import Event
 from outreach.rules import EventSnapshot, LeadSnapshot, decide
-from outreach.score import apply_points, points_for
+from outreach.score import points_for
 from outreach.states import ALLOWED, TERMINAL, LeadState as S
 from tests.conftest import NOW, make_lead
 NOW_ISO = NOW.isoformat()
@@ -75,7 +75,8 @@ def failed(code) -> EventSnapshot:
 
 
 def run(lead, event):
-    return decide(lead, event, NOW)
+    # the per-tag click counter (final review B5) is tested in test_final_review_b.py
+    return [a for a in decide(lead, event, NOW) if not (isinstance(a, SetFlag) and a.key == "click_points")]
 
 
 def kinds(actions):
@@ -633,11 +634,6 @@ def test_add_score_only_positive():
             for a in run(replace(base, flags={"human_opens": 5, "wa_read_scored": True}), event):
                 if isinstance(a, AddScore):
                     assert a.points > 0
-
-
-def test_apply_points_still_matches_points_for(session):
-    lead = make_lead(session)
-    assert apply_points(lead, ev("open")) == 0 and lead.variant_flags["human_opens"] == 1
 
 
 # ---------------------------------------------------------------- Task 12: worker-detected conditions
