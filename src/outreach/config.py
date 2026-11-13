@@ -5,6 +5,7 @@ import binascii
 import ipaddress
 import socket
 from functools import lru_cache
+from datetime import timedelta
 from typing import Dict, FrozenSet, Literal, Optional
 from urllib.parse import urlsplit
 
@@ -17,11 +18,28 @@ INTAKE_KEY_MIN_LEN = 24
 TEAMS_SECRET_MIN_BYTES = 16
 NON_BLANK_SECRETS = (
     "tool_webhook_secret", "cal_webhook_secret", "teams_outgoing_secret", "wa_app_secret",
-    "wa_verify_token", "tool_api_key", "zerobounce_api_key",
-    "wa_access_token",
+    "wa_verify_token",
 )
 NON_BLANK_IDS = ("teams_tenant_id", "teams_sales_channel_id")
 LLMProvider = Literal["anthropic", "openai", "azure_openai", "openai_compatible"]
+Mode = Literal["fake", "real"]
+MODE_FIELDS = ("email_mode", "whatsapp_mode", "llm_mode", "alerts_mode", "verify_mode")
+# Credentials each service needs only when its mode is "real" (blank is fine in fake mode).
+REAL_MODE_REQUIRES: Dict[str, tuple] = {
+    "email_mode": ("tool_api_key",),
+    "verify_mode": ("zerobounce_api_key",),
+    "whatsapp_mode": ("wa_phone_number_id", "wa_access_token"),
+    "alerts_mode": ("teams_webhook_url",),
+    "llm_mode": ("llm_provider", "llm_classifier_model", "llm_chat_model"),
+}
+# Worker delays (seconds; defaults are the spec values). Divided by TIME_SCALE (local only).
+DELAY_DEFAULTS_S: Dict[str, float] = {
+    "click_settle": 30.0,
+    "booking_nudge_after": 30 * 60.0,
+    "wa_reminder_after": 48 * 3600.0,
+    "wa_no_response_after": 48 * 3600.0,
+    "end_of_sequence_wait": 5 * 86400.0,
+}
 # A dot-less host name ("ollama") or one of these suffixes never resolves on the public internet.
 PRIVATE_HOST_SUFFIXES = (".localhost", ".local", ".internal", ".lan", ".home.arpa")
 
@@ -78,6 +96,17 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore", hide_input_in_errors=True)
 
+    # Run mode. "local" (one machine, scripts/run_local) defaults every service below to "fake":
+    # no real accounts, no network, no cost. "production" allows only "real" (validated).
+    app_env: Literal["local", "production"] = "production"
+    email_mode: Optional[Mode] = None  # fake: in-memory email tool (emailtool/fake.py)
+    whatsapp_mode: Optional[Mode] = None  # fake: FakeWhatsAppClient (sender policy still runs)
+    llm_mode: Optional[Mode] = None  # fake: deterministic keyword RuleBasedLLM
+    alerts_mode: Optional[Mode] = None  # fake: console line + Alert row
+    verify_mode: Optional[Mode] = None  # fake: every address valid unless it has "bounce" / "invalid"
+    # Local fake clock (python -m outreach.dev advance); read only when app_env is local.
+    fake_clock_file: Optional[str] = None
+
     # Core
     database_url: str
     link_secret: str
@@ -86,7 +115,7 @@ class Settings(BaseSettings):
 
     # Email tool
     tool_name: Literal["instantly", "smartlead"]
-    tool_api_key: str
+    tool_api_key: str = ""  # required when email_mode is real
     tool_webhook_secret: str
     campaign_ids: Dict[str, str]
     default_tz_group: str
@@ -97,16 +126,16 @@ class Settings(BaseSettings):
     # openai_compatible on a self-hosted host (localhost, 127.0.0.1, private IP, dot-less name such
     # as a Docker service, *.local / *.internal). Link-local (169.254.0.0/16, fe80::/10) and cloud
     # metadata hosts are always rejected. Never logged.
-    llm_provider: LLMProvider
+    llm_provider: Optional[LLMProvider] = None  # required when llm_mode is real
     llm_api_key: str = ""  # secret; may be empty only for openai_compatible (e.g. local Ollama)
     llm_base_url: Optional[str] = None
     azure_openai_api_version: Optional[str] = None
-    llm_classifier_model: str  # for azure_openai: the deployment name
-    llm_chat_model: str
+    llm_classifier_model: str = ""  # for azure_openai: the deployment name
+    llm_chat_model: str = ""
     llm_timeout_s: float = Field(30.0, gt=0, le=300)
 
     # Intake
-    zerobounce_api_key: str
+    zerobounce_api_key: str = ""  # required when verify_mode is real
     intake_api_key: str
 
     # Cal.com
@@ -122,7 +151,7 @@ class Settings(BaseSettings):
 
     # Microsoft Teams
     # Workflows "When a Teams webhook request is received" URL; its sig= query part is a secret
-    teams_webhook_url: str
+    teams_webhook_url: str = ""  # required when alerts_mode is real
     # outgoing-webhook security token (base64), HMAC key for POST /teams/commands
     teams_outgoing_secret: str
     teams_tenant_id: str
@@ -131,8 +160,8 @@ class Settings(BaseSettings):
     teams_allowed_aad_ids: str
 
     # WhatsApp
-    wa_phone_number_id: str
-    wa_access_token: str
+    wa_phone_number_id: str = ""  # required when whatsapp_mode is real
+    wa_access_token: str = ""  # required when whatsapp_mode is real
     wa_app_secret: str
     wa_verify_token: str
     wa_graph_version: str = "v21.0"
@@ -150,6 +179,45 @@ class Settings(BaseSettings):
     run_worker: bool = False
     worker_interval_s: float = Field(60.0, gt=0, le=3600)
     worker_batch_size: int = Field(50, ge=1, le=1000)
+
+    # Worker delays, seconds (defaults = spec). Override one, or set TIME_SCALE to divide them all
+    # (TIME_SCALE=1440 turns a day into a minute). TIME_SCALE is refused in production.
+    time_scale: float = Field(1.0, gt=0, le=100000)
+    click_settle_s: float = Field(DELAY_DEFAULTS_S["click_settle"], gt=0)
+    booking_nudge_after_s: float = Field(DELAY_DEFAULTS_S["booking_nudge_after"], gt=0)
+    wa_reminder_after_s: float = Field(DELAY_DEFAULTS_S["wa_reminder_after"], gt=0)
+    wa_no_response_after_s: float = Field(DELAY_DEFAULTS_S["wa_no_response_after"], gt=0)
+    end_of_sequence_wait_s: float = Field(DELAY_DEFAULTS_S["end_of_sequence_wait"], gt=0)
+
+    @field_validator(*MODE_FIELDS, "llm_provider", "fake_clock_file", mode="before")
+    @classmethod
+    def _blank_mode_is_default(cls, v: object) -> object:
+        return None if isinstance(v, str) and not v.strip() else (v.strip() if isinstance(v, str) else v)
+
+    @model_validator(mode="after")
+    def _modes(self) -> "Settings":
+        """Fill unset modes (local: fake, production: real); production refuses any fake mode
+        and TIME_SCALE; a real mode needs its credentials. Messages name fields, never values."""
+        default = "fake" if self.app_env == "local" else "real"
+        for name in MODE_FIELDS:
+            if getattr(self, name) is None:
+                object.__setattr__(self, name, default)
+        if self.app_env == "production":
+            fakes = [n for n in MODE_FIELDS if getattr(self, n) == "fake"]
+            if fakes:
+                raise ValueError(f"fake mode is not allowed in production: {', '.join(fakes)}")
+            if self.time_scale != 1.0:
+                raise ValueError("time_scale is not allowed in production")
+        missing = [f"{f} (because {mode} is real)" for mode, fields in REAL_MODE_REQUIRES.items()
+                   if getattr(self, mode) == "real" for f in fields
+                   if getattr(self, f) is None or (isinstance(getattr(self, f), str) and not getattr(self, f).strip())]
+        if missing:
+            raise ValueError(f"must not be blank: {', '.join(missing)}")
+        return self
+
+    def delay(self, name: str) -> timedelta:
+        """A worker delay (see DELAY_DEFAULTS_S) after TIME_SCALE."""
+        return timedelta(seconds=float(getattr(self, f"{name}_s")) / self.time_scale)
 
     @field_validator("business_tz")
     @classmethod
@@ -192,6 +260,8 @@ class Settings(BaseSettings):
     @classmethod
     def _teams_url_https(cls, v: str) -> str:
         # never echo the value: the sig= query parameter is a secret
+        if not v.strip():
+            return ""  # blank: only valid when alerts_mode is fake (checked in _modes)
         try:
             parts = urlsplit(v.strip())
         except ValueError:
@@ -225,12 +295,12 @@ class Settings(BaseSettings):
             raise ValueError("teams_allowed_aad_ids needs at least one id")
         return v
 
-    @field_validator("llm_classifier_model", "llm_chat_model")
+    @field_validator("llm_classifier_model", "llm_chat_model", "tool_api_key", "zerobounce_api_key",
+                     "wa_phone_number_id", "wa_access_token")
     @classmethod
-    def _model_not_blank(cls, v: str, info) -> str:
-        if not v.strip():
-            raise ValueError(f"{info.field_name} must not be blank")
-        return v.strip()
+    def _strip_mode_fields(cls, v: str) -> str:
+        # blank is checked in _modes (required only when the service's mode is real)
+        return v.strip() if not v.strip() else v
 
     @field_validator("llm_base_url", "azure_openai_api_version", mode="before")
     @classmethod
@@ -241,6 +311,8 @@ class Settings(BaseSettings):
     def _llm_settings(self) -> "Settings":
         # messages name the field only: never echo the key or URL
         provider = self.llm_provider
+        if provider is None:
+            return self  # llm_mode fake (a real llm_mode without a provider fails in _modes)
         if provider != "openai_compatible" and not self.llm_api_key.strip():
             raise ValueError(f"llm_api_key must not be blank for llm_provider {provider}")
         if provider in ("azure_openai", "openai_compatible") and not self.llm_base_url:

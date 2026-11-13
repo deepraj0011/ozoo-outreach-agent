@@ -44,3 +44,18 @@ class EmailVerifier:
         except Exception as exc:  # noqa: BLE001 - never leak address/key; fail soft
             logger.warning("email verification failed: %s", type(exc).__name__)
             return "unknown"
+
+
+class FakeVerifier:
+    """Local fake (VERIFY_MODE=fake): no network. Every address is valid, except one containing
+    "bounce" or "invalid" (lets you test a rejected / undeliverable address)."""
+
+    def check(self, email: str) -> str:
+        low = (email or "").lower()
+        return "invalid" if "bounce" in low or "invalid" in low else "valid"
+
+
+def make_verifier(settings) -> "EmailVerifier | FakeVerifier":
+    if getattr(settings, "verify_mode", "real") == "fake":
+        return FakeVerifier()
+    return EmailVerifier(settings.zerobounce_api_key)

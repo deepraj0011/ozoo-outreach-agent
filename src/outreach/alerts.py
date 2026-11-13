@@ -219,3 +219,44 @@ class TeamsAlerter:
 def unposted_alert_ids(session: Session) -> List[int]:
     """Alert rows not yet on Teams (for the worker's retry / digest)."""
     return list(session.scalars(select(AlertRow.id).where(AlertRow.posted_at.is_(None))))
+
+
+CONSOLE_LINE_MAX = 160
+
+
+class ConsoleAlerter:
+    """Local fake (ALERTS_MODE=fake): no Teams. Each alert is an Alert row with posted_at set (so
+    the worker never retries it) plus one compact console line. The line holds the alert kind, the
+    lead id and the first line of the alert text (local console only, never a log record)."""
+
+    def __init__(self, out: Callable[[str], None] = print) -> None:
+        self._out = out
+
+    def _print(self, kind: str, lead_id: Optional[int], text: str) -> None:
+        first = (text or "").strip().split("\n", 1)[0]
+        if len(first) > CONSOLE_LINE_MAX:
+            first = first[:CONSOLE_LINE_MAX - 1] + "…"
+        who = f"lead {lead_id}" if lead_id is not None else "no lead"
+        try:
+            self._out(f"[ALERT {kind}] {who}: {first}")
+        except Exception:  # noqa: BLE001 - alerting must never break the caller
+            pass
+
+    def send(self, kind: str, text: str, lead: Any, now: datetime,
+             session: Optional[Session] = None) -> None:
+        lead_id = getattr(lead, "id", None)
+        sess = session if session is not None else (object_session(lead) if lead is not None else None)
+        if sess is None:
+            logger.warning("alert %s for lead %s not stored: no session", kind, lead_id)
+            return
+        sess.add(AlertRow(lead_id=lead_id, kind=kind, text=text, created_at=now, posted_at=now))
+        sess.flush()
+        self._print(kind, lead_id, text)
+
+    def repost(self, session: Session, row: AlertRow, now: datetime) -> bool:
+        self._print(row.kind, row.lead_id, row.text or "")
+        return True
+
+    def post_text(self, header: str, lines: List[str], now: datetime) -> bool:
+        self._print("digest", None, f"{header}: {len(lines)} line(s)")
+        return True

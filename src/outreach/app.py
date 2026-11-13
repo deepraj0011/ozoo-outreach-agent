@@ -11,6 +11,7 @@ import html
 import json
 import logging
 import re
+import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Callable, Dict, Iterator, List, Optional, Tuple
@@ -23,7 +24,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from starlette.concurrency import run_in_threadpool
 
 from .actions import Deps, record_integration_error
-from .alerts import TeamsAlerter
+from .alerts import ConsoleAlerter, TeamsAlerter
 from .booking import make_handoff, parse_cal_webhook
 from .botfilter import Scanners, load_scanners
 from .chatbot import make_bot
@@ -31,6 +32,7 @@ from .classifier import make_classifier
 from .config import Settings, get_settings
 from .db import init_db, make_engine
 from .emailtool.base import BadSignature, NormalizedEvent
+from .emailtool.fake import FakeEmailTool
 from .emailtool.instantly import InstantlyTool
 from .handoff import start_takeover
 from .ingest import IP_MAX, UA_MAX, ingest
@@ -38,11 +40,14 @@ from .intake import intake_lead
 from .jobs import JobQueue, run_job
 from .links import lead_token, parse_token
 from .llm import make_llm
+from .llm.local_fake import RuleBasedLLM
+from .localclock import default_clock
 from .models import Event, Lead
 from .outreach import Outreach
 from .unsubscribe_page import CONFIRM_HTML, DONE_HTML, ERROR_HTML, HEADERS as PAGE_HEADERS, NOT_FOUND_HTML
-from .verify import EmailVerifier
+from .verify import make_verifier
 from .whatsapp.client import WaSendError, WhatsAppClient, WhatsAppNotAllowed, WindowClosed
+from .whatsapp.fake import FakeWhatsAppClient
 from .whatsapp.sender import WhatsAppSender, check_free_text
 from .whatsapp.webhook import parse_wa_webhook
 
@@ -111,14 +116,26 @@ def _fail(status: int) -> JSONResponse:
 
 
 def default_deps(settings: Settings) -> Deps:
-    if settings.tool_name != "instantly":
+    """Real providers; with APP_ENV=local each service set to "fake" (EMAIL_MODE, WHATSAPP_MODE,
+    LLM_MODE, ALERTS_MODE) gets its offline stand-in instead. Settings refuse fake in production."""
+    run_id = uuid.uuid4().hex[:8]  # fake ids never repeat across processes / restarts
+    if settings.email_mode == "fake":
+        tool: Any = FakeEmailTool(webhook_secret=settings.tool_webhook_secret, log_calls=True,
+                                  id_prefix=f"fake-{run_id}-")
+    elif settings.tool_name != "instantly":
         raise ValueError(f"no adapter for tool {settings.tool_name!r} yet")
-    llm = make_llm(settings)  # one client for the classifier and the chatbot (LLM_PROVIDER)
+    else:
+        tool = InstantlyTool(settings.tool_api_key, settings.tool_webhook_secret)
+    wa_client: Any = (FakeWhatsAppClient(log_sends=True, id_prefix=f"wamid.FAKE{run_id}.")
+                      if settings.whatsapp_mode == "fake" else WhatsAppClient(settings))
+    alerter: Any = ConsoleAlerter() if settings.alerts_mode == "fake" else TeamsAlerter(settings.teams_webhook_url)
+    # one client for the classifier and the chatbot (LLM_PROVIDER)
+    llm = RuleBasedLLM() if settings.llm_mode == "fake" else make_llm(settings)
     outreach = Outreach(settings)
     deps = Deps(
-        tool=InstantlyTool(settings.tool_api_key, settings.tool_webhook_secret),
-        wa=WhatsAppSender(WhatsAppClient(settings), settings),
-        alerter=TeamsAlerter(settings.teams_webhook_url),
+        tool=tool,
+        wa=WhatsAppSender(wa_client, settings),  # consent / window / suppression checks always run
+        alerter=alerter,
         outreach=outreach,
         classify=make_classifier(settings, llm),
         bot_reply=make_bot(settings, llm),
@@ -237,16 +254,30 @@ def wire_deps(deps: Deps, settings: Settings, verifier: Any) -> Deps:
 WORKER_STOP_TIMEOUT_S = 30.0
 
 
+def _local_logging() -> None:
+    """APP_ENV=local: show the app's INFO logs (ids and event kinds only) on the console."""
+    pkg = logging.getLogger("outreach")
+    if not pkg.handlers and not logging.getLogger().handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+        pkg.addHandler(handler)
+    pkg.setLevel(logging.INFO)
+
+
 def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None, engine: Any = None, *,
                clock: Callable[[], datetime] = _utcnow, scanners: Optional[Scanners] = None,
                verifier: Any = None) -> FastAPI:
     settings = settings or get_settings()
+    if settings.app_env == "local":
+        _local_logging()
+        if clock is _utcnow:
+            clock = default_clock(settings)  # the fake clock (python -m outreach.dev advance)
     if engine is None:
         engine = make_engine(settings.database_url)
     init_db(engine)  # idempotent create_all
     deps = deps or default_deps(settings)
     scanners = scanners or load_scanners()
-    verifier = verifier or EmailVerifier(settings.zerobounce_api_key)
+    verifier = verifier or make_verifier(settings)
     session_factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
     wire_deps(deps, settings, verifier)
     home = settings.link_targets.get("homepage") or DEFAULT_HOME

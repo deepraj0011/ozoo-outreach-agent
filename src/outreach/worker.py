@@ -130,6 +130,18 @@ def _ts(raw: Any) -> Optional[datetime]:
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
+_DELAY_DEFAULTS = {"click_settle": CLICK_SETTLE, "booking_nudge_after": BOOKING_NUDGE_AFTER,
+                   "wa_reminder_after": WA_REMINDER_AFTER, "wa_no_response_after": WA_NO_RESPONSE_AFTER,
+                   "end_of_sequence_wait": END_WAIT}
+
+
+def _delay(ctx: Ctx, name: str) -> timedelta:
+    """Settings.delay(name) (overrides / TIME_SCALE; defaults are the constants above), or the
+    constant for a settings object without it."""
+    fn = getattr(ctx.settings, "delay", None)
+    return fn(name) if callable(fn) else _DELAY_DEFAULTS[name]
+
+
 def _flags(lead: Lead) -> Dict[str, Any]:
     return lead.variant_flags or {}
 
@@ -272,7 +284,7 @@ def _siblings(session: Session, ev: Event) -> List[Event]:
 
 def _process_settled_clicks(ctx: Ctx, session: Session) -> int:
     rows = list(session.scalars(select(Event).where(
-        Event.kind == "click", Event.processed.is_(False), Event.received_at <= ctx.now - CLICK_SETTLE)
+        Event.kind == "click", Event.processed.is_(False), Event.received_at <= ctx.now - _delay(ctx, "click_settle"))
         .order_by(Event.received_at, Event.id).limit(ctx.batch)))
 
     def one(ev: Event) -> bool:
@@ -293,7 +305,7 @@ def _process_settled_clicks(ctx: Ctx, session: Session) -> int:
 def _booking_click_not_booked(ctx: Ctx, session: Session) -> int:
     stmt = (select(Event).where(
         Event.kind == "click", Event.tag == "booking", Event.verdict == "human", Event.processed.is_(True),
-        Event.lead_id.is_not(None), Event.occurred_at <= ctx.now - BOOKING_NUDGE_AFTER,
+        Event.lead_id.is_not(None), Event.occurred_at <= ctx.now - _delay(ctx, "booking_nudge_after"),
         Event.occurred_at >= ctx.now - BOOKING_NUDGE_LOOKBACK)
         .order_by(Event.occurred_at, Event.id))
     seen: set = set()
@@ -373,7 +385,7 @@ def _wa_unconfirmed(ctx: Ctx, session: Session) -> int:
 def _wa_reminder(ctx: Ctx, session: Session) -> int:
     stmt = (select(Lead).where(
         Lead.state == S.IN_SEQUENCE.value, Lead.active_channel == "whatsapp",
-        Lead.wa_template_sent_at <= ctx.now - WA_REMINDER_AFTER, Lead.wa_reminder_sent_at.is_(None))
+        Lead.wa_template_sent_at <= ctx.now - _delay(ctx, "wa_reminder_after"), Lead.wa_reminder_sent_at.is_(None))
         .order_by(Lead.created_at, Lead.id))
 
     def keep(lead: Lead) -> bool:
@@ -393,7 +405,7 @@ def _wa_reminder(ctx: Ctx, session: Session) -> int:
 def _wa_no_response(ctx: Ctx, session: Session) -> int:
     stmt = (select(Lead).where(
         Lead.state == S.IN_SEQUENCE.value, Lead.active_channel == "whatsapp",
-        Lead.wa_reminder_sent_at <= ctx.now - WA_NO_RESPONSE_AFTER)
+        Lead.wa_reminder_sent_at <= ctx.now - _delay(ctx, "wa_no_response_after"))
         .order_by(Lead.created_at, Lead.id))
 
     def keep(lead: Lead) -> bool:
@@ -438,7 +450,7 @@ def _eu_holds(ctx: Ctx, session: Session) -> int:
 def _end_of_sequence(ctx: Ctx, session: Session) -> int:
     leads = list(session.scalars(select(Lead).where(
         Lead.state == S.IN_SEQUENCE.value, Lead.active_channel == "email", Lead.step_sent >= LAST_STEP,
-        Lead.last_sent_at <= ctx.now - END_WAIT).order_by(Lead.last_sent_at, Lead.id).limit(ctx.batch)))
+        Lead.last_sent_at <= ctx.now - _delay(ctx, "end_of_sequence_wait")).order_by(Lead.last_sent_at, Lead.id).limit(ctx.batch)))
 
     def one(lead: Lead) -> bool:
         clicks = session.scalar(select(func.count(Event.id)).where(
@@ -790,12 +802,16 @@ def main(argv: Optional[List[str]] = None, *, settings: Optional[Settings] = Non
     if engine is None:
         engine = make_engine(settings.database_url)
     init_db(engine)
+    if now_fn is _utcnow:
+        from .localclock import default_clock
+
+        now_fn = default_clock(settings)  # the fake clock only when APP_ENV=local
     if deps is None:
         from .app import default_deps
-        from .verify import EmailVerifier
+        from .verify import make_verifier
 
         deps = default_deps(settings)
-        wire_deps(deps, settings, EmailVerifier(settings.zerobounce_api_key))
+        wire_deps(deps, settings, make_verifier(settings))
     factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
     if args.once:

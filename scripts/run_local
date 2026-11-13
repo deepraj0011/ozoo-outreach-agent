@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Start the agent locally: loads .env.local and runs the web app on http://127.0.0.1:8000 with the
+# worker inside it (RUN_WORKER=1, a tick every 10 s). Stop with Ctrl+C. One process writes the
+# SQLite database: do not also run `python -m outreach.worker --loop`. See docs/LOCAL_TESTING.md.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ENV_FILE="${ENV_FILE:-$ROOT/.env.local}"
+if [ ! -f "$ENV_FILE" ]; then
+  echo "No $ENV_FILE yet. Run scripts/local_setup first." >&2
+  exit 1
+fi
+export RUN_WORKER=1
+export WORKER_INTERVAL_S="${WORKER_INTERVAL_S:-10}"
+export PYTHONUNBUFFERED=1
+exec "$ROOT/.venv/bin/uvicorn" --factory outreach.app:create_app --env-file "$ENV_FILE" \
+  --host 127.0.0.1 --port "${PORT:-8000}" "$@"
