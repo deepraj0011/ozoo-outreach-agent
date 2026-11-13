@@ -342,7 +342,9 @@ class _Run:
             return
         payload: Dict[str, Any] = {
             "name": a.name or "Referral", "company": lead.company, "role": "unknown", "source": "referral",
-            "email": a.email, "phone": a.phone, "consent_email": bool(lead.consent_email),
+            "email": a.email, "phone": a.phone,
+            # no consent from the referral; email needs no opt-in (plan v2.1), it is only recorded
+            "consent_email": False,
             "consent_whatsapp": False,
         }
         result = self.external("intake", self.deps.intake, self.session, payload, self.now)

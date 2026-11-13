@@ -19,6 +19,7 @@ from .actions import (
     Action, Alert, BotReply, IntakeReferral, SendReply, SetNurtureUntil, SetState, StopAllOutreach, Suppress,
     SuppressAllChannels, ToolPause, WaSendText,
 )
+from .intake import FREE_MAIL_DOMAINS
 from .models import Event, Lead
 from .states import ALLOWED, LeadState
 
@@ -32,12 +33,15 @@ MAX_TEXT = 8000
 MAX_REASON = 200
 MAX_DRAFT = 1000
 MAX_NAME = 200
+MAX_CONTACT = 254
 MAX_TOKENS = 500
 TIMEOUT_S = 20.0
 MAX_RETRIES = 2
 SEND_HOUR = time(9, 0, tzinfo=timezone.utc)
 NURTURE_DEFAULT = timedelta(days=90)
 OOO_DEFAULT = timedelta(days=7)
+OOO_MAX = timedelta(days=60)
+NURTURE_MAX = timedelta(days=365)
 
 SYSTEM_PROMPT = """\
 You classify a prospect's reply to B2B outreach from Ozoo.ai. Call the classify_reply tool exactly once.
@@ -140,15 +144,24 @@ class _ToolOutput(BaseModel):
 
 _WROTE_RE = re.compile(r"^On .+ wrote:$")
 _CUT_MARKERS = ("-----Original Message-----",)
+_HEADER_FOLLOWERS = ("Sent:", "To:", "Date:")
+_REPLY_TAG_RE = re.compile(r"<(\s*/?\s*reply\b[^>]*)>", re.IGNORECASE)
+
+
+def _header_block_at(lines: List[str], i: int) -> bool:
+    """A "From: " line starts quoted history only when Sent:/To:/Date: follows within 3 lines."""
+    return lines[i].strip().startswith("From: ") and any(
+        ln.strip().startswith(_HEADER_FOLLOWERS) for ln in lines[i + 1:i + 4])
 
 
 def strip_quoted(text: str) -> str:
     """Drop quoted history: ">" lines, and everything from an "On ... wrote:" line, an
     "-----Original Message-----" line or a "From: " header block onwards. Collapse blank runs."""
     kept: List[str] = []
-    for raw in (text or "").replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+    lines = (text or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    for i, raw in enumerate(lines):
         line = raw.strip()
-        if _WROTE_RE.match(line) or line in _CUT_MARKERS or line.startswith("From: "):
+        if _WROTE_RE.match(line) or line in _CUT_MARKERS or _header_block_at(lines, i):
             break
         if line.startswith(">"):
             continue
@@ -157,6 +170,29 @@ def strip_quoted(text: str) -> str:
     out = re.sub(r"[ \t]+", " ", out)
     out = re.sub(r"\n{3,}", "\n\n", out)
     return out.strip()
+
+
+def _neutralise_tags(text: str) -> str:
+    """The body must not be able to close or reopen our <reply> wrapper."""
+    return _REPLY_TAG_RE.sub(lambda m: "\u2039" + m.group(1) + "\u203a", text)
+
+
+def _digits(s: str) -> str:
+    return re.sub(r"\D", "", s)
+
+
+def _grounded_email(v: Optional[str], body: str) -> Optional[str]:
+    """Keep a model-extracted email only if it is literally in the reply."""
+    if not v or len(v) > MAX_CONTACT or v.lower() not in body.lower():
+        return None
+    return v
+
+
+def _grounded_phone(v: Optional[str], body: str) -> Optional[str]:
+    if not v or len(v) > MAX_CONTACT:
+        return None
+    d = _digits(v)
+    return v if len(d) >= 7 and d in _digits(body) else None
 
 
 def _user_message(text: str, channel: str, today: date) -> str:
@@ -177,8 +213,11 @@ def classify_reply(text: str, channel: str, client: Any, *, model: str, today: d
             system=SYSTEM_PROMPT,
             tools=[CLASSIFY_TOOL],
             tool_choice={"type": "tool", "name": "classify_reply"},
-            messages=[{"role": "user", "content": _user_message(body, channel, today)}],
+            messages=[{"role": "user", "content": _user_message(_neutralise_tags(body), channel, today)}],
         )
+        if getattr(resp, "stop_reason", None) == "max_tokens":
+            logger.warning("reply classifier output cut at max_tokens")
+            return _unsure("classifier_error:max_tokens")
         block = next((b for b in (getattr(resp, "content", None) or [])
                       if getattr(b, "type", None) == "tool_use" and getattr(b, "name", None) == "classify_reply"),
                      None)
@@ -202,8 +241,8 @@ def classify_reply(text: str, channel: str, client: Any, *, model: str, today: d
         confidence=parsed.confidence,
         return_date=future(parsed.return_date),
         later_date=future(parsed.later_date),
-        referral_email=parsed.referral_email,
-        referral_phone=parsed.referral_phone,
+        referral_email=_grounded_email(parsed.referral_email, body),
+        referral_phone=_grounded_phone(parsed.referral_phone, body),
         referral_name=parsed.referral_name[:MAX_NAME] if parsed.referral_name else None,
         reason=parsed.reason.strip()[:MAX_REASON],
         draft_answer=parsed.draft_answer[:MAX_DRAFT] if parsed.draft_answer else None,
@@ -225,12 +264,37 @@ def _colleague(rc: ReplyClass, lead: Lead, event: Event) -> List[Action]:
     state is untouched. Only an opt-out acts, and only on the writer's own address."""
     if rc.label == "unsubscribe":
         sender = (event.data or {}).get("sender_email")
+        if not sender:
+            return [Alert("unsure", f"lead {lead.id}: a colleague asked to be removed, but their address is "
+                                    "unknown; please suppress it manually")]
         return [Suppress(sender, "email", "colleague_unsubscribe"), Alert("unsure", "colleague asked to be removed")]
     kind = {"interested": "hot_lead", "question": "question"}.get(rc.label, "unsure")
     text = f"lead {lead.id}: reply from a colleague (not the lead) classified {rc.label} ({rc.reason})"
     if rc.label == "question" and rc.draft_answer:
         text += f". Draft: {rc.draft_answer}"
     return [Alert(kind, text)]
+
+
+def _company_domain(lead: Lead) -> Optional[str]:
+    d = lead.domain or (lead.email.rsplit("@", 1)[1] if lead.email and "@" in lead.email else None)
+    d = d.strip().lower() if d else None
+    return None if not d or d in FREE_MAIL_DOMAINS else d
+
+
+def _referral(rc: ReplyClass, lead: Lead) -> List[Action]:
+    """Only same-company email referrals are taken in automatically; anything else goes to a human
+    (the address came from a model reading third-party text)."""
+    if rc.referral_email:
+        ref_domain = rc.referral_email.rsplit("@", 1)[-1].strip().lower() if "@" in rc.referral_email else None
+        company = _company_domain(lead)
+        if company and ref_domain == company:
+            return [IntakeReferral(email=rc.referral_email, phone=rc.referral_phone, name=rc.referral_name)]
+        return [Alert("unsure", f"lead {lead.id}: referral to a contact outside the company — "
+                                "add manually if appropriate")]
+    if rc.referral_phone:
+        return [Alert("unsure", f"lead {lead.id}: referral by phone only — check and add manually "
+                                "if appropriate")]
+    return []
 
 
 def actions_for_class(rc: ReplyClass, lead: Lead, event: Event, now: datetime) -> List[Action]:
@@ -273,25 +337,27 @@ def actions_for_class(rc: ReplyClass, lead: Lead, event: Event, now: datetime) -
         if moved is None:
             return review(S.NURTURE)
         until = _at_send_hour(rc.later_date) if rc.later_date else now + NURTURE_DEFAULT
-        return [*moved, SetNurtureUntil(until)]
+        return [*moved, SetNurtureUntil(min(until, now + NURTURE_MAX))]
     if label == "not_interested":
         moved = move(S.CLOSED, "not_interested")
         return review(S.CLOSED) if moved is None else moved
     if label == "unsubscribe":
+        moved = move(S.SUPPRESSED, "reply_unsubscribe")
         return [SuppressAllChannels("reply_unsubscribe"), StopAllOutreach(),
-                *(move(S.SUPPRESSED, "reply_unsubscribe") or [])]
+                *(review(S.SUPPRESSED) if moved is None else moved)]
     if label == "ooo":
         moved = move(S.PAUSED, "ooo")
         if moved is None:
             return review(S.PAUSED)
         until = _at_send_hour(rc.return_date) if rc.return_date else now + OOO_DEFAULT
+        if until > now + OOO_MAX:
+            return [*moved, ToolPause(now + OOO_MAX),
+                    Alert("unsure", f"lead {lead.id}: long out-of-office (back {until.date().isoformat()}); "
+                                    f"paused for {OOO_MAX.days} days")]
         return [*moved, ToolPause(until)]
     if label == "wrong_person":
-        out: List[Action] = []
-        if rc.referral_email or rc.referral_phone:
-            out.append(IntakeReferral(email=rc.referral_email, phone=rc.referral_phone, name=rc.referral_name))
         moved = move(S.CLOSED, "wrong_person")
-        return out + (review(S.CLOSED) if moved is None else moved)
+        return _referral(rc, lead) + (review(S.CLOSED) if moved is None else moved)
     # unsure (and anything unexpected)
     out = [Alert("unsure", f"lead {lead.id}: needs human review ({rc.reason})")]
     if not email and _wa_window_open(lead, now):
