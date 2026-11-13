@@ -28,7 +28,7 @@ Branch: `feat/outreach-agent-v1`. Plan: `docs/superpowers/plans/2026-11-12-outre
 
 **Tests now:** 1126 passing (`.venv/bin/pytest -q`).
 
-**What's next:** Task 12a (AI calls as background jobs) is being built. Then, **Task 12a (new: run Claude calls in the background, not inside webhook requests)**, Task 12 (starter + worker), Task 13 (deploy + end-to-end test). Cut line if time runs short: Task 10's chatbot part; `ASK_QUESTION` then goes straight to human takeover.
+**What's next:** Task 12a (AI calls as background jobs) is being built. Then Task 12 (starter + worker + mailbox health) and Task 13 (deploy + end-to-end test), then a final whole-branch review.
 
 ## Files in this folder
 
