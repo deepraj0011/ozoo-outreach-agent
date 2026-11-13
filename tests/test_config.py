@@ -15,7 +15,10 @@ REQUIRED = {
     "TOOL_WEBHOOK_SECRET": "w",
     "CAMPAIGN_IDS": json.dumps({"in_a": "c1"}),
     "DEFAULT_TZ_GROUP": "in_a",
-    "ANTHROPIC_API_KEY": "a",
+    "LLM_PROVIDER": "openai",
+    "LLM_API_KEY": "a",
+    "LLM_CLASSIFIER_MODEL": "model-c",
+    "LLM_CHAT_MODEL": "model-b",
     "ZEROBOUNCE_API_KEY": "z",
     "INTAKE_API_KEY": "I" * 30,
     "CAL_WEBHOOK_SECRET": "c",
@@ -38,8 +41,11 @@ def test_settings_load_from_env(monkeypatch):
     for k, v in REQUIRED.items():
         monkeypatch.setenv(k, v)
     s = Settings(_env_file=None)
-    assert s.classifier_model == "claude-sonnet-5-5"
-    assert s.chatbot_model == "claude-sonnet-5-5"
+    assert s.llm_provider == "openai"
+    assert s.llm_classifier_model == "model-c"
+    assert s.llm_chat_model == "model-b"
+    assert s.llm_base_url is None and s.azure_openai_api_version is None
+    assert s.llm_timeout_s == 30
     assert s.primary_when_both == "whatsapp"
     assert s.wa_graph_version == "v21.0"
     assert s.business_tz == "Asia/Kolkata"
@@ -91,7 +97,7 @@ def test_short_intake_key_rejected(monkeypatch):
 
 @pytest.mark.parametrize("env", [
     "TOOL_WEBHOOK_SECRET", "CAL_WEBHOOK_SECRET", "TEAMS_OUTGOING_SECRET", "WA_APP_SECRET",
-    "WA_VERIFY_TOKEN", "INTAKE_API_KEY", "TOOL_API_KEY", "ANTHROPIC_API_KEY",
+    "WA_VERIFY_TOKEN", "INTAKE_API_KEY", "TOOL_API_KEY", "LLM_API_KEY",
     "ZEROBOUNCE_API_KEY", "WA_ACCESS_TOKEN",
 ])
 def test_blank_secret_rejected(monkeypatch, env):

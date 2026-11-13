@@ -522,7 +522,7 @@ def test_teams_done_releases(env, tmp_path):
     kb = tmp_path / "kb.md"
     kb.write_text("# KB\nfacts")
     fc = FakeClient(out("answer", "sure"))
-    assert make_bot(SETTINGS, client=fc, kb_path=kb)(s, lead, NOW) != []
+    assert make_bot(SETTINGS, llm=fc, kb_path=kb)(s, lead, NOW) != []
     assert len(fc.calls) == 1
 
 

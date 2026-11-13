@@ -34,6 +34,7 @@ from .handoff import start_takeover
 from .ingest import IP_MAX, UA_MAX, ingest
 from .intake import intake_lead
 from .links import lead_token, parse_token
+from .llm import make_llm
 from .models import Event, Lead
 from .unsubscribe_page import CONFIRM_HTML, DONE_HTML, ERROR_HTML, HEADERS as PAGE_HEADERS, NOT_FOUND_HTML
 from .verify import EmailVerifier
@@ -122,13 +123,14 @@ class _NotWired:
 def default_deps(settings: Settings) -> Deps:
     if settings.tool_name != "instantly":
         raise ValueError(f"no adapter for tool {settings.tool_name!r} yet")
+    llm = make_llm(settings)  # one client for the classifier and the chatbot (LLM_PROVIDER)
     return Deps(
         tool=InstantlyTool(settings.tool_api_key, settings.tool_webhook_secret),
         wa=WhatsAppSender(WhatsAppClient(settings), settings),
         alerter=TeamsAlerter(settings.teams_webhook_url),
         outreach=_NotWired("outreach"),  # Task 12
-        classify=make_classifier(settings) if settings.anthropic_api_key else None,
-        bot_reply=make_bot(settings) if settings.anthropic_api_key else None,
+        classify=make_classifier(settings, llm),
+        bot_reply=make_bot(settings, llm),
     )
 
 

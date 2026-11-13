@@ -12,6 +12,7 @@ dependencies = [
   "sqlalchemy>=2",
   "httpx",
   "anthropic",
+  "openai",
   "pydantic-settings",
   "pyyaml",
   "phonenumbers",

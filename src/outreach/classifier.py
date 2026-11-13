@@ -1,4 +1,4 @@
-"""Claude reply classifier for email replies and WhatsApp free text (plan section 6).
+"""LLM reply classifier for email replies and WhatsApp free text (plan section 6).
 
 classify_reply() never raises: any failure becomes label "unsure" so a human looks at it.
 actions_for_class() is pure: it turns a classification into executor actions.
@@ -20,6 +20,7 @@ from .actions import (
     Suppress, SuppressAllChannels, ToolPause, WaSendText,
 )
 from .intake import FREE_MAIL_DOMAINS
+from .llm import LLMClient, LLMTruncated, make_llm
 from .models import Event, Lead
 from .states import ALLOWED, LeadState
 
@@ -35,8 +36,6 @@ MAX_DRAFT = 1000
 MAX_NAME = 200
 MAX_CONTACT = 254
 MAX_TOKENS = 500
-TIMEOUT_S = 20.0
-MAX_RETRIES = 2
 SEND_HOUR = time(9, 0, tzinfo=timezone.utc)
 NURTURE_DEFAULT = timedelta(days=90)
 OOO_DEFAULT = timedelta(days=7)
@@ -71,24 +70,25 @@ Never quote prices, never promise features or timelines; if you do not know, say
 will follow up. Use null for every other label.
 """
 
-CLASSIFY_TOOL: Dict[str, Any] = {
-    "name": "classify_reply",
-    "description": "Record the classification of the prospect's reply.",
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "label": {"type": "string", "enum": list(LABELS)},
-            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
-            "return_date": {"type": ["string", "null"], "description": "YYYY-MM-DD (ooo) or null"},
-            "later_date": {"type": ["string", "null"], "description": "YYYY-MM-DD (not_now) or null"},
-            "referral_email": {"type": ["string", "null"]},
-            "referral_phone": {"type": ["string", "null"]},
-            "referral_name": {"type": ["string", "null"]},
-            "reason": {"type": "string", "description": "One short sentence."},
-            "draft_answer": {"type": ["string", "null"], "description": "Only for question."},
-        },
-        "required": ["label", "confidence", "reason"],
+CLASSIFY_TOOL_NAME = "classify_reply"
+CLASSIFY_TOOL_DESCRIPTION = "Record the classification of the prospect's reply."
+# Plain JSON Schema accepted by every provider's tool / function calling (no $ref, no strict mode);
+# _ToolOutput below is the real validator.
+CLASSIFY_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "label": {"type": "string", "enum": list(LABELS)},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "return_date": {"type": ["string", "null"], "description": "YYYY-MM-DD (ooo) or null"},
+        "later_date": {"type": ["string", "null"], "description": "YYYY-MM-DD (not_now) or null"},
+        "referral_email": {"type": ["string", "null"]},
+        "referral_phone": {"type": ["string", "null"]},
+        "referral_name": {"type": ["string", "null"]},
+        "reason": {"type": "string", "description": "One short sentence."},
+        "draft_answer": {"type": ["string", "null"], "description": "Only for question."},
     },
+    "required": ["label", "confidence", "reason"],
+    "additionalProperties": False,
 }
 
 
@@ -199,34 +199,29 @@ def _user_message(text: str, channel: str, today: date) -> str:
     return f"Today is {today.isoformat()}. Channel: {channel}.\n<reply>\n{text}\n</reply>"
 
 
-# ------------------------------------------------------------------ the Claude call
+# ------------------------------------------------------------------ the model call
 
-def classify_reply(text: str, channel: str, client: Any, *, model: str, today: date) -> ReplyClass:
+def classify_reply(text: str, channel: str, llm: LLMClient, *, model: str, today: date) -> ReplyClass:
     """Classify one reply with a forced tool call. Never raises."""
     try:
         body = strip_quoted(text)[:MAX_TEXT].strip()
         if not body:
             return _unsure("empty_reply")
-        resp = client.messages.create(
-            model=model,
-            max_tokens=MAX_TOKENS,
+        raw = llm.structured(
             system=SYSTEM_PROMPT,
-            tools=[CLASSIFY_TOOL],
-            tool_choice={"type": "tool", "name": "classify_reply"},
             messages=[{"role": "user", "content": _user_message(_neutralise_tags(body), channel, today)}],
+            tool_name=CLASSIFY_TOOL_NAME,
+            tool_description=CLASSIFY_TOOL_DESCRIPTION,
+            schema=CLASSIFY_SCHEMA,
+            max_tokens=MAX_TOKENS,
+            model=model,
         )
-        if getattr(resp, "stop_reason", None) == "max_tokens":
-            logger.warning("reply classifier output cut at max_tokens")
-            return _unsure("classifier_error:max_tokens")
-        block = next((b for b in (getattr(resp, "content", None) or [])
-                      if getattr(b, "type", None) == "tool_use" and getattr(b, "name", None) == "classify_reply"),
-                     None)
-        if block is None:
-            raise LookupError("no classify_reply tool_use block")
-        raw = block.input
         if not isinstance(raw, dict):
             raise TypeError("tool input is not an object")
         parsed = _ToolOutput.model_validate(raw)
+    except LLMTruncated:
+        logger.warning("reply classifier output cut at max_tokens")
+        return _unsure("classifier_error:max_tokens")
     except Exception as exc:  # noqa: BLE001 - every failure goes to a human
         logger.warning("reply classifier failed: %s", type(exc).__name__)
         return _unsure(f"classifier_error:{type(exc).__name__}")
@@ -363,17 +358,16 @@ def actions_for_class(rc: ReplyClass, lead: Lead, event: Event, now: datetime) -
 
 # ------------------------------------------------------------------ Deps.classify
 
-def make_classifier(settings: Any, client: Any = None) -> Callable[[Session, Lead, Event, datetime], List[Action]]:
-    """Build Deps.classify. Without `client`, a real Anthropic client (20 s timeout, 2 retries)."""
-    if client is None:
-        import anthropic
-
-        client = anthropic.Anthropic(api_key=settings.anthropic_api_key, timeout=TIMEOUT_S, max_retries=MAX_RETRIES)
-    model = settings.classifier_model
+def make_classifier(settings: Any, llm: Optional[LLMClient] = None
+                    ) -> Callable[[Session, Lead, Event, datetime], List[Action]]:
+    """Build Deps.classify. Without `llm`, the configured provider (make_llm(settings))."""
+    if llm is None:
+        llm = make_llm(settings)
+    model = settings.llm_classifier_model
 
     def classify(session: Session, lead: Lead, event: Event, now: datetime) -> List[Action]:
         data = dict(event.data or {})
-        rc = classify_reply(str(data.get("text") or ""), event.channel, client, model=model, today=now.date())
+        rc = classify_reply(str(data.get("text") or ""), event.channel, llm, model=model, today=now.date())
         data["classification"] = {"label": rc.label, "confidence": rc.confidence, "reason": rc.reason}
         event.data = data  # reassign so the JSON column is marked dirty
         logger.info("lead %s: event %s classified %s (%.2f)", lead.id, event.id, rc.label, rc.confidence)

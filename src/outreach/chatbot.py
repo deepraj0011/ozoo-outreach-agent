@@ -19,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .actions import Action, SetNurtureUntil, SetState, StartTakeover, WaSendRaw, WaSendText
+from .llm import LLMClient, LLMTruncated, make_llm
 from .models import ChatMessage, Lead
 from .states import ALLOWED, LeadState
 
@@ -31,8 +32,6 @@ DEFAULT_KB = REPO_ROOT / "kb" / "ozoo_kb.md"
 
 KINDS = ("answer", "ready_to_book", "wants_human", "not_ready", "out_of_scope")
 MAX_TOKENS = 400
-TIMEOUT_S = 20.0
-MAX_RETRIES = 2
 HISTORY = 20
 MAX_TURNS = 6
 MAX_ANSWER = 1000
@@ -72,17 +71,18 @@ text = null.
 promise, or you are unsure in any way. text = null.
 """.format(guardrails="\n".join(f"- {g}" for g in GUARDRAILS))
 
-BOT_TOOL: Dict[str, Any] = {
-    "name": "bot_reply",
-    "description": "Record the reply decision for the prospect's latest WhatsApp message.",
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "kind": {"type": "string", "enum": list(KINDS)},
-            "text": {"type": ["string", "null"], "description": "The reply text, only for kind answer."},
-        },
-        "required": ["kind"],
+BOT_TOOL_NAME = "bot_reply"
+BOT_TOOL_DESCRIPTION = "Record the reply decision for the prospect's latest WhatsApp message."
+# Plain JSON Schema accepted by every provider's tool / function calling (no $ref, no strict mode);
+# _ToolOutput below is the real validator.
+BOT_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "kind": {"type": "string", "enum": list(KINDS)},
+        "text": {"type": ["string", "null"], "description": "The reply text, only for kind answer."},
     },
+    "required": ["kind"],
+    "additionalProperties": False,
 }
 
 
@@ -193,9 +193,9 @@ def build_messages(history: Sequence[ChatMessage]) -> List[Dict[str, str]]:
     return out
 
 
-# ------------------------------------------------------------------ the Claude call
+# ------------------------------------------------------------------ the model call
 
-def bot_reply(lead: Any, history: List[ChatMessage], kb: str, client: Any, *, model: str,
+def bot_reply(lead: Any, history: List[ChatMessage], kb: str, llm: LLMClient, *, model: str,
               today: date, kb_price_set: Optional[FrozenSet[Price]] = None) -> BotResult:
     """One forced tool call, then the guardrail post-checks. Never raises."""
     lead_id = getattr(lead, "id", None)
@@ -204,25 +204,21 @@ def bot_reply(lead: Any, history: List[ChatMessage], kb: str, client: Any, *, mo
         if not messages:
             logger.warning("lead %s: bot has no lead message to answer", lead_id)
             return _HUMAN
-        resp = client.messages.create(
-            model=model,
-            max_tokens=MAX_TOKENS,
+        raw = llm.structured(
             system=build_system(kb, today),
-            tools=[BOT_TOOL],
-            tool_choice={"type": "tool", "name": "bot_reply"},
             messages=messages,
+            tool_name=BOT_TOOL_NAME,
+            tool_description=BOT_TOOL_DESCRIPTION,
+            schema=BOT_SCHEMA,
+            max_tokens=MAX_TOKENS,
+            model=model,
         )
-        if getattr(resp, "stop_reason", None) == "max_tokens":
-            logger.warning("lead %s: bot output cut at max_tokens", lead_id)
-            return _HUMAN
-        block = next((b for b in (getattr(resp, "content", None) or [])
-                      if getattr(b, "type", None) == "tool_use" and getattr(b, "name", None) == "bot_reply"),
-                     None)
-        if block is None:
-            raise LookupError("no bot_reply tool_use block")
-        if not isinstance(block.input, dict):
+        if not isinstance(raw, dict):
             raise TypeError("tool input is not an object")
-        parsed = _ToolOutput.model_validate(block.input)
+        parsed = _ToolOutput.model_validate(raw)
+    except LLMTruncated:
+        logger.warning("lead %s: bot output cut at max_tokens", lead_id)
+        return _HUMAN
     except Exception as exc:  # noqa: BLE001 - every failure goes to a human
         logger.warning("lead %s: bot reply failed: %s", lead_id, type(exc).__name__)
         return _HUMAN
@@ -268,15 +264,13 @@ def takeover_active(lead: Any) -> bool:
     return bool(flags.get("takeover_at")) and not flags.get("takeover_released")
 
 
-def make_bot(settings: Any, client: Any = None,
+def make_bot(settings: Any, llm: Optional[LLMClient] = None,
              kb_path: Union[str, Path, None] = None) -> Callable[[Session, Lead, datetime], List[Action]]:
-    """Build Deps.bot_reply. Without `client`, a real Anthropic client (20 s timeout, 2 retries).
+    """Build Deps.bot_reply. Without `llm`, the configured provider (make_llm(settings)).
     The KB is read once here (resolved from the repo root, not the cwd)."""
-    if client is None:
-        import anthropic
-
-        client = anthropic.Anthropic(api_key=settings.anthropic_api_key, timeout=TIMEOUT_S, max_retries=MAX_RETRIES)
-    model = settings.chatbot_model
+    if llm is None:
+        llm = make_llm(settings)
+    model = settings.llm_chat_model
     kb = load_kb(kb_path)
     kb_price_set = kb_prices(kb)  # cached with the KB: every quoted price must be in this set
     if not kb:
@@ -298,7 +292,7 @@ def make_bot(settings: Any, client: Any = None,
             return [WaSendText("turn_limit")]
         if not kb:
             return [StartTakeover("no_kb")]
-        result = bot_reply(lead, rows, kb, client, model=model, today=now.date(), kb_price_set=kb_price_set)
+        result = bot_reply(lead, rows, kb, llm, model=model, today=now.date(), kb_price_set=kb_price_set)
         logger.info("lead %s: bot reply kind %s", lead.id, result.kind)
         return actions_for_bot(result, lead, now)
 

@@ -8,8 +8,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
-import anthropic
-import httpx
 import pytest
 from sqlalchemy import select
 
@@ -17,9 +15,11 @@ from outreach.actions import (
     SetNurtureUntil, SetState, StartTakeover, WaSendRaw, WaSendText, execute,
 )
 from outreach.chatbot import (
-    BOT_TOOL, DEFAULT_KB, GUARDRAILS, KINDS, BotResult, bot_reply, build_messages, build_system, make_bot,
+    BOT_SCHEMA, BOT_TOOL_DESCRIPTION, BOT_TOOL_NAME, DEFAULT_KB, GUARDRAILS, KINDS, BotResult, bot_reply, build_messages, build_system, make_bot,
 )
 from outreach.handoff import start_takeover
+from outreach.llm import LLMBadOutput, LLMTruncated, LLMUnavailable
+from outreach.llm.fake import FakeLLM
 from outreach.models import Alert as AlertRow
 from outreach.models import ChatMessage
 from outreach.states import LeadState as S
@@ -33,22 +33,7 @@ KB = "# Ozoo.ai\n## Services\nWe build AI agents.\n## FAQs\nThe starter plan is 
 SETTINGS = make_settings()
 
 
-class FakeClient:
-    """Stands in for anthropic.Anthropic: records messages.create kwargs, no network."""
-
-    def __init__(self, tool_input: Optional[Dict[str, Any]] = None, exc: Optional[Exception] = None,
-                 content: Optional[List[Any]] = None, stop_reason: str = "tool_use") -> None:
-        self.calls: List[Dict[str, Any]] = []
-        self.messages = self
-        self._input, self._exc, self._content, self._stop = tool_input, exc, content, stop_reason
-
-    def create(self, **kw: Any) -> Any:
-        self.calls.append(kw)
-        if self._exc is not None:
-            raise self._exc
-        content = self._content if self._content is not None else [
-            SimpleNamespace(type="tool_use", name="bot_reply", input=self._input)]
-        return SimpleNamespace(content=content, stop_reason=self._stop)
+FakeClient = FakeLLM  # scripted LLM port: dicts are returned, exceptions raised; records kwargs
 
 
 def out(kind: str, text: Optional[str] = None) -> Dict[str, Any]:
@@ -87,7 +72,7 @@ def kb_file(tmp_path: Path, text: str = KB) -> Path:
 
 
 def bot_actions(session, lead, client, tmp_path, kb: str = KB):
-    return make_bot(SETTINGS, client=client, kb_path=kb_file(tmp_path, kb))(session, lead, NOW)
+    return make_bot(SETTINGS, llm=client, kb_path=kb_file(tmp_path, kb))(session, lead, NOW)
 
 
 # ---------------------------------------------------------------- the Claude call
@@ -98,9 +83,10 @@ def test_call_shape_forced_tool():
     kw = client.calls[0]
     assert kw["model"] == "m"
     assert kw["max_tokens"] == 400
-    assert kw["tools"] == [BOT_TOOL]
-    assert kw["tool_choice"] == {"type": "tool", "name": "bot_reply"}
-    assert BOT_TOOL["input_schema"]["properties"]["kind"]["enum"] == list(KINDS)
+    assert kw["tool_name"] == BOT_TOOL_NAME == "bot_reply"
+    assert kw["tool_description"] == BOT_TOOL_DESCRIPTION
+    assert kw["schema"] == BOT_SCHEMA
+    assert BOT_SCHEMA["properties"]["kind"]["enum"] == list(KINDS)
     assert KINDS == ("answer", "ready_to_book", "wants_human", "not_ready", "out_of_scope")
     assert kw["system"] == build_system(KB, TODAY)
     assert f"<kb>\n{KB}\n</kb>" in kw["system"]
@@ -191,7 +177,7 @@ def test_make_bot_caches_kb_prices(session, tmp_path, monkeypatch):
     monkeypatch.setattr(cb, "kb_prices", lambda kb: calls.append(kb) or real(kb))
     lead = wa_lead(session)
     add_history(session, lead, ("lead", "price?"))
-    bot = make_bot(SETTINGS, client=FakeClient(out("answer", "Starter is $49 per month.")), kb_path=kb_file(tmp_path))
+    bot = make_bot(SETTINGS, llm=FakeClient(out("answer", "Starter is $49 per month.")), kb_path=kb_file(tmp_path))
     assert bot(session, lead, NOW) == [WaSendRaw("Starter is $49 per month.")]
     assert bot(session, lead, NOW) == [WaSendRaw("Starter is $49 per month.")]
     assert len(calls) == 1  # computed once, with the KB
@@ -226,17 +212,16 @@ def test_answer_at_limit_ok():
 
 
 def test_api_error_hands_to_human():
-    req = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
-    for exc in (anthropic.APITimeoutError(request=req), RuntimeError("boom")):
-        assert ask(FakeClient(exc=exc)) == BotResult("wants_human", None)
+    for exc in (LLMUnavailable("llm unavailable: timeout"), RuntimeError("boom")):
+        assert ask(FakeClient(exc)) == BotResult("wants_human", None)
 
 
 @pytest.mark.parametrize("client", [
     FakeClient(out("maybe", "x")),  # kind outside the enum
     FakeClient({"text": "no kind"}),
-    FakeClient(content=[SimpleNamespace(type="text", text="hi")]),  # no tool_use block
-    FakeClient(out("answer", "cut"), stop_reason="max_tokens"),
-    FakeClient(content=[SimpleNamespace(type="tool_use", name="bot_reply", input="not a dict")]),
+    FakeClient(LLMBadOutput("no tool call")),  # no tool call / refusal / bad JSON
+    FakeClient(LLMTruncated("llm output truncated")),
+    FakeClient("not a dict"),
 ])
 def test_malformed_output_hands_to_human(client):
     assert ask(client) == BotResult("wants_human", None)
@@ -337,7 +322,7 @@ def test_sixth_turn_offers_booking_or_human(session, tmp_path):
 def test_turn_limit_no_llm_call(session, tmp_path):
     lead = wa_lead(session, wa_bot_turns=9)
     add_history(session, lead, ("lead", "q"))
-    client = FakeClient(exc=RuntimeError("must not be called"))
+    client = FakeClient(RuntimeError("must not be called"))
     assert bot_actions(session, lead, client, tmp_path) == [WaSendText("turn_limit")]
     assert client.calls == []
     lead.wa_bot_turns = 5
@@ -384,7 +369,7 @@ def test_handoff_kinds_start_takeover(session, tmp_path, kind):
 def test_api_error_bot_starts_takeover(session, tmp_path):
     lead = wa_lead(session)
     add_history(session, lead, ("lead", "q"))
-    assert bot_actions(session, lead, FakeClient(exc=RuntimeError("x")), tmp_path) == [StartTakeover("wants_human")]
+    assert bot_actions(session, lead, FakeClient(RuntimeError("x")), tmp_path) == [StartTakeover("wants_human")]
 
 
 def test_wants_human_starts_takeover(session, tmp_path):
@@ -393,7 +378,7 @@ def test_wants_human_starts_takeover(session, tmp_path):
     wa = FakeWhatsApp(SETTINGS)
     deps = make_deps(wa=wa)
     deps.takeover = partial(_takeover, deps=deps)
-    deps.bot_reply = make_bot(SETTINGS, client=FakeClient(out("wants_human")), kb_path=kb_file(tmp_path))
+    deps.bot_reply = make_bot(SETTINGS, llm=FakeClient(out("wants_human")), kb_path=kb_file(tmp_path))
     from outreach.actions import BotReply
 
     execute(session, lead, [BotReply()], deps, NOW)
@@ -431,7 +416,7 @@ def test_missing_kb_hands_off(session, tmp_path):
     lead = wa_lead(session)
     add_history(session, lead, ("lead", "q"))
     client = FakeClient(out("answer", "x"))
-    bot = make_bot(SETTINGS, client=client, kb_path=tmp_path / "nope.md")
+    bot = make_bot(SETTINGS, llm=client, kb_path=tmp_path / "nope.md")
     assert bot(session, lead, NOW) == [StartTakeover("no_kb")]
     assert bot_actions(session, lead, client, tmp_path, kb="  \n") == [StartTakeover("no_kb")]
     assert client.calls == []
@@ -446,7 +431,7 @@ def test_default_kb_resolved_from_repo_root(monkeypatch, tmp_path):
         assert section in raw
     client = FakeClient(out("answer", "ok"))
     lead = SimpleNamespace(id=1, variant_flags={}, wa_bot_turns=0, state="engaged")
-    bot = make_bot(SETTINGS, client=client)
+    bot = make_bot(SETTINGS, llm=client)
     session = _FakeSession([msg("lead", "q")])
     assert bot(session, lead, NOW) == [WaSendRaw("ok")]
     assert "<kb>" in client.calls[0]["system"] and "Services" in client.calls[0]["system"]
@@ -469,6 +454,33 @@ def test_message_text_never_logged(session, tmp_path, caplog):
     add_history(session, lead, ("lead", "SECRET-QUESTION"))
     bot_actions(session, lead, FakeClient(out("answer", "SECRET-ANSWER")), tmp_path)
     execute(session, lead, [WaSendRaw("SECRET-ANSWER")], make_deps(wa=FakeWhatsApp(SETTINGS)), NOW)
-    ask(FakeClient(exc=RuntimeError("SECRET-ERR")))
+    ask(FakeClient(RuntimeError("SECRET-ERR")))
     assert "SECRET" not in caplog.text
     assert lead.phone not in caplog.text
+
+
+def test_schema_portable_across_providers():
+    """Plain JSON Schema both tool-calling APIs accept: object at the top, no $ref, closed."""
+    import json
+
+    assert BOT_SCHEMA["type"] == "object"
+    assert BOT_SCHEMA["additionalProperties"] is False
+    assert "$ref" not in json.dumps(BOT_SCHEMA) and "strict" not in BOT_SCHEMA
+    assert set(BOT_SCHEMA["required"]) <= set(BOT_SCHEMA["properties"])
+
+
+def test_make_bot_defaults_to_configured_llm(monkeypatch, tmp_path):
+    import outreach.chatbot as cb
+
+    built = []
+    monkeypatch.setattr(cb, "make_llm", lambda settings: built.append(settings) or FakeLLM(out("answer", "x")))
+    make_bot(SETTINGS, kb_path=kb_file(tmp_path))
+    assert built == [SETTINGS]
+
+
+def test_make_bot_uses_chat_model(session, tmp_path):
+    lead = wa_lead(session)
+    add_history(session, lead, ("lead", "What do you do?"))
+    client = FakeClient(out("answer", "ok"))
+    make_bot(make_settings(llm_chat_model="chat-test"), client, kb_path=kb_file(tmp_path))(session, lead, NOW)
+    assert client.calls[0]["model"] == "chat-test"

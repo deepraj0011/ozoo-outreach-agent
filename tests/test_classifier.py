@@ -1,11 +1,8 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
-from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
-import anthropic
-import httpx
 import pytest
 from sqlalchemy import select
 
@@ -14,10 +11,12 @@ from outreach.actions import (
     Suppress, SuppressAllChannels, ToolPause, WaSendText, execute,
 )
 from outreach.classifier import (
-    CLASSIFY_TOOL, LABELS, SYSTEM_PROMPT, ReplyClass, actions_for_class, classify_reply, make_classifier,
+    CLASSIFY_SCHEMA, CLASSIFY_TOOL_DESCRIPTION, CLASSIFY_TOOL_NAME, LABELS, SYSTEM_PROMPT, ReplyClass, actions_for_class, classify_reply, make_classifier,
     strip_quoted,
 )
 from outreach.intake import IntakeResult
+from outreach.llm import LLMBadOutput, LLMTruncated, LLMUnavailable
+from outreach.llm.fake import FakeLLM
 from outreach.models import Alert as AlertRow
 from outreach.models import Event
 from outreach.states import LeadState as S
@@ -29,25 +28,7 @@ TODAY = NOW.date()
 
 # ---------------------------------------------------------------- fakes
 
-class FakeClient:
-    """Stands in for anthropic.Anthropic: records messages.create kwargs, no network."""
-
-    def __init__(self, tool_input: Optional[Dict[str, Any]] = None, exc: Optional[Exception] = None,
-                 content: Optional[List[Any]] = None) -> None:
-        self.calls: List[Dict[str, Any]] = []
-        self.messages = self
-        self._input, self._exc, self._content = tool_input, exc, content
-
-    def create(self, **kw: Any) -> Any:
-        self.calls.append(kw)
-        if self._exc is not None:
-            raise self._exc
-        if self._content is not None:
-            return SimpleNamespace(content=self._content)
-        return SimpleNamespace(content=[
-            SimpleNamespace(type="text", text="ok"),
-            SimpleNamespace(type="tool_use", name="classify_reply", input=self._input),
-        ])
+FakeClient = FakeLLM  # scripted LLM port: dicts are returned, exceptions raised; records kwargs
 
 
 def out(label: str, confidence: float = 0.95, **kw: Any) -> Dict[str, Any]:
@@ -82,10 +63,10 @@ def test_call_shape_forced_tool():
     assert kw["model"] == "claude-x"
     assert kw["max_tokens"] == 500
     assert kw["system"] == SYSTEM_PROMPT
-    assert kw["tools"] == [CLASSIFY_TOOL]
-    assert kw["tool_choice"] == {"type": "tool", "name": "classify_reply"}
-    assert CLASSIFY_TOOL["name"] == "classify_reply"
-    schema = CLASSIFY_TOOL["input_schema"]
+    assert kw["tool_name"] == CLASSIFY_TOOL_NAME == "classify_reply"
+    assert kw["tool_description"] == CLASSIFY_TOOL_DESCRIPTION
+    assert kw["schema"] == CLASSIFY_SCHEMA
+    schema = CLASSIFY_SCHEMA
     assert schema["properties"]["label"]["enum"] == list(LABELS)
     assert len(LABELS) == 8
     assert set(schema["required"]) == {"label", "confidence", "reason"}
@@ -126,10 +107,9 @@ def test_low_confidence_is_unsure():
 
 
 def test_api_error_is_unsure():
-    req = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
-    r = classify(client=FakeClient(exc=anthropic.APITimeoutError(request=req)))
-    assert (r.label, r.confidence, r.reason) == ("unsure", 0.0, "classifier_error:APITimeoutError")
-    r = classify(client=FakeClient(exc=RuntimeError("boom")))
+    r = classify(client=FakeClient(LLMUnavailable("llm unavailable: timeout")))
+    assert (r.label, r.confidence, r.reason) == ("unsure", 0.0, "classifier_error:LLMUnavailable")
+    r = classify(client=FakeClient(RuntimeError("boom")))
     assert r.reason == "classifier_error:RuntimeError"
 
 
@@ -138,8 +118,8 @@ def test_api_error_is_unsure():
     FakeClient({"label": "interested"}),                           # missing confidence/reason
     FakeClient(out("interested", 1.5)),                            # out of range
     FakeClient(out("ooo", return_date="next tuesday")),             # bad date
-    FakeClient(content=[SimpleNamespace(type="text", text="interested")]),  # no tool_use block
-    FakeClient(content=None, tool_input="not a dict"),              # input not an object
+    FakeClient(LLMBadOutput("no tool call")),                      # no tool call / refusal / bad JSON
+    FakeClient("not a dict"),                                      # output not an object
 ])
 def test_malformed_tool_output_is_unsure(client):
     r = classify(client=client)
@@ -204,7 +184,7 @@ def test_empty_after_strip_is_unsure_no_api_call(text):
 
 def test_classify_reply_never_logs_reply_text(caplog):
     caplog.set_level("DEBUG")
-    classify("secret body text 555-0100", client=FakeClient(exc=RuntimeError("secret body text")))
+    classify("secret body text 555-0100", client=FakeClient(RuntimeError("secret body text")))
     classify("secret body text 555-0100", client=FakeClient(out("interested")))
     assert "secret body" not in caplog.text and "555-0100" not in caplog.text
 
@@ -348,12 +328,12 @@ def test_classification_stored_on_event(session):
     lead = email_lead(session)
     ev = reply_event(session, lead)
     client = FakeClient(out("not_interested", 0.91))
-    fn = make_classifier(make_settings(classifier_model="claude-test"), client=client)
+    fn = make_classifier(make_settings(llm_classifier_model="classifier-test"), llm=client)
     a = fn(session, lead, ev, NOW)
     assert a == [SetState(S.CLOSED, "not_interested")]
     assert ev.data["classification"] == {"label": "not_interested", "confidence": 0.91, "reason": "because"}
     assert ev.data["text"] == "hi"
-    assert client.calls[0]["model"] == "claude-test"
+    assert client.calls[0]["model"] == "classifier-test"
     assert f"Today is {NOW.date().isoformat()}" in client.calls[0]["messages"][0]["content"]
     session.flush()
     session.expire(ev)
@@ -365,7 +345,7 @@ def test_classify_end_to_end_through_executor(session):
 
     lead = email_lead(session)
     ev = reply_event(session, lead)
-    deps = make_deps(classify=make_classifier(make_settings(), client=FakeClient(out("interested"))))
+    deps = make_deps(classify=make_classifier(make_settings(), llm=FakeClient(out("interested"))))
     execute(session, lead, [Classify()], deps, NOW, ev)
     assert lead.state == "qualifying"
     assert deps.outreach.calls == [("send_email_text", lead.id, "booking_link")]
@@ -539,11 +519,25 @@ def test_colleague_unsubscribe_without_sender(session):
 
 
 def test_max_tokens_is_unsure():
-    class Cut(FakeClient):
-        def create(self, **kw):
-            r = super().create(**kw)
-            r.stop_reason = "max_tokens"
-            return r
-
-    r = classify(client=Cut(out("interested")))
+    r = classify(client=FakeClient(LLMTruncated("llm output truncated")))
     assert (r.label, r.reason) == ("unsure", "classifier_error:max_tokens")
+
+
+def test_schema_portable_across_providers():
+    """Plain JSON Schema both tool-calling APIs accept: object at the top, no $ref, closed."""
+    import json
+
+    assert CLASSIFY_SCHEMA["type"] == "object"
+    assert CLASSIFY_SCHEMA["additionalProperties"] is False
+    assert "$ref" not in json.dumps(CLASSIFY_SCHEMA) and "strict" not in CLASSIFY_SCHEMA
+    assert set(CLASSIFY_SCHEMA["required"]) <= set(CLASSIFY_SCHEMA["properties"])
+
+
+def test_make_classifier_defaults_to_configured_llm(monkeypatch):
+    import outreach.classifier as cl
+
+    built = []
+    monkeypatch.setattr(cl, "make_llm", lambda settings: built.append(settings) or FakeLLM(out("interested")))
+    settings = make_settings()
+    make_classifier(settings)
+    assert built == [settings]

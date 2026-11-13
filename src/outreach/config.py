@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import base64
 import binascii
+import ipaddress
 from functools import lru_cache
-from typing import Dict, FrozenSet, Literal
+from typing import Dict, FrozenSet, Literal, Optional
 from urllib.parse import urlsplit
 
 from pydantic import Field, field_validator, model_validator
@@ -15,14 +16,29 @@ INTAKE_KEY_MIN_LEN = 24
 TEAMS_SECRET_MIN_BYTES = 16
 NON_BLANK_SECRETS = (
     "tool_webhook_secret", "cal_webhook_secret", "teams_outgoing_secret", "wa_app_secret",
-    "wa_verify_token", "tool_api_key", "anthropic_api_key", "zerobounce_api_key",
+    "wa_verify_token", "tool_api_key", "zerobounce_api_key",
     "wa_access_token",
 )
 NON_BLANK_IDS = ("teams_tenant_id", "teams_sales_channel_id")
+LLMProvider = Literal["anthropic", "openai", "azure_openai", "openai_compatible"]
+# A dot-less host name ("ollama") or one of these suffixes never resolves on the public internet.
+PRIVATE_HOST_SUFFIXES = (".localhost", ".local", ".internal", ".lan", ".home.arpa")
 
 
 def _split_ids(raw: str) -> FrozenSet[str]:
     return frozenset(x.strip() for x in raw.split(",") if x.strip())
+
+
+def _private_host(host: str) -> bool:
+    """localhost, a loopback / private / link-local IP, a dot-less name or a private suffix."""
+    host = host.lower().rstrip(".")
+    if host == "localhost" or host.endswith(PRIVATE_HOST_SUFFIXES):
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return "." not in host
+    return ip.is_loopback or ip.is_private or ip.is_link_local
 
 
 class Settings(BaseSettings):
@@ -46,10 +62,18 @@ class Settings(BaseSettings):
     campaign_ids: Dict[str, str]
     default_tz_group: str
 
-    # Claude
-    anthropic_api_key: str
-    classifier_model: str = "claude-sonnet-5-5"
-    chatbot_model: str = "claude-sonnet-5-5"
+    # LLM (reply classifier + WhatsApp chatbot); see .env.example for one block per provider.
+    # llm_base_url: required for azure_openai (the resource endpoint) and openai_compatible; optional
+    # for anthropic / openai (a gateway). Must be https; plain http is accepted only for
+    # openai_compatible on a self-hosted host (localhost, 127.0.0.1, private IP, dot-less name such
+    # as a Docker service, *.local / *.internal). Never logged.
+    llm_provider: LLMProvider
+    llm_api_key: str = ""  # secret; may be empty only for openai_compatible (e.g. local Ollama)
+    llm_base_url: Optional[str] = None
+    azure_openai_api_version: Optional[str] = None
+    llm_classifier_model: str  # for azure_openai: the deployment name
+    llm_chat_model: str
+    llm_timeout_s: float = Field(30.0, gt=0, le=300)
 
     # Intake
     zerobounce_api_key: str
@@ -148,6 +172,44 @@ class Settings(BaseSettings):
         if not _split_ids(v):
             raise ValueError("teams_allowed_aad_ids needs at least one id")
         return v
+
+    @field_validator("llm_classifier_model", "llm_chat_model")
+    @classmethod
+    def _model_not_blank(cls, v: str, info) -> str:
+        if not v.strip():
+            raise ValueError(f"{info.field_name} must not be blank")
+        return v.strip()
+
+    @field_validator("llm_base_url", "azure_openai_api_version", mode="before")
+    @classmethod
+    def _blank_is_none(cls, v: object) -> object:
+        return None if isinstance(v, str) and not v.strip() else (v.strip() if isinstance(v, str) else v)
+
+    @model_validator(mode="after")
+    def _llm_settings(self) -> "Settings":
+        # messages name the field only: never echo the key or URL
+        provider = self.llm_provider
+        if provider != "openai_compatible" and not self.llm_api_key.strip():
+            raise ValueError(f"llm_api_key must not be blank for llm_provider {provider}")
+        if provider in ("azure_openai", "openai_compatible") and not self.llm_base_url:
+            raise ValueError(f"llm_base_url is required for llm_provider {provider}")
+        if provider == "azure_openai" and not self.azure_openai_api_version:
+            raise ValueError("azure_openai_api_version is required for llm_provider azure_openai")
+        if self.llm_base_url is not None:
+            url = self.llm_base_url
+            try:
+                parts = urlsplit(url)
+                host = parts.hostname
+                parts.port  # noqa: B018 - raises on a bad port
+            except ValueError:
+                parts, host = None, None
+            ok = parts is not None and bool(host) and not any(c.isspace() for c in url) and (
+                parts.scheme == "https"
+                or (parts.scheme == "http" and provider == "openai_compatible" and _private_host(host)))
+            if not ok:
+                raise ValueError("llm_base_url must be an https URL (plain http only for a self-hosted "
+                                 "openai_compatible host: localhost, private IP or internal name)")
+        return self
 
     @model_validator(mode="after")
     def _fit_thresholds_ordered(self) -> "Settings":

@@ -298,7 +298,7 @@ def test_classifier_draft_answer_escaped_in_teams(session):
     session.add(ev)
     session.flush()
     client = FakeClient(out("question", draft_answer="<at>all</at> see [here](https://evil.example)"))
-    deps = make_deps(alerter=alerter(), classify=make_classifier(make_settings(), client=client))
+    deps = make_deps(alerter=alerter(), classify=make_classifier(make_settings(), llm=client))
     execute(session, lead, [Classify()], deps, NOW, event=ev)
     session.commit()
     posted = _posted(route)

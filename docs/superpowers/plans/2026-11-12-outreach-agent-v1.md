@@ -17,6 +17,7 @@
 > 4. EU leads (`eu.is_eu`): email held (`email_hold="eu_approval"`) until `EU_EMAIL_APPROVED=true`. EU email-only leads → `PAUSED("eu_approval")`, intake outcome `held_eu`. Website tracking script stays off until approved.
 > 5. Paused colleagues restart per `holds.colleague_resume_at` (table in spec §11). Task 12's tick must call `holds.resume_account_holds` and, when `EU_EMAIL_APPROVED` is on, `holds.release_eu_holds`. Task 9 must use the state-change reasons `not_now` (with `nurture_until`), `not_interested`, `wrong_person`; Task 11 / CRM uses `sales_rejected` and `low_fit`.
 > 6. Task 10b (2026-11-13): Slack replaced by Microsoft Teams — see docs/progress/decisions.md
+> 7. Task 9b (2026-11-13): LLM provider is configurable (anthropic, openai, azure_openai, openai_compatible); Claude is no longer hard-wired.
 
 ## Global Constraints
 
