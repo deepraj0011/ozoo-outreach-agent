@@ -38,6 +38,9 @@ class Lead(Base):
     size: Mapped[Optional[str]] = mapped_column(String(50))
     timezone_group: Mapped[Optional[str]] = mapped_column(String(50))
     verify_status: Mapped[Optional[str]] = mapped_column(String(50))
+    is_eu: Mapped[bool] = mapped_column(Boolean, default=False)
+    # set (e.g. "eu_approval") while email must not be sent; cleared when approved
+    email_hold: Mapped[Optional[str]] = mapped_column(String(50))
 
     state: Mapped[str] = mapped_column(String(20), default="intake")
     pause_reason: Mapped[Optional[str]] = mapped_column(String(100))

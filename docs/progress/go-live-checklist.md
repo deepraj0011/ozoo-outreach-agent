@@ -11,13 +11,15 @@ Nothing below is done yet. Do not send to real prospects until all boxes are tic
 - [ ] API keys: Anthropic and email verification (ZeroBounce).
 - [ ] Public HTTPS host for webhooks (Render, Railway or VPS), plus `go.ozoo.ai` pointing at it.
 - [ ] Meta Business verification, and **submit WhatsApp templates** for approval (approval takes days).
+- [ ] **Approval: cold email to EU / EEA leads** (GDPR legitimate-interest check). Until approved, leave `EU_EMAIL_APPROVED=false`: EU leads are held, no email. After sign-off set it to `true`; the worker releases the holds.
+- [ ] **Approval: website tracking script** (cookie consent). The script stays off until approved.
 
 ## B. Email tool (Instantly): confirm on a trial account
 
 - [ ] Re-capture every fixture in `tests/fixtures/` from real webhooks (all have `_source`; "constructed" ones are guesses). Update adapter mappings after the first real webhook of each type.
 - [ ] C3: per-lead pause/resume. Today it is not implemented and raises an alert asking for a manual pause. Until verified, **pause or resume leads by hand in the Instantly UI** when an `integration_error` alert asks.
 - [ ] C5: webhook signing (today a shared-secret header is assumed), hard vs soft bounce field, step number in `sent`, open IP and user agent.
-- [ ] C6: custom tracking domain on and tool link tracking **off**.
+- [ ] C6: custom tracking domain on and tool link tracking **off**. Turn the tool's **open pixel off** too: opens are never used for decisions, so the pixel only hurts deliverability.
 - [ ] C1 / C2 / C4: custom-variable field limits, whether in-flight steps pick up updated variables, thread reply by `email_id`.
 - [ ] Event-id collision: confirm the tool sends a timestamp or stable id (ledger minor from Task 6).
 - [ ] If C3 or C6 fails on trial, switch `TOOL_NAME` to `smartlead`.

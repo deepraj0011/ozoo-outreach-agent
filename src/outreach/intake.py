@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .channels import choose_channel, normalize_phone
+from .eu import is_eu
 from .models import Lead, Suppression
 from .states import LeadState, transition
 
@@ -20,7 +21,11 @@ FREE_MAIL_DOMAINS = frozenset(
     {"gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "yahoo.com",
      "icloud.com", "proton.me"}
 )
-_HOLD_STATES = (LeadState.ENGAGED.value, LeadState.QUALIFYING.value, LeadState.BOOKED.value)
+# a colleague in one of these states holds new leads at the same company (account rule);
+# HANDED_OFF too: sales owns the account
+_HOLD_STATES = (LeadState.ENGAGED.value, LeadState.QUALIFYING.value, LeadState.BOOKED.value,
+                LeadState.HANDED_OFF.value)
+EU_HOLD = "eu_approval"
 _EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+\-']+@[A-Za-z0-9\-]+(\.[A-Za-z0-9\-]+)*\.[A-Za-z]{2,}$")
 
 
@@ -68,7 +73,7 @@ def _find_existing(session: Session, email: Optional[str], phone: Optional[str])
 
 
 def intake_lead(session: Session, payload: dict, verifier, now: datetime,
-                primary_when_both: str = "whatsapp") -> IntakeResult:
+                primary_when_both: str = "whatsapp", eu_email_approved: bool = False) -> IntakeResult:
     try:
         p = IntakePayload.model_validate(payload)
     except ValidationError as exc:
@@ -95,9 +100,9 @@ def intake_lead(session: Session, payload: dict, verifier, now: datetime,
     if existing is not None:
         return IntakeResult(existing.id, "skipped_duplicate", None, "duplicate")
 
-    verify_status: Optional[str] = None
-    if email and p.consent_email:
-        verify_status = verifier.check(email)
+    # cold email needs no opt-in, so every email is verified (not only consented ones)
+    verify_status: Optional[str] = verifier.check(email) if email else None
+    eu = is_eu(p.country, email, phone)
 
     lead = Lead(
         email=email,
@@ -114,6 +119,8 @@ def intake_lead(session: Session, payload: dict, verifier, now: datetime,
         size=p.size,
         timezone_group=p.timezone_group,
         verify_status=verify_status,
+        is_eu=eu,
+        email_hold=EU_HOLD if eu and not eu_email_approved else None,
         state=LeadState.INTAKE.value,
         score=0,
         step_sent=0,
@@ -121,6 +128,12 @@ def intake_lead(session: Session, payload: dict, verifier, now: datetime,
         created_at=now,
     )
     channel = choose_channel(lead, primary_when_both)
+    eu_held = False
+    if channel is None and lead.email_hold:
+        lead.email_hold = None
+        if choose_channel(lead, primary_when_both) == "email":
+            channel, eu_held = "email", True  # valid email, waiting for EU approval
+        lead.email_hold = EU_HOLD
     if channel is None:
         return _rejected("no usable channel")
 
@@ -135,15 +148,22 @@ def intake_lead(session: Session, payload: dict, verifier, now: datetime,
         return IntakeResult(existing.id if existing else None, "skipped_duplicate",
                             None, "duplicate")
 
-    held = False
+    if eu_held:
+        lead.pause_reason = EU_HOLD
+        transition(session, lead, LeadState.PAUSED, "eu_hold", now)
+        logger.info("lead %s held until EU email is approved", lead.id)
+        return IntakeResult(lead.id, "held_eu", channel, EU_HOLD)
+
+    blocker: Optional[int] = None
     if lead.domain and lead.domain not in FREE_MAIL_DOMAINS:
-        held = session.scalar(
+        blocker = session.scalar(
             select(Lead.id).where(
                 Lead.domain == lead.domain, Lead.id != lead.id, Lead.state.in_(_HOLD_STATES)
-            ).limit(1)
-        ) is not None
-    if held:
+            ).order_by(Lead.id).limit(1)
+        )
+    if blocker is not None:
         lead.pause_reason = "account"
+        lead.variant_flags = {**(lead.variant_flags or {}), "paused_by": blocker}
         transition(session, lead, LeadState.PAUSED, "account_hold", now)
         logger.info("lead %s held by account rule", lead.id)
         return IntakeResult(lead.id, "held_account", channel, "account")

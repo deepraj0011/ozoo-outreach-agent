@@ -218,15 +218,10 @@ def _on_sent(lead: LeadSnapshot, event: EventSnapshot) -> List[Action]:
 
 
 def _on_open(lead: LeadSnapshot, event: EventSnapshot) -> List[Action]:
+    """Opens are unreliable (Apple auto-opens, Outlook blocks images): count them for
+    reporting only. They never change score, content, subject, timing or routing."""
     opens = int(lead.flags.get("human_opens", 0))
-    pts = points_for("open", None, opens, bool(lead.flags.get("wa_read_scored")))
-    out: List[Action] = [SetFlag("human_opens", opens + 1), *_score(lead, pts)]
-    if opens + 1 == 3:
-        out += _variant(lead, "team_invite")
-    if event.step is not None:
-        steps = sorted(set(lead.flags.get("opened_steps") or []) | {event.step})
-        out += [SetFlag("opened_steps", steps), RefreshNextStep()]
-    return out
+    return [SetFlag("human_opens", opens + 1)]
 
 
 def _on_click(lead: LeadSnapshot, event: EventSnapshot) -> List[Action]:

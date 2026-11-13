@@ -16,10 +16,6 @@ steps:
       subject: "What Ozoo.ai does for {company}"
       body: "Hi {first_name},\n\nI work with teams like {company} on automating outreach and follow-up. I think a short demo could be useful.\n\nA two minute overview of the product: {product_link}\n\nBook a time: {booking_link}\n\nNot relevant? Unsubscribe: {unsubscribe_link}"
     # MARKETING: replace
-    team_invite:
-      subject: "Bring your team, {first_name}?"
-      body: "Hi {first_name},\n\nI work with teams like {company} on automating outreach and follow-up. I think a short demo could be useful.\n\nFeel free to forward this to colleagues who should join the demo.\n\nBook a time: {booking_link}\n\nNot relevant? Unsubscribe: {unsubscribe_link}"
-    # MARKETING: replace
     booking_slots:
       subject: "Pick a time that suits you"
       body: "Hi {first_name},\n\nI work with teams like {company} on automating outreach and follow-up. I think a short demo could be useful.\n\nI have a few slots open this week; choose whichever works best.\n\nBook a time: {booking_link}\n\nNot relevant? Unsubscribe: {unsubscribe_link}"
@@ -29,9 +25,6 @@ steps:
       subject: "Following up, {first_name}"
       body: "Hi {first_name},\n\nFollowing up on my earlier note. Happy to show how Ozoo.ai could fit how {company} works.\n\nBook a time: {booking_link}\n\nNot relevant? Unsubscribe: {unsubscribe_link}"
     # MARKETING: replace
-    new_subject:
-      subject: "A different angle for {company}"
-    # MARKETING: replace
     case_study:
       subject: "How a team like {company} got started"
       body: "Hi {first_name},\n\nFollowing up on my earlier note. Happy to show how Ozoo.ai could fit how {company} works.\n\nHere is a short story from a similar team: {case_study_link}\n\nBook a time: {booking_link}\n\nNot relevant? Unsubscribe: {unsubscribe_link}"
@@ -39,10 +32,6 @@ steps:
     product:
       subject: "What Ozoo.ai does for {company}"
       body: "Hi {first_name},\n\nFollowing up on my earlier note. Happy to show how Ozoo.ai could fit how {company} works.\n\nA two minute overview of the product: {product_link}\n\nBook a time: {booking_link}\n\nNot relevant? Unsubscribe: {unsubscribe_link}"
-    # MARKETING: replace
-    team_invite:
-      subject: "Bring your team, {first_name}?"
-      body: "Hi {first_name},\n\nFollowing up on my earlier note. Happy to show how Ozoo.ai could fit how {company} works.\n\nFeel free to forward this to colleagues who should join the demo.\n\nBook a time: {booking_link}\n\nNot relevant? Unsubscribe: {unsubscribe_link}"
     # MARKETING: replace
     booking_slots:
       subject: "Pick a time that suits you"
@@ -53,9 +42,6 @@ steps:
       subject: "One more thought for {company}"
       body: "Hi {first_name},\n\nA quick note in case my earlier emails got buried. Glad to keep it to 15 minutes.\n\nBook a time: {booking_link}\n\nNot relevant? Unsubscribe: {unsubscribe_link}"
     # MARKETING: replace
-    new_subject:
-      subject: "Worth 15 minutes, {first_name}?"
-    # MARKETING: replace
     case_study:
       subject: "How a team like {company} got started"
       body: "Hi {first_name},\n\nA quick note in case my earlier emails got buried. Glad to keep it to 15 minutes.\n\nHere is a short story from a similar team: {case_study_link}\n\nBook a time: {booking_link}\n\nNot relevant? Unsubscribe: {unsubscribe_link}"
@@ -63,10 +49,6 @@ steps:
     product:
       subject: "What Ozoo.ai does for {company}"
       body: "Hi {first_name},\n\nA quick note in case my earlier emails got buried. Glad to keep it to 15 minutes.\n\nA two minute overview of the product: {product_link}\n\nBook a time: {booking_link}\n\nNot relevant? Unsubscribe: {unsubscribe_link}"
-    # MARKETING: replace
-    team_invite:
-      subject: "Bring your team, {first_name}?"
-      body: "Hi {first_name},\n\nA quick note in case my earlier emails got buried. Glad to keep it to 15 minutes.\n\nFeel free to forward this to colleagues who should join the demo.\n\nBook a time: {booking_link}\n\nNot relevant? Unsubscribe: {unsubscribe_link}"
     # MARKETING: replace
     booking_slots:
       subject: "Pick a time that suits you"
@@ -77,9 +59,6 @@ steps:
       subject: "Closing the loop"
       body: "Hi {first_name},\n\nThis is my last note for now. If the timing is wrong, no problem at all.\n\nBook a time: {booking_link}\n\nNot relevant? Unsubscribe: {unsubscribe_link}"
     # MARKETING: replace
-    new_subject:
-      subject: "Should I close your file?"
-    # MARKETING: replace
     case_study:
       subject: "How a team like {company} got started"
       body: "Hi {first_name},\n\nThis is my last note for now. If the timing is wrong, no problem at all.\n\nHere is a short story from a similar team: {case_study_link}\n\nBook a time: {booking_link}\n\nNot relevant? Unsubscribe: {unsubscribe_link}"
@@ -87,10 +66,6 @@ steps:
     product:
       subject: "What Ozoo.ai does for {company}"
       body: "Hi {first_name},\n\nThis is my last note for now. If the timing is wrong, no problem at all.\n\nA two minute overview of the product: {product_link}\n\nBook a time: {booking_link}\n\nNot relevant? Unsubscribe: {unsubscribe_link}"
-    # MARKETING: replace
-    team_invite:
-      subject: "Bring your team, {first_name}?"
-      body: "Hi {first_name},\n\nThis is my last note for now. If the timing is wrong, no problem at all.\n\nFeel free to forward this to colleagues who should join the demo.\n\nBook a time: {booking_link}\n\nNot relevant? Unsubscribe: {unsubscribe_link}"
     # MARKETING: replace
     booking_slots:
       subject: "Pick a time that suits you"

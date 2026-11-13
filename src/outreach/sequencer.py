@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import yaml
 from sqlalchemy.orm import Session
 
-from .actions import Action, Alert, SetState, SwitchChannel
+from .actions import Action, Alert, SetState
 from .config import Settings, get_settings
 from .links import make_link
 from .models import Lead
@@ -22,8 +22,8 @@ logger = logging.getLogger(__name__)
 
 SCHEDULE_DAYS = {1: 0, 2: 4, 3: 9, 4: 15}
 END_WAIT_DAYS = 5
-VARIANT_PRIORITY = ("booking_slots", "case_study", "product", "team_invite")
-STEP_VARIANTS = ("standard", "case_study", "product", "team_invite", "booking_slots")
+VARIANT_PRIORITY = ("booking_slots", "case_study", "product")
+STEP_VARIANTS = ("standard", "case_study", "product", "booking_slots")
 ALLOWED_PLACEHOLDERS = frozenset({
     "first_name", "company", "booking_link", "unsubscribe_link", "pricing_link",
     "case_study_link", "product_link", "homepage_link",
@@ -74,10 +74,6 @@ def _validate(data: Any) -> Dict[str, Any]:
                 raise ValueError(f"missing variant {v} in step {step}")
             _check_text(f"steps.{step}.{v}.subject", block[v].get("subject"), False)
             _check_text(f"steps.{step}.{v}.body", block[v].get("body"), True)
-        if step >= 2:
-            if "new_subject" not in block:
-                raise ValueError(f"missing variant new_subject in step {step}")
-            _check_text(f"steps.{step}.new_subject.subject", block["new_subject"].get("subject"), False)
     for key in REPLY_KEYS:
         if key not in data["replies"]:
             raise ValueError(f"missing reply {key}")
@@ -126,13 +122,8 @@ def render_step(
     s = settings or get_settings()
     block = t["steps"][step]
     variant = block[_variant(lead)]
-    opened = (lead.variant_flags or {}).get("opened_steps", [])
-    if step >= 2 and (step - 1) not in opened:
-        subject_tpl = block["new_subject"]["subject"]
-    else:
-        subject_tpl = variant["subject"]
     vals = _values(lead, step, s)
-    subject = _clean(subject_tpl.format_map(vals))  # single line by construction
+    subject = _clean(variant["subject"].format_map(vals))  # single line by construction
     return {f"subject_{step}": subject, f"body_{step}": variant["body"].format_map(vals)}
 
 
@@ -177,17 +168,14 @@ def refresh_next_step(
     tool.update_variables(lead.tool_lead_id, render_step(lead, lead.step_sent + 1, templates=templates, settings=settings))
 
 
-def end_of_sequence_route(lead: Lead, human_opens: int, human_clicks: int) -> Tuple[str, List[Action]]:
+def end_of_sequence_route(lead: Lead, human_clicks: int) -> Tuple[str, List[Action]]:
+    """After Email 4 + 5 days with no reply. Opens are not used (unreliable), and there is
+    no WhatsApp step here: opted-in leads already got WhatsApp on day 1."""
     if band(lead.score) == "hot":
         return "sales_personal", [
             SetState(LeadState.NURTURE, "end_hot"),
             Alert("hot_no_reply", "Hot lead finished the sequence without replying"),
         ]
-    if (human_opens == 0 and lead.phone and lead.consent_whatsapp
-            and not lead.channel_switched and lead.active_channel == "email"):
-        return "whatsapp", [SwitchChannel("never_opened")]
     if human_clicks > 0:
         return "warm_2_3w", [SetState(LeadState.NURTURE, "end_clicked")]
-    if human_opens > 0:
-        return "monthly", [SetState(LeadState.NURTURE, "end_opened")]
-    return "slow_3m", [SetState(LeadState.NURTURE, "end_silent")]
+    return "monthly", [SetState(LeadState.NURTURE, "end_silent")]

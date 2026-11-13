@@ -3,6 +3,16 @@
 > Updated from `Email_WhatsApp_Flows_Simple.pdf` after CTO/PM review.
 > **Scope:** leads come from elsewhere. We handle everything **after** a lead arrives.
 
+### Changes after review (v2.1, 2026-11-13)
+
+| # | Review feedback | What changed |
+|---|---|---|
+| 1 | Don't reject leads without permission (§4) | Cold B2B email needs **no opt-in**. Only WhatsApp needs opt-in. A lead is rejected only when it has no valid email and no WhatsApp opt-in. |
+| 2 | Don't act on email opens (§5) | Opens are **logged for reporting only**. They no longer change score, content, subject line, timing or end-of-sequence route (§5d, §5f, §5h, §5i). |
+| 3 | Remove "try WhatsApp later" (§5h) | Gone. Leads with WhatsApp opt-in already get WhatsApp on day 1. |
+| 4 | When do paused colleagues restart? (§11) | Restart rules per outcome: new table in §11. |
+| 5 | EU email + website tracking need approval | EU leads are held (no email) until `EU_EMAIL_APPROVED` is switched on. The website tracking script stays off until approved. Both are on the go-live checklist (§18). |
+
 **Legend used in diagrams:** 🟦 agent does it · 🟨 decision · 🟩 human does it · 🟥 stop · ⬜ nurture
 
 ---
@@ -103,10 +113,12 @@ flowchart TB
     DUP -->|"Unsubscribed / opted out"| SKIP
     DUP -->|"Colleague already active"| ACC["Hold — account rule"]
     DUP -->|"Clean"| ENR["Light enrichment<br/>industry · size · website"]
-    ENR --> R{"Consent?"}
-    R -->|"WhatsApp opt-in"| WA["→ WhatsApp flow<br/>(+ email optional)"]
-    R -->|"Email only / B2B"| EM["→ Email flow"]
-    R -->|"None"| REJ
+    ENR --> R{"Channel?"}
+    R -->|"WhatsApp opt-in"| WA["→ WhatsApp flow<br/>(day 1)"]
+    R -->|"Valid email<br/>(no opt-in needed)"| EU{"EU lead?"}
+    EU -->|"No, or EU approved"| EM["→ Email flow"]
+    EU -->|"Yes, not approved yet"| HOLD["⏸ Hold — no email<br/>until EU approval"]
+    R -->|"No valid email and<br/>no WhatsApp opt-in"| REJ
 ```
 
 **Required fields (lead contract):**
@@ -116,7 +128,8 @@ flowchart TB
 | Name, company, role | ✅ | Personalisation |
 | Email and/or phone | ✅ (one) | Channel |
 | Lead source | ✅ | Measure which source converts |
-| Consent per channel + date | ✅ | WhatsApp legality, audit |
+| WhatsApp opt-in + date | Only for WhatsApp | WhatsApp rules, audit. **Email needs no opt-in** (cold B2B email is allowed with an unsubscribe in every email) |
+| Country | Nice to have | EU leads need approval before email (also guessed from phone / email domain) |
 | Industry / size / pain | Nice to have | Email 1 quality |
 
 > ⚠️ **We cannot check in advance if a number is on WhatsApp** — Meta doesn't allow it. We find out at the first send (message fails → lead falls back to email).
@@ -132,10 +145,10 @@ flowchart LR
     S["📧 Email sent"] --> D{"Delivered?"}
     D -->|"Hard bounce"| HB["❌ Hard bounce"]
     D -->|"Soft bounce"| SB["⚠️ Soft bounce"]
-    D -->|"Yes"| OP{"Opened?"}
+    D -->|"Yes"| OP{"Opened?<br/>(logged only)"}
     OP -->|"No"| NO["📭 Not opened"]
     OP -->|"Yes"| O1["👁 Opened once"]
-    OP -->|"3+ times"| O3["👁👁 Opened many times<br/>(hint only)"]
+    OP -->|"3+ times"| O3["👁👁 Opened many times<br/>(logged only)"]
     O1 --> ACT{"Then?"}
     O3 --> ACT
     ACT -->|"Nothing"| ON["Opened, no action"]
@@ -152,10 +165,9 @@ flowchart LR
 |---|---|---|
 | Delivered | Email provider webhook | ✅ High |
 | Hard / soft bounce | Email provider webhook | ✅ High |
-| Opened | Tracking pixel | ⚠️ Low — Apple Mail fakes opens, Outlook blocks images |
-| Opened 3+ times | Tracking pixel | ⚠️ Low — hint only (Gmail caches images, repeat opens often invisible) |
+| Opened | Tracking pixel | ⚠️ Low — Apple Mail fakes opens, Outlook blocks images. **Logged only, never acted on** |
 | Clicked link | Tracked redirect link | 🟡 Medium — security bots click links |
-| Browsed website | Website tracking script on landing pages | 🟡 Medium |
+| Browsed website | Website tracking script on landing pages | 🟡 Medium — **needs approval first, off until then** |
 | Booked meeting | Calendar webhook | ✅ High |
 | Replied | Inbox sync | ✅ High |
 | Auto-reply / OOO | Reply classifier | ✅ High |
@@ -179,7 +191,7 @@ flowchart TB
     B4 -->|No| HU["✅ Real human event<br/>→ use for decisions"]
 ```
 
-**Rule:** only ✅ human events change the flow. Bots are logged, never acted on.
+**Rule:** only ✅ human **clicks** (and replies, bookings, unsubscribes) change the flow. Bots are logged, never acted on. Opens — even human ones — are logged only.
 
 ---
 
@@ -215,12 +227,12 @@ flowchart TB
 
     W -->|"🔥 Hot click<br/>pricing / booking page,<br/>not booked"| HOT["Alert sales now<br/>Next email moved to next business day<br/>with booking slots"]
     W -->|"🟡 Warm click<br/>case study / product page"| WARM["Next email on schedule<br/>content = more on that topic"]
-    W -->|"Opened 3+ times,<br/>no click (hint)"| MULTI["Next email on schedule<br/>+ 'happy to include your team'"]
-    W -->|"Opened once,<br/>no click"| ONE["Next email on schedule<br/>standard content"]
-    W -->|"Not opened<br/>(or machine open only)"| NOP["Next email on schedule<br/>NEW subject line<br/>DIFFERENT send time"]
+    W -->|"No click, no reply<br/>(opened or not — opens ignored)"| STD["Next email on schedule<br/>standard content"]
 ```
 
-**Smart timing:** if the lead **clicked or replied** at 9 pm, send the next email around 9 pm their time. Open times are not used (Apple Mail auto-opens make them fake).
+**Opens never drive an action** — not content, subject, timing, score or routing. Every email already has its own subject line, so there is no "new subject if not opened" rule.
+
+**Smart timing:** if the lead **clicked or replied** at 9 pm, send the next email around 9 pm their time. Open times are not used.
 
 **Never say "I saw you opened / clicked"** in an email — feels like spying, and opens are often fake.
 
@@ -243,7 +255,7 @@ flowchart LR
     L -->|"🚫 Unsubscribe"| SUP["🟥 Suppress all channels"]
 ```
 
-**Website follow-through (if tracking script on site):**
+**Website follow-through (only after the tracking script is approved — off until then):**
 
 ```mermaid
 flowchart LR
@@ -260,8 +272,7 @@ flowchart LR
 
 | Human event | Points |
 |---|---|
-| Opened (max counted: 3) | +1 each |
-| Opened 3+ times | +2 bonus |
+| Opened | 0 — logged only |
 | Homepage click | +2 |
 | Product / case study click | +5 |
 | Website: 3+ pages | +5 |
@@ -288,7 +299,7 @@ flowchart TB
     START["From intake"] --> E1["📧 Email 1 · Day 0<br/>business problem"]
     E1 --> G1{"Check events<br/>(5c + 5d)"}
     G1 -->|"Stop events"| END1["⛔ Exit sequence<br/>reply / booked / unsub / bounce"]
-    G1 -->|"Continue"| E2["📧 Email 2 · Day 4<br/>new benefit<br/>(new subject if not opened)"]
+    G1 -->|"Continue"| E2["📧 Email 2 · Day 4<br/>new benefit"]
     E2 --> G2{"Check events"}
     G2 -->|"Stop events"| END1
     G2 -->|"Continue"| E3["📧 Email 3 · Day 9<br/>proof / case study<br/>(tailored to clicks)"]
@@ -308,14 +319,13 @@ flowchart TB
 
 ### 5h. After Email 4 — what kind of silence was it?
 
-No reply doesn't mean the same thing for everyone. The pattern decides the next path.
+No reply doesn't mean the same thing for everyone. Clicks and score decide the next path — **opens are not used**, and there is **no "try WhatsApp" step**: leads with WhatsApp opt-in already got WhatsApp on day 1.
 
 ```mermaid
 flowchart TB
     END["4 emails sent, no reply"] --> PAT{"What did they do<br/>across all 4 emails?"}
 
-    PAT -->|"Never opened anything<br/>(human opens = 0)"| A["Maybe spam folder / wrong address<br/>→ WhatsApp if opt-in<br/>→ else slow nurture (every 3 months)"]
-    PAT -->|"Opened, never clicked"| B["Read but not convinced<br/>→ Nurture: 1 useful email / month"]
+    PAT -->|"No clicks"| B["Not convinced yet<br/>→ Nurture: 1 useful email / month"]
     PAT -->|"Clicked, never replied<br/>(warm score)"| C["Interested, not ready<br/>→ Warm nurture every 2–3 weeks<br/>+ on sales 'watch list'"]
     PAT -->|"Hot score, no reply"| D["🔥 Sales sends personal 1:1 email<br/>or LinkedIn / call"]
 ```
@@ -326,12 +336,11 @@ flowchart TB
 
 | Event | Action | Sequence |
 |---|---|---|
-| Hard bounce | Suppress email, try WhatsApp if opt-in | ⛔ Stop |
+| Hard bounce | Suppress email (WhatsApp opt-in leads are already on WhatsApp) | ⛔ Stop |
 | Soft bounce | Retry 3x / 72h, then = hard bounce | ⏸ Wait |
-| Delivered, not opened | Next email: new subject + new send time | ▶️ Continue |
-| Machine/bot open or click | Ignore | ▶️ Continue |
-| Opened once | Standard next email | ▶️ Continue |
-| Opened 3+ times | Next email invites team | ▶️ Continue |
+| Delivered, no click / reply | Standard next email | ▶️ Continue |
+| Opened (any number of times) | Logged only — no action | ▶️ Continue |
+| Bot click | Ignore | ▶️ Continue |
 | Homepage click | +2 score | ▶️ Continue |
 | Case study / product click | Tailor next email to topic | ▶️ Continue |
 | Pricing click | 🔥 Sales alert, next email pulled forward | ⏩ Speed up |
@@ -353,7 +362,7 @@ flowchart LR
     M["Daily per sending mailbox"] --> K{"Metrics"}
     K -->|"Bounce > 2%"| X1["⏸ Pause mailbox<br/>check lead source quality"]
     K -->|"Spam > 0.3%<br/>(Gmail Postmaster)"| X2["⏸ Pause mailbox<br/>review content"]
-    K -->|"Human opens suddenly drop"| X3["Likely landing in spam<br/>→ run inbox placement test"]
+    K -->|"Replies + clicks suddenly drop"| X3["Likely landing in spam<br/>→ run inbox placement test"]
     K -->|"All normal"| OK["✅ Keep sending"]
 ```
 
@@ -385,10 +394,10 @@ flowchart LR
 |---|---|---|
 | Positive reply | ✅ Strong | Real intent |
 | Booking link clicked + booked | ✅ Strong | Real intent |
-| Pricing page visit (tracked) | ✅ Medium | Needs site tracking |
+| Pricing page visit (tracked) | ✅ Medium | Needs site tracking (after approval) |
 | Pricing / booking click (human) | ✅ Medium-strong | See 5e |
 | Other link click (human) | 🟡 Weak-medium | Bots filtered first (5b) |
-| Email open | ⚠️ Only to tune follow-ups | Apple Mail fakes opens — never qualifies a lead alone |
+| Email open | ❌ Never | Apple Mail fakes opens, Outlook hides them — logged for reports only |
 
 ---
 
@@ -498,14 +507,15 @@ Every lead has **exactly one** state at a time — this stops double-messaging.
 ```mermaid
 stateDiagram-v2
     [*] --> Intake
-    Intake --> Rejected: invalid / no consent
+    Intake --> Rejected: no valid email and no WhatsApp opt-in
     Intake --> Suppressed: opted out before
     Intake --> InSequence: clean
+    Intake --> Paused: EU hold / colleague active
 
     InSequence --> Engaged: replied / tapped / hot score
     InSequence --> Nurture: no reply after sequence
     InSequence --> Paused: out of office
-    Paused --> InSequence: return date
+    Paused --> InSequence: return date / EU approved / colleague restart (table below)
     InSequence --> Suppressed: bounce / unsubscribe
 
     Engaged --> Qualifying
@@ -524,7 +534,20 @@ stateDiagram-v2
     Suppressed --> [*]
 ```
 
-**Account rule:** if anyone at a company reaches `Engaged`, all their colleagues → `Paused`.
+**Account rule:** if anyone at a company reaches `Engaged`, all their colleagues → `Paused`. New leads from that company are held too.
+
+**When paused colleagues restart** — depends on what happened to the person who engaged (e.g. CEO engaged, CTO paused):
+
+| CEO's outcome | CTO |
+|---|---|
+| Still talking (Engaged) | Restarts after **14 days** with no message from the CEO |
+| Qualifying / booked / handed to sales | **Stays paused** — sales owns the account |
+| "Not now" | Restarts on the CEO's **"later" date** (or after 90 days if no date) |
+| Sales rejected the meeting | Restarts **now** |
+| "Wrong person" | Restarts **now** |
+| Not interested / unsubscribed / low fit | Restarts after **90 days** |
+
+If two colleagues are both active, the CTO waits for the later of the two. A restarted colleague continues their own sequence where it stopped.
 
 ---
 
@@ -579,7 +602,7 @@ flowchart LR
     B --> AG
 ```
 
-**Tracking vs. deliverability:** tracking pixels and rewritten links slightly raise spam risk. Rules: own tracking domain (e.g. `go.ozoo.ai`) · 1–2 links per email · consider no open-pixel on Email 1.
+**Tracking vs. deliverability:** tracking pixels and rewritten links slightly raise spam risk. Rules: own tracking domain (e.g. `go.ozoo.ai`) · 1–2 links per email · **open-pixel off** (opens are never used for decisions, so the pixel only costs deliverability).
 
 ---
 
@@ -623,7 +646,9 @@ flowchart LR
 | W7 AI voice call | ⏸ v2 | Costly, rarely used in B2B |
 | 4 WhatsApp buttons | ✂️ 2 buttons | Only 3 show on screen; fewer choices = more taps |
 | E6 retry same campaign | ❌ Removed | Re-blasting non-responders hurts deliverability |
-| Opens as a qualifying signal | ⚠️ Downgraded | Tracked, bot-filtered, used only to tune subject/timing (5d) |
+| Opens as a signal | ❌ Not used | Unreliable; logged for reports only, never drive an action |
+| "Never opened → try WhatsApp" after Email 4 | ❌ Removed | WhatsApp opt-in leads already get WhatsApp on day 1 |
+| Rejecting email leads without opt-in | ❌ Removed | Cold B2B email doesn't need permission; only WhatsApp does |
 
 ---
 
@@ -634,9 +659,9 @@ flowchart LR
 | Delivered / bounce / reply / unsubscribe / booking | ✅ Reliable | |
 | Which link clicked | ✅ Reliable | Own tracking domain |
 | Bot click filtering | 🟡 Mostly | Some false clicks slip through |
-| Opens | 🟡 Partial | Apple auto-opens, Outlook blocks images — hint only |
-| Opened 3+ times, open-time | ⚠️ Weak | Hint only, never a trigger alone |
-| Website visits after click | 🟡 If we control ozoo.ai | Cookie consent can block in EU |
+| Opens | 🟡 Partial | Apple auto-opens, Outlook blocks images — logged only, never acted on |
+| Opened 3+ times, open-time | ⚠️ Weak | Not used |
+| Website visits after click | 🟡 If we control ozoo.ai | **Needs approval first**; cookie consent can block in EU |
 | Spam complaint per lead | ❌ Rare | Use mailbox-level spam % instead |
 | Forwarded | ❌ Not possible | Removed from plan |
 | Inbox vs spam folder per email | ❌ Not possible | Use test inboxes (5j) |
@@ -678,7 +703,7 @@ flowchart LR
 | Event | Comes from | How |
 |---|---|---|
 | Sent · bounced · replied · unsubscribed | Cold-email tool | Webhook (fallback: poll its API every 5 min) |
-| Opened | Cold-email tool pixel | Webhook — hint only |
+| Opened | Cold-email tool pixel (recommended **off**) | Webhook — logged only, never acted on |
 | **Which link was clicked** | **Our own redirect endpoint** | We build it: logs event, runs bot filter, redirects |
 | Booked meeting | Cal.com | Webhook |
 | What a reply means | Claude API | Classifier on reply text |
@@ -718,7 +743,7 @@ flowchart LR
         C1["WhatsApp flow + chatbot"]
         C2["Nurture automation"]
         C3["CRM sync"]
-        C4["Website tracking script"]
+        C4["Website tracking script<br/>(after approval)"]
         C5["Dashboard"]
         C6["AI voice call"]
     end
@@ -738,6 +763,8 @@ flowchart LR
 | 5 | API keys: Anthropic, email verification | Classifier, intake |
 | 6 | Public HTTPS host for webhooks (Render / Railway / VPS) | Tools must reach our server |
 | 7 | Meta Business verification + submit WhatsApp templates | Approval takes days — start the clock |
+| 8 | **Approval: cold email to EU leads** (GDPR legitimate-interest check) | Until approved, EU leads are held with no email |
+| 9 | **Approval: website tracking script** (cookie consent) | Script stays off until approved |
 
 ### Tomorrow's build order
 
@@ -750,7 +777,7 @@ flowchart LR
     S5 --> S6["6 · End-to-end test<br/>with 3–5 test inboxes"]
 ```
 
-**Test script (step 6):** send to own test inboxes and trigger each event — open, pricing click, booking, reply "interested", reply "not now", out-of-office, unsubscribe, a fake address for bounce. Each must land in the right state.
+**Test script (step 6):** send to own test inboxes and trigger each event — open (must change nothing), pricing click, booking, reply "interested", reply "not now", out-of-office, unsubscribe, a fake address for bounce. Each must land in the right state.
 
 ---
 

@@ -13,10 +13,10 @@ def ev(kind, tag=None, verdict="human", at=NOW):
     return SimpleNamespace(kind=kind, tag=tag, verdict=verdict, occurred_at=at)
 
 
-def test_open_points_cap(session):
+def test_opens_score_nothing(session):
     lead = make_lead(session)
-    assert [apply_points(lead, ev("open")) for _ in range(5)] == [1, 1, 3, 0, 0]
-    assert lead.score == 5
+    assert [apply_points(lead, ev("open")) for _ in range(5)] == [0, 0, 0, 0, 0]
+    assert lead.score == 0
     assert lead.variant_flags["human_opens"] == 5
 
 

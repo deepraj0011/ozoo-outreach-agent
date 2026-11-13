@@ -16,9 +16,6 @@ SCORE_POINTS = {
     "booking": 10,
     "unsubscribe": 0,
 }
-OPEN_MAX_COUNTED = 3
-OPEN_POINTS = 1
-OPEN_BONUS_AT_MAX = 2
 WA_READ_POINTS = 1
 DECAY_AFTER = timedelta(days=30)
 COLD_MAX = 4
@@ -26,13 +23,8 @@ WARM_MAX = 14
 
 
 def points_for(kind: str, tag: Optional[str], human_opens_so_far: int, wa_read_scored: bool) -> int:
-    """Pure: points a human event of `kind`/`tag` is worth given the lead's counters."""
-    if kind == "open":
-        n = human_opens_so_far + 1
-        pts = OPEN_POINTS if n <= OPEN_MAX_COUNTED else 0
-        if n == OPEN_MAX_COUNTED:
-            pts += OPEN_BONUS_AT_MAX
-        return pts
+    """Pure: points a human event of `kind`/`tag` is worth given the lead's counters.
+    Email opens are worth 0: they are unreliable and never drive decisions."""
     if kind == "click":
         return SCORE_POINTS.get(tag or "", 0)
     if kind == "wa_read":

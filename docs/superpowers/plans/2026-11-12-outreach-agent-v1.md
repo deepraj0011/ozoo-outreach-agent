@@ -10,6 +10,13 @@
 
 **Spec:** `docs/Outreach_Agent_Plan_v2.md` (approved). Section numbers (§4, §5i, §7 …) refer to it. **Scope change vs the spec's §18:** the WhatsApp flow + chatbot move from "next iterations" into v1, at the user's request on 2026-11-12.
 
+> **Review update 2026-11-13 (plan v2.1).** Overrides anything below that conflicts:
+> 1. Email needs **no opt-in** (`consent_email` is recorded, not required); WhatsApp still needs opt-in. Every email is verified at intake.
+> 2. Email opens are **logged only** (`human_opens` counter). No points, no `team_invite` / `new_subject` variants, no effect on end-of-sequence routing.
+> 3. No email → WhatsApp switch at end of sequence (`end_of_sequence_route(lead, human_clicks)`: hot → `sales_personal`, clicks → `warm_2_3w`, else `monthly`). The hard-bounce switch and the WhatsApp → email fallback stay.
+> 4. EU leads (`eu.is_eu`): email held (`email_hold="eu_approval"`) until `EU_EMAIL_APPROVED=true`. EU email-only leads → `PAUSED("eu_approval")`, intake outcome `held_eu`. Website tracking script stays off until approved.
+> 5. Paused colleagues restart per `holds.colleague_resume_at` (table in spec §11). Task 12's tick must call `holds.resume_account_holds` and, when `EU_EMAIL_APPROVED` is on, `holds.release_eu_holds`. Task 9 must use the state-change reasons `not_now` (with `nurture_until`), `not_interested`, `wrong_person`; Task 11 / CRM uses `sales_rejected` and `low_fit`.
+
 ## Global Constraints
 
 - Scope: post-intake only. No lead sourcing. **Still out of v1:** nurture *sending*, CRM sync, website tracking script, dashboard, AI voice call.
@@ -25,12 +32,12 @@
   | Phone without opt-in, no email | Rejected | — |
 
 - **Only one channel sends at a time** (§3 bottleneck B7). Any reply, button tap or booking on *either* channel stops outgoing messages on *both*. An opt-out on either channel suppresses **email and phone** (§7, §5i).
-- **Channel switch triggers.** WhatsApp → email when the send fails (not on WhatsApp, marketing limit) or when there is no tap/reply 48 h after the reminder. Email → WhatsApp (if opt-in) on a hard bounce (§5c) or when the sequence ends with zero human opens (§5h). A lead switches channel **at most once**; after that it goes to `NURTURE`.
+- **Channel switch triggers.** WhatsApp → email when the send fails (not on WhatsApp, marketing limit) or when there is no tap/reply 48 h after the reminder. Email → WhatsApp (if opt-in) on a hard bounce (§5c) only. A lead switches channel **at most once**; after that it goes to `NURTURE`.
 - Email sequence: Email 1 Day 0 · Email 2 Day 4 · Email 3 Day 9 · Email 4 Day 15, then 5 days before end-of-sequence routing (§5g, §5h).
 - WhatsApp: first message = approved template `ozoo_intro` with exactly 2 quick-reply buttons, payloads `BOOK_DEMO` and `ASK_QUESTION` (§7). One reminder template `ozoo_reminder` 48 h later if no tap/reply. Free-form messages only while `wa_window_until > now` (24 h after the lead's last inbound message). Everything else is template-only.
 - Only events with `verdict == "human"` change the flow. Bot and machine events are stored, never acted on (§5b). WhatsApp `read` receipts are hints only, like opens.
 - Bot filter: within **60 s** of send → bot. ≥ 2 different link tags from the same message within **10 s** → all bot. Known scanner UA/IP → bot. Apple Mail Privacy Protection open → `machine`.
-- Score points (§5f): open +1 each (max 3) · +2 bonus at the 3rd human open · homepage +2 · case_study / product +5 · pricing +10 · booking click not booked +10 · WhatsApp read +1 (max 1). Score halves after 30 days with no human event. Bands: 0–4 `cold` · 5–14 `warm` · ≥ 15 `hot`.
+- Score points (§5f): open 0 (logged only) · homepage +2 · case_study / product +5 · pricing +10 · booking click not booked +10 · WhatsApp read +1 (max 1). Score halves after 30 days with no human event. Bands: 0–4 `cold` · 5–14 `warm` · ≥ 15 `hot`.
 - Mailbox health (§5j): bounce rate **> 2 %** over 7 days, with at least 50 sends → pause that campaign and alert.
 - Soft bounce: 3 soft bounces → treat as hard bounce (§5c).
 - Never write "I saw you opened/clicked/read" in any message (§5d).
@@ -579,7 +586,7 @@ This is a pure function with no I/O. Every row of §5i and every branch of §7 i
     3. `booking_click_not_booked` (30 min → booking-slots reply on the active channel, or an alert)
     4. `wa_reminder`: active `whatsapp`, template sent ≥ 48 h ago, no inbound, no reminder → `send_template("ozoo_reminder")`
     5. `wa_no_response`: reminder sent ≥ 48 h ago, no inbound → `switch_channel("wa_no_response")`
-    6. `resume_paused` (`ooo` only)
+    6. `resume_paused` (`ooo`) + `holds.resume_account_holds` (account rule) + `holds.release_eu_holds` (only when `EU_EMAIL_APPROVED`)
     7. `end_of_sequence` (email `step_sent == 4`, last send + 5 d)
     8. `wa_sla`: takeover with no human message within 1 business hour → `Alert("wa_sla_missed")` once
     9. `attended_check` (`BOOKED`, meeting ended > 2 h ago, no no-show flag → handoff)
@@ -601,6 +608,7 @@ This is a pure function with no I/O. Every row of §5i and every branch of §7 i
     - `test_wa_no_response_no_email_goes_nurture`
     - `test_reply_before_reminder_cancels_it` (**Review Focus 1**)
     - `test_ooo_resumes_on_date`
+    - `test_tick_resumes_account_holds`, `test_tick_releases_eu_holds_only_when_approved`
     - `test_end_of_sequence_after_5_days`
     - `test_wa_sla_alert_after_1_business_hour` (Friday 17:30 takeover → alert Monday 09:30, not Friday 18:30)
     - `test_attended_check_hands_off_after_2h`

@@ -314,6 +314,7 @@ class _Run:
                 continue
             c.pause_reason = "account"
             self.flags(c)["wa_reminder_cancelled"] = True
+            self.flags(c)["paused_by"] = lead.id  # holds.resume_account_holds reads this
             if c.tool_lead_id:
                 self.external("tool.pause", self.deps.tool.pause, c.tool_lead_id, lead=c)
             logger.info("lead %s paused: colleague lead %s engaged", c.id, lead.id)

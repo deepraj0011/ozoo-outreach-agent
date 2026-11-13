@@ -19,8 +19,11 @@ def normalize_phone(raw: str, default_region: Optional[str]) -> Optional[str]:
 
 
 def email_usable(lead) -> bool:
+    """Cold B2B email needs no prior opt-in (only an unsubscribe in every email);
+    consent_email is recorded but not required. Held leads (EU before approval) are not usable."""
     return bool(
-        lead.email and lead.consent_email and lead.verify_status in EMAIL_OK_STATUSES
+        lead.email and lead.verify_status in EMAIL_OK_STATUSES
+        and not getattr(lead, "email_hold", None)
     )
 
 

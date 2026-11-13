@@ -66,6 +66,9 @@ class Settings(BaseSettings):
     business_tz: str = "Asia/Kolkata"
     business_hours: str = "Mon-Fri 09:00-18:00"
 
+    # Approvals: EU cold email needs legal sign-off; until then EU leads get no email
+    eu_email_approved: bool = False
+
     @field_validator("link_secret")
     @classmethod
     def _link_secret_strong(cls, v: str) -> str:

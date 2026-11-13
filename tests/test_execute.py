@@ -113,6 +113,7 @@ def test_pause_colleagues(session):
     execute(session, lead, [PauseColleagues()], deps, NOW)
     assert c_email.state == "paused" and c_email.pause_reason == "account"
     assert c_wa.state == "paused" and c_wa.pause_reason == "account"
+    assert c_email.variant_flags["paused_by"] == lead.id == c_wa.variant_flags["paused_by"]
     assert c_wa.variant_flags["wa_reminder_cancelled"] is True
     assert c_email.variant_flags["wa_reminder_cancelled"] is True
     assert engaged.state == "engaged" and other.state == "in_sequence"

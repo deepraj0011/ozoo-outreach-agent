@@ -22,7 +22,7 @@ No task-specific rulings beyond the project-wide spike ruling. Deferred minors a
 | Decision | Why | Cost if wrong |
 |---|---|---|
 | Payload is a pydantic model with length caps (254 email, 200 others). Unknown keys are ignored. Validation failure returns "rejected" and never raises. | Intake must never crash on bad input. | Rejected leads need a re-send. (inferred) |
-| Email is usable only with a valid syntax, `consent_email`, and verify status valid / catch_all / unknown. WhatsApp is usable with a valid E.164 phone and `consent_whatsapp`. | Consent rules for each channel. | A lead could be messaged without consent. (inferred) |
+| ~~Email is usable only with a valid syntax, `consent_email`, and verify status valid / catch_all / unknown.~~ **Superseded 2026-11-13, see Review update.** WhatsApp is usable with a valid E.164 phone and `consent_whatsapp`. | Consent rules for each channel. | A lead could be messaged without consent. (inferred) |
 | Any contact on the suppression list gives `skipped_suppressed`, checked before dedup. Dedup by lowercased email or phone. | Opted-out people must never re-enter. | A suppressed person could get messaged. (inferred) |
 | Account hold: a new lead whose same-domain colleague is Engaged, Qualifying or Booked is created, then moved to PAUSED (reason "account"). Free-mail domains are exempt. | Do not pitch a company already in conversation. | Colleague gets a cold email mid-deal. (inferred) |
 | Accepted leads go INTAKE then IN_SEQUENCE with the chosen channel and score 0. Rejected leads are not stored. | One clean starting point. | None stated. |
@@ -36,7 +36,7 @@ No task-specific rulings beyond the project-wide spike ruling. Deferred minors a
 | Link token is signed (HMAC), constant-time compared, never raises on garbage. Unknown tag or channel raises on creation. | Stops forged or tampered links. | None stated. |
 | Bot rules in fixed order: WhatsApp click by user agent, scanner UA/IP, within 60 s of send, 2+ different tags within 10 s, then Apple proxy open as `machine`. | Scanners pre-click and pre-open mail. | Real humans mislabelled as bots (lost signal) or bots as humans (false hot alerts). (inferred) |
 | Scanner list covers security vendors only. Apple proxy range is `17.0.0.0/8` seed. | Do not invent ranges. | Some scanners slip through until the list grows. (inferred) |
-| Score: opens +1 (max 3, +2 bonus at the 3rd), homepage 2, case study and product 5, pricing and booking 10, WhatsApp read +1 once. Halves after 30 days with no human event. Bands: cold 0-4, warm 5-14, hot 15+. | Spec section 5f. | Alert thresholds off. (inferred) |
+| Score: ~~opens +1 (max 3, +2 bonus at the 3rd)~~ opens 0 (review update), homepage 2, case study and product 5, pricing and booking 10, WhatsApp read +1 once. Halves after 30 days with no human event. Bands: cold 0-4, warm 5-14, hot 15+. | Spec section 5f. | Alert thresholds off. (inferred) |
 | **Confirmed gap fixed:** `link_secret` (32+ chars) and `intake_api_key` (24+) must be strong; ten secrets must be non-blank. | Weak secrets would be accepted silently. | None stated. |
 
 ## Task 5: rules engine
@@ -49,7 +49,7 @@ No task-specific rulings beyond the project-wide spike ruling. Deferred minors a
 | Rules use a frozen `LeadSnapshot` and `EventSnapshot` and stay pure (no DB, I/O or clock). | Easy to test, deterministic. | None stated. |
 | Counters are emitted as `SetFlag` actions. The executor does not mutate them. | Keeps rules the single source of change. (inferred) | None stated. |
 | Scoring uses pure `points_for`. Hot alert fires once when the band crosses to hot; a pricing click alerts unless already alerted. Never two hot alerts in one call. | Avoid alert spam. | A missed or doubled alert. (inferred) |
-| "New subject if not opened" is decided at render time (Task 7) from `opened_steps`, not by a rule action. A `sent` event gives SetStepSent plus RefreshNextStep. Variants are emitted only for email-active leads. | Rules should not know template details. | None stated. |
+| ~~"New subject if not opened" is decided at render time~~ **Superseded 2026-11-13, see Review update.** Originally: decided at render time (Task 7) from `opened_steps`, not by a rule action. A `sent` event gives SetStepSent plus RefreshNextStep. Variants are emitted only for email-active leads. | Rules should not know template details. | None stated. |
 | Messages go by active channel: email SendReply; WhatsApp text only if the 24 h window is open, else Alert("wa_human_needed"). | WhatsApp forbids free text outside the window. | A message that Meta rejects. (inferred) |
 | Never emit SetState to the current state. Two-hop paths emit two SetStates in order (for example PAUSED to ENGAGED to BOOKED). | The state machine rejects no-op or skipped moves. | An illegal-transition alert. (inferred) |
 | Replies, taps and texts stop all outreach and set ENGAGED. Button and booking handling follows the table in the ruling (BOOK_DEMO, ASK_QUESTION, no-show twice to NURTURE, meeting_ended to HANDED_OFF). | One channel at a time (spec B7). | Double messaging. (inferred) |
@@ -81,5 +81,21 @@ No task-specific rulings beyond the project-wide spike ruling. Deferred minors a
 | Template file layout and placeholders are fixed. Each body and reply contains `{booking_link}` and `{unsubscribe_link}`. Load-time validation names any missing key. | Every email must have both links (spec). | A broken template fails loudly at start-up. |
 | Inserted values (first name, company) have CR/LF/tab removed, are stripped and capped at 80 chars. Inserted values are never re-formatted. | Stops email header injection through the subject. | Header injection. (inferred) |
 | `enroll` is idempotent, uses the campaign for the lead's timezone group and raises before any tool call if the group is missing. | Avoid double enrolment and half-state. | A lead stuck without a campaign. (inferred) |
-| `end_of_sequence_route` branch order: hot, never-opened with WhatsApp available, clicked, opened, silent. The caller stores the track. | Spec 5g and 5h. | Wrong follow-up path. (inferred) |
+| ~~`end_of_sequence_route` branch order: hot, never-opened with WhatsApp available, clicked, opened, silent.~~ **Superseded 2026-11-13, see Review update.** Was: The caller stores the track. | Spec 5g and 5h. | Wrong follow-up path. (inferred) |
 | No template text may contain "opened", "clicked", "read your" or "saw you". | Never tell prospects we track them (spec 5d). | Creepy messaging. (inferred) |
+
+
+## Review update (2026-11-13, plan v2.1)
+
+The final plan was reviewed; five points came back. Owner chose: restart rule "depends on outcome", EU "off by default, switch on", scope "plan + code + docs".
+
+| Decision | Why | Cost if wrong |
+|---|---|---|
+| Email is usable with valid syntax and verify status valid / catch_all / unknown, and no `email_hold`. `consent_email` is recorded but **not required**. Every email is verified at intake. | Review: cold B2B email doesn't need permission; only WhatsApp does. | Fewer rejected leads; must keep one-click unsubscribe in every email. |
+| Email opens are logged (`human_opens`) and nothing else: 0 points, no `team_invite` / `new_subject` variants, no `opened_steps`, not used at end of sequence. Templates lost those variants. | Review: the plan itself says opens are unreliable. | None: clicks, replies and bookings carry the real signal. |
+| `end_of_sequence_route(lead, human_clicks)`: hot → `sales_personal` + alert, clicks → `warm_2_3w`, else `monthly`. No `SwitchChannel("never_opened")`. | Review: WhatsApp opt-in leads already get WhatsApp on day 1. | None. |
+| EU / EEA leads (`eu.is_eu`: country, phone region or email country domain) get `email_hold="eu_approval"` unless `EU_EMAIL_APPROVED=true`. Email-only EU leads → `PAUSED("eu_approval")`, outcome `held_eu`. EU leads with WhatsApp opt-in go WhatsApp; email is not a fallback while held. `holds.release_eu_holds` clears the holds once approved. | Review: EU email needs approval (GDPR). Conservative detection: any EU signal counts. | A non-EU lead with a `.de` address waits for approval. |
+| Website tracking script stays off until approved. Nothing to switch: the script is not built (next iteration). | Review: tracking needs approval (cookie consent). | None today. |
+| Paused colleagues restart per `holds.colleague_resume_at`: blocker still Engaged → 14 quiet days; Qualifying / Booked / HandedOff → stay paused; `not_now` → `nurture_until` (else +90 d); `sales_rejected` / `wrong_person` → now; not interested / unsubscribed / other closed or nurture → +90 d; no longer active → now. Waits for the latest of all active colleagues. `paused_by` is stored on the paused lead. | Review: the plan never said when paused colleagues restart. | A colleague restarts too early (annoys the account) or never (lost lead). |
+| A colleague in HANDED_OFF now also holds new intake leads at the same company. | Consistent with "sales owns the account". | New leads at a sales-owned account wait for sales. |
+| `holds.py` is called by the Task 12 tick; it does not run on its own yet. | Worker not built. | Holds don't release until Task 12 ships. |

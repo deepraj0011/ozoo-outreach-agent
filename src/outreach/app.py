@@ -260,7 +260,8 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
 
     # ------------------------------------------------------------ intake
     def _do_intake(session: Session, payload: Any, now: datetime) -> Any:
-        result = intake_lead(session, payload, verifier, now, primary_when_both=settings.primary_when_both)
+        result = intake_lead(session, payload, verifier, now, primary_when_both=settings.primary_when_both,
+                             eu_email_approved=settings.eu_email_approved)
         session.commit()
         return result
 

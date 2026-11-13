@@ -133,8 +133,9 @@ def test_free_mail_domain_not_used_for_account_rule(session):
 def test_no_usable_channel_rejected(session):
     r = run(session, payload(email=None, phone="+919876543210", consent_whatsapp=False))
     assert r.outcome == "rejected" and r.lead_id is None
+    # an email lead without opt-in is NOT rejected: cold email needs no permission
     r = run(session, payload(consent_email=False))
-    assert r.outcome == "rejected"
+    assert r.outcome == "accepted" and r.channel == "email"
 
 
 def test_primary_when_both_param(session):
@@ -182,3 +183,16 @@ def test_unique_race_maps_to_duplicate(session, monkeypatch):
     r = run(session, payload())
     assert r.outcome == "skipped_duplicate" and r.lead_id is None
     assert session.query(Lead).count() == 1
+
+
+def test_account_hold_records_blocker(session):
+    boss = make_lead(session, domain="hold.com", email="boss@hold.com", state=LeadState.ENGAGED)
+    r = run(session, payload(email="new@hold.com"))
+    assert r.outcome == "held_account"
+    assert session.get(Lead, r.lead_id).variant_flags["paused_by"] == boss.id
+
+
+def test_colleague_handed_off_holds(session):
+    # sales owns the account once a colleague is handed off
+    make_lead(session, domain="sold.com", email="boss@sold.com", state=LeadState.HANDED_OFF)
+    assert run(session, payload(email="new@sold.com")).outcome == "held_account"

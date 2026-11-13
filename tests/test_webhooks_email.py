@@ -255,14 +255,15 @@ def test_ingest_open_verdict_bot_within_60s_of_send(session):
     assert session.get(Lead, lead.id).score == 0
 
 
-def test_ingest_open_human_scores(session):
+def test_ingest_open_human_recorded_not_scored(session):
     lead = make_lead(session, email="x@acme.com", step_sent=1, last_sent_at=NOW - timedelta(hours=2))
     session.commit()
     ingest(session, [nev(email="X@ACME.com", step=1, user_agent="Thunderbird", ip="198.51.100.2")],
            make_deps(), NOW, SCANNERS)
     ev = session.scalars(select(Event)).one()
     assert ev.verdict == "human" and ev.lead_id == lead.id
-    assert session.get(Lead, lead.id).score == 1
+    lead = session.get(Lead, lead.id)
+    assert lead.score == 0 and lead.variant_flags["human_opens"] == 1
 
 
 def test_ingest_open_apple_mpp_machine(session):

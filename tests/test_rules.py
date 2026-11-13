@@ -111,7 +111,7 @@ def test_actions_are_frozen():
 
 
 @pytest.mark.parametrize("kind,tag,opens,read,pts", [
-    ("open", None, 0, False, 1), ("open", None, 1, False, 1), ("open", None, 2, False, 3),
+    ("open", None, 0, False, 0), ("open", None, 1, False, 0), ("open", None, 2, False, 0),
     ("open", None, 3, False, 0), ("click", "homepage", 0, False, 2),
     ("click", "case_study", 0, False, 5), ("click", "product", 0, False, 5),
     ("click", "pricing", 0, False, 10), ("click", "booking", 0, False, 10),
@@ -232,26 +232,14 @@ def test_bot_wa_read_ignored():
     assert run(wa_lead(), ev("wa_read", verdict="bot")) == []
 
 
-def test_human_open():
-    assert run(lead_snap(), ev("open", step=1)) == [
-        SetFlag("human_opens", 1), AddScore(1), SetFlag("opened_steps", [1]), RefreshNextStep()]
+def test_human_open_is_counted_only():
+    # opens are unreliable: logged for reporting, never acted on
+    assert run(lead_snap(), ev("open", step=1)) == [SetFlag("human_opens", 1)]
 
 
-def test_open_after_cap_scores_nothing():
-    out = run(lead_snap(flags={"human_opens": 3, "opened_steps": [1]}), ev("open", step=2))
-    assert out == [SetFlag("human_opens", 4), SetFlag("opened_steps", [1, 2]), RefreshNextStep()]
-
-
-def test_third_open_team_invite():
-    out = run(lead_snap(score=2, flags={"human_opens": 2, "opened_steps": [2, 1]}),
-              ev("open", step=1))
-    assert out == [SetFlag("human_opens", 3), AddScore(3), SetVariant("team_invite"),
-                   SetFlag("opened_steps", [1, 2]), RefreshNextStep()]
-
-
-def test_third_open_no_variant_when_whatsapp_active():
-    out = run(both(active_channel="whatsapp", flags={"human_opens": 2}), ev("open", step=1))
-    assert SetVariant("team_invite") not in out and AddScore(3) in out
+def test_many_opens_never_act():
+    out = run(lead_snap(score=14, flags={"human_opens": 2}), ev("open", step=1))
+    assert out == [SetFlag("human_opens", 3)]  # no score, no variant, no subject change, no alert
 
 
 def test_homepage_click():
@@ -639,4 +627,4 @@ def test_add_score_only_positive():
 
 def test_apply_points_still_matches_points_for(session):
     lead = make_lead(session)
-    assert apply_points(lead, ev("open")) == 1 and lead.variant_flags["human_opens"] == 1
+    assert apply_points(lead, ev("open")) == 0 and lead.variant_flags["human_opens"] == 1

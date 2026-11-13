@@ -55,8 +55,14 @@ def test_phone_without_optin_no_email_none():
     assert choose_channel(lead, "whatsapp") is None
 
 
-def test_email_without_consent_unusable():
+def test_email_without_consent_still_usable():
+    # cold B2B email needs no opt-in; only WhatsApp does
     lead = L(email="a@acme.com", verify_status="valid", consent_email=False)
+    assert choose_channel(lead, "whatsapp") == "email"
+
+
+def test_email_on_hold_unusable():
+    lead = L(email="a@acme.com", verify_status="valid", email_hold="eu_approval")
     assert choose_channel(lead, "whatsapp") is None
 
 

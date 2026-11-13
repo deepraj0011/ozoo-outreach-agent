@@ -59,7 +59,9 @@ Clicks are stored unprocessed and decided later by the worker (30 s settle windo
 | `states.py` | LeadState, allowed transitions, `transition()` | Task 2 | yes |
 | `verify.py` | ZeroBounce email verifier | Task 3 | yes |
 | `channels.py` | Phone normalising, `choose_channel`, `fallback_channel` | Task 3 | yes |
-| `intake.py` | Intake gate: validate, suppress, dedup, account hold | Task 3 | yes |
+| `intake.py` | Intake gate: validate, suppress, dedup, account hold, EU hold | Task 3 (review update) | yes |
+| `eu.py` | EU / EEA detection (country, phone region, email domain) | Review update | yes |
+| `holds.py` | When paused colleagues restart; release EU holds once approved (called by the Task 12 tick) | Review update | yes |
 | `links.py` | Signed tracked-link tokens | Task 4 | yes |
 | `botfilter.py` | Classify events as human / bot / machine | Task 4 | yes |
 | `score.py` | Engagement points, decay, bands | Task 4 (pure `points_for` in 5) | yes |
@@ -71,7 +73,7 @@ Clicks are stored unprocessed and decided later by the worker (30 s settle windo
 | `ingest.py` | Shared event pipeline: dedup, match, verdict, decide, execute, commit | Task 6 | yes |
 | `app.py` | FastAPI: `/webhooks/email`, `/r`, `/u`, `/intake`, `/healthz` | Task 6 | yes (more routes planned) |
 | `unsubscribe_page.py` | Confirm and success HTML for `/u/{token}` | Task 6 | yes |
-| `sequencer.py`, `templates/emails.yaml` | Email enroll, variants, end-of-sequence routing | Task 7 | planned |
+| `sequencer.py`, `templates/emails.yaml` | Email enroll, variants, end-of-sequence routing | Task 7 | yes |
 | `whatsapp/client.py`, `whatsapp/webhook.py` | Cloud API client and webhook parser | Task 8 | planned |
 | `classifier.py` | Claude reply classification | Task 9 | planned |
 | `chatbot.py`, `handoff.py` | WhatsApp bot, Slack takeover | Task 10 | planned |

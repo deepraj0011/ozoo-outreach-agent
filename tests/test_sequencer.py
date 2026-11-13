@@ -17,7 +17,7 @@ from outreach.states import LeadState
 from tests.conftest import NOW, make_lead
 from tests.fakes import make_settings
 
-VARIANTS = ["standard", "new_subject", "case_study", "product", "team_invite", "booking_slots"]
+VARIANTS = ["standard", "case_study", "product", "booking_slots"]
 SPY = ("opened", "clicked", "read your", "saw you")
 
 
@@ -48,14 +48,11 @@ def test_constants():
 def test_templates_have_all_keys(tpl):
     for step in (1, 2, 3, 4):
         blocks = tpl["steps"][step]
+        assert set(blocks) == set(VARIANTS), step  # no open-driven variants
         for v in VARIANTS:
-            if v == "new_subject" and step == 1:
-                continue
-            assert v in blocks, (step, v)
             assert blocks[v]["subject"]
-            if v != "new_subject":
-                assert "{booking_link}" in blocks[v]["body"]
-                assert "{unsubscribe_link}" in blocks[v]["body"]
+            assert "{booking_link}" in blocks[v]["body"]
+            assert "{unsubscribe_link}" in blocks[v]["body"]
     for k in ("booking_link", "booking_slots", "reschedule"):
         body = tpl["replies"][k]["body"]
         assert "{booking_link}" in body and "{unsubscribe_link}" in body
@@ -91,20 +88,16 @@ def test_variant_priority(session, st, tpl):
 
     exp = lambda v: tpl["steps"][1][v]["subject"].format(first_name="Test", company="Acme")
     assert body([])["subject_1"] == exp("standard")
-    assert body(["new_subject"])["subject_1"] == exp("standard")
-    assert body(["team_invite"])["subject_1"] == exp("team_invite")
-    assert body(["product", "team_invite"])["subject_1"] == exp("product")
+    assert body(["product"])["subject_1"] == exp("product")
     assert body(["case_study", "product"])["subject_1"] == exp("case_study")
-    assert body(["booking_slots", "case_study", "product", "team_invite"])["subject_1"] == exp("booking_slots")
+    assert body(["booking_slots", "case_study", "product"])["subject_1"] == exp("booking_slots")
 
 
-def test_new_subject_only_when_previous_unopened(session, st, tpl):
-    lead = make_lead(session, variant_flags={"opened_steps": [1]})
-    assert render_step(lead, 2, templates=tpl, settings=st)["subject_2"] == "Following up, Test"
-    lead2 = make_lead(session, variant_flags={})
-    assert render_step(lead2, 2, templates=tpl, settings=st)["subject_2"] == "A different angle for Acme"
-    # step 1 never uses new_subject
-    assert render_step(lead2, 1, templates=tpl, settings=st)["subject_1"] == "Quick idea for Acme"
+def test_subject_does_not_depend_on_opens(session, st, tpl):
+    opened = make_lead(session, variant_flags={"opened_steps": [1], "human_opens": 3})
+    unopened = make_lead(session, variant_flags={})
+    a = render_step(opened, 2, templates=tpl, settings=st)["subject_2"]
+    assert a == render_step(unopened, 2, templates=tpl, settings=st)["subject_2"] == "Following up, Test"
 
 
 def test_subject_injection_sanitised(session, st, tpl):
@@ -229,39 +222,26 @@ def test_load_templates_cached_and_cwd_independent(tmp_path, monkeypatch):
 # --- end of sequence
 def test_end_route_hot(session):
     lead = make_lead(session, score=20)
-    track, acts = end_of_sequence_route(lead, 3, 2)
+    track, acts = end_of_sequence_route(lead, 2)
     assert track == "sales_personal"
     assert acts[0] == SetState(LeadState.NURTURE, "end_hot")
     assert any(isinstance(a, Alert) and a.kind == "hot_no_reply" for a in acts)
 
 
-def test_end_route_never_opened_switches_to_whatsapp(session):
+def test_end_route_never_switches_to_whatsapp(session):
+    # WhatsApp opt-in leads already got WhatsApp on day 1: no "try WhatsApp later" step
     lead = make_lead(session, phone="+911234567890", consent_whatsapp=True, active_channel="email")
-    track, acts = end_of_sequence_route(lead, 0, 0)
-    assert track == "whatsapp"
-    assert acts == [SwitchChannel("never_opened")]
-
-
-def test_end_route_never_opened_no_wa_goes_slow(session):
-    lead = make_lead(session, active_channel="email")
-    assert end_of_sequence_route(lead, 0, 0)[0] == "slow_3m"
-    lead2 = make_lead(session, phone="+911234567891", consent_whatsapp=True,
-                      active_channel="email", channel_switched=True)
-    assert end_of_sequence_route(lead2, 0, 0)[0] == "slow_3m"
-    lead3 = make_lead(session, phone="+911234567892", consent_whatsapp=False, active_channel="email")
-    assert end_of_sequence_route(lead3, 0, 0)[0] == "slow_3m"
+    track, acts = end_of_sequence_route(lead, 0)
+    assert track == "monthly"
+    assert not any(isinstance(a, SwitchChannel) for a in acts)
 
 
 def test_end_route_clicked(session):
-    track, acts = end_of_sequence_route(make_lead(session, score=6), 1, 1)
+    track, acts = end_of_sequence_route(make_lead(session, score=6), 1)
     assert track == "warm_2_3w" and acts == [SetState(LeadState.NURTURE, "end_clicked")]
 
 
-def test_end_route_opened(session):
-    track, acts = end_of_sequence_route(make_lead(session, score=2), 2, 0)
-    assert track == "monthly" and acts == [SetState(LeadState.NURTURE, "end_opened")]
-
-
-def test_end_route_silent(session):
-    track, acts = end_of_sequence_route(make_lead(session), 0, 0)
-    assert track == "slow_3m" and acts == [SetState(LeadState.NURTURE, "end_silent")]
+def test_end_route_no_clicks_monthly_whatever_the_opens(session):
+    lead = make_lead(session, score=2, variant_flags={"human_opens": 5})
+    track, acts = end_of_sequence_route(lead, 0)
+    assert track == "monthly" and acts == [SetState(LeadState.NURTURE, "end_silent")]
