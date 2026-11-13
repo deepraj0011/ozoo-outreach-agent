@@ -23,12 +23,12 @@ Branch: `feat/outreach-agent-v1`. Plan: `docs/superpowers/plans/2026-11-12-outre
 | 11 | Cal.com booking + handoff | ✅ Done (2 fix rounds, reviewed) | `7c4a09c`, `8236b23`, `b2ee102` | 157 | [task-11](tasks/task-11-calcom-booking.md) |
 | 9b | Pluggable AI model provider (company chooses: Claude, OpenAI, Azure OpenAI, any OpenAI-compatible) | ✅ Done (1 fix round, verified) | `9630116`, `1929218` | 144 | [task-09b](tasks/task-09b-pluggable-llm.md) |
 | 12a | Run AI calls as background jobs (not inside webhooks) | ✅ Done (1 fix round, verified) | `b354fc1`, `b87c6bc` | 40 | [task-12a](tasks/task-12a-background-ai-jobs.md) |
-| 12 | Outreach starter + worker + mailbox health | ✅ Built, review done — fix round queued | `a99c7c0` | 79 | [task-12](tasks/task-12-worker-health.md) |
+| 12 | Outreach starter + worker + mailbox health | ✅ Done (1 fix round, verified) | `a99c7c0`, `fba97eb` | 109 | [task-12](tasks/task-12-worker-health.md) |
 | 13 | Run locally + local end-to-end test (deploy deferred) | ✅ Done (controller smoke-tested) | `43716f9`, `0ae48e1` | 116 | [task-13](tasks/task-13-deploy-e2e.md) · **[LOCAL_TESTING.md](../LOCAL_TESTING.md)** |
 
-**Tests now:** 1361 passing (`.venv/bin/pytest -q`).
+**Tests now:** 1391 passing (`.venv/bin/pytest -q`).
 
-**What's next:** you can test locally now: follow [docs/LOCAL_TESTING.md](../LOCAL_TESTING.md). In parallel: Task 12 fix round (stuck WhatsApp→email retry, OOO re-enrol, reminder-refused switch, lock renewal, production delay overrides), then a final whole-branch review.
+**What's next:** all build tasks are done; test locally with [docs/LOCAL_TESTING.md](../LOCAL_TESTING.md). A final whole-branch review is running.
 
 ## Files in this folder
 

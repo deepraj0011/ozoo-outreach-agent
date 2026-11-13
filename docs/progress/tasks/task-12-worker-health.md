@@ -1,7 +1,7 @@
 # Task 12: Outreach starter, worker and mailbox health
 
 ## Status
-✅ Built in commit `a99c7c0`. Tests: 1166 → 1245. Review done: no critical problems. A fix round is queued (see Open items).
+✅ Done. Commits: `a99c7c0` and `fba97eb` (the review fix round). Tests: 1166 → 1391.
 
 ## What it does (plain language)
 - **Starting outreach (`outreach.py`).** The agent starts each new lead on its channel. A lead with both email and WhatsApp is contacted on exactly one of them. The WhatsApp intro is never sent twice: the "attempted" flag is saved before the send. If WhatsApp refuses the number, the lead falls back to email through the rules.
@@ -34,16 +34,20 @@
 ## Depends on / used by
 Depends on nearly everything: rules, executor, sequencer, holds, WhatsApp sender, jobs (12a), alerts, booking. Used by Task 13 (the local kit drives it with `dev tick` and the fake clock).
 
-## Open items (fix round queued)
-- If a WhatsApp→email switch fails to enrol the lead, it is never retried. The fix filters `start_new` by the active channel.
-- A lead returning from out-of-office must be re-enrolled in the email tool at the next unsent step.
-- If the WhatsApp reminder is refused, switch channel at once.
-- Renew the worker lock during long AI-job batches.
-- Production must refuse delay overrides shorter than the real defaults.
-- Smaller items:
-  - match WhatsApp delivery statuses by message id;
-  - cap retries of a failing click;
-  - clean stop between jobs on shutdown;
-  - Postgres unlock failure;
-  - alert wording when a mailbox was not paused.
+## Fixed in review round (`fba97eb`)
+- **Stuck channel switch.** A lead switched from WhatsApp to email whose enrolment failed is now retried on the next tick: `start_new` checks the active channel.
+- **Out-of-office resume.** The lead is re-enrolled in the email tool at the next unsent step. The campaign content is shifted (`step_offset`), and the old tool id is kept.
+- **Refused WhatsApp reminder.** The lead switches channel straight away.
+- **Worker lock.** The lock is renewed after every lead and every AI job.
+- **Production delays.** Production refuses delay overrides shorter than the real defaults.
+- **Smaller fixes.**
+  - WhatsApp statuses are matched by message id.
+  - A failing click is given up after 3 tries.
+  - Shutdown stops cleanly between jobs.
+  - A failed Postgres unlock invalidates the connection.
+  - The alert reads "mailbox_unhealthy" when the mailbox was not paused.
+
+## Open items
+- After an out-of-office resume, the remaining emails restart the campaign spacing from the resume date.
+- If stopping the tool lead after step 4 fails, the campaign could repeat step 4. This shows up as an integration error.
 - Public holidays are not counted in the business-hours SLA.
