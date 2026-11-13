@@ -1,36 +1,28 @@
-# Task 13: Deploy + end-to-end test
-
-> **Re-scoped 2026-11-13:** deployment is not a priority; the owner will test locally first. This task is now: one-command local start, dry-run/fake mode for the email tool, WhatsApp and AI (real ones optional), sample leads, signed webhook simulator scripts, tunnel how-to for real webhooks, and `docs/LOCAL_TESTING.md`. Dockerfile/hosting deferred.
+# Task 13: Run locally + local end-to-end test
 
 ## Status
-⏳ To do. Not started.
+✅ Done. Commits: `43716f9` (code) and `0ae48e1` (guide). Tests: 1245 → 1361. The controller smoke-tested it by hand. Deployment is deferred: the owner tests locally first.
 
 ## What it does (plain language)
-Packages the app (Dockerfile), deploys it, configures the external tools (email tool, Meta, Cal.com, Microsoft Teams), documents it in a runbook and runs an end-to-end checklist. A simulated e2e test with fakes is built locally. The real-inbox run needs real accounts and DNS, so the user does it.
+- **Fake mode for every outside service.** Set per service with `EMAIL_MODE`, `WHATSAPP_MODE`, `LLM_MODE`, `ALERTS_MODE` and `VERIFY_MODE`. Nothing real is sent and nothing costs money.
+  - The fake AI is a simple rule-based one.
+  - Alerts print to the terminal.
+  - You can switch one service to real at a time.
+  - Fake mode is refused when `APP_ENV=production`.
+- **One-command start.** Run `scripts/local_setup` once, then `scripts/run_local`.
+- **Dev CLI.** `python -m outreach.dev` with:
+  - `seed`: 5 sample leads.
+  - `show <id>`: state, events, chat, jobs and alerts for one lead.
+  - `tick`: run the worker once.
+  - `advance --hours N`: moves a fake clock forward, so you can test the 48 h reminder now.
+  - `sim <scenario>`: sends correctly signed webhooks for email events, clicks, WhatsApp buttons, texts and statuses, Cal.com events and Teams commands.
+- **Local e2e test.** `tests/test_local_e2e.py` runs every row of the plan's end-to-end table in-process.
 
-## Files
-Planned: `Dockerfile`, `docs/runbook.md`, `scripts/e2e_checklist.md`, `tests/test_e2e_sim.py`.
+## Guide
+[docs/LOCAL_TESTING.md](../../LOCAL_TESTING.md)
 
-## Key functions and interfaces
-Runs `uvicorn outreach.app:app` with `init_db()` at start. Checklist has about 17 rows across email-only, WhatsApp-only and both-channel leads, plus a duplicate-webhook check.
-
-## Depends on
-Everything: tasks 6 (app), 8, 10, 11 (webhook and slash routes), 12 (worker).
-
-## Used by
-Go-live. See [go-live-checklist.md](../go-live-checklist.md).
-
-## Key decisions (from the rulings)
-Task 13 delivers Dockerfile, runbook, checklist and the simulated test; the real-inbox run is the user's.
-
-## Tests
-Not started. Planned: `tests/test_e2e_sim.py` driving every checklist row with fakes.
-
-## Commits
-None.
-
-## Open items / deferred minors
-Not started. Runbook must cover these carry-forwards:
-- Disable or redact uvicorn access logs (tokens in `/r`, `/u`) and note X-Forwarded-For trust.
-- App logging config must keep httpx at WARNING or higher.
-- Python 3.12 in Docker vs 3.10 locally.
+## Notes
+- Run only one process that writes the database. The worker runs inside the app; do not also start `worker --loop`.
+- Test phone numbers use `+1201555 01xx`, because the phone library rejects the `+1555…` range.
+- The knowledge base `kb/ozoo_kb.md` is still a placeholder. Until marketing fills it, most bot questions go to a person.
+- Email steps are announced with `sim email-sent --step N`. The real email tool keeps its own schedule.
