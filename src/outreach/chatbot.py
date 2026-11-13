@@ -12,7 +12,7 @@ import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Union
+from typing import Any, Callable, Dict, FrozenSet, List, Literal, Optional, Sequence, Union
 
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
@@ -107,31 +107,41 @@ _OUT = BotResult("out_of_scope", None)
 _AMOUNT = r"\d(?:[\d,]*\d)?(?:\.\d+)?"
 _SYM = r"[$€£₹]"
 _CODE = r"(?:USD|EUR|GBP|INR|Rs)"
-_CURRENCY_RE = re.compile(
-    rf"(?:{_SYM}|\b{_CODE}\.?)\s*{_AMOUNT}"  # $500, Rs. 999, USD 75
-    rf"|{_AMOUNT}\s*(?:{_SYM}|{_CODE}\b)",  # 300 USD, 500€
+_WORD = r"(?:dollars?|euros?|rupees?|pounds?|usd|inr)"
+_PER = r"(?:per\s*(?:month|user|seat|year)\b|/\s*(?:month|mo|yr)\b)"
+_PRICE_RE = re.compile(
+    rf"(?:{_SYM}|\b{_CODE}\.?)\s*(?P<pre>{_AMOUNT})"  # $500, Rs. 999, USD 75
+    rf"|(?P<post>{_AMOUNT})\s*(?:{_SYM}|{_CODE}\b|{_WORD}\b|{_PER})",  # 300 USD, 500€, 300 dollars, 99/mo
     re.IGNORECASE,
 )
 _URL_RE = re.compile(r"https?://|www\.|://", re.IGNORECASE)
 
 
-def _squash(s: str) -> str:
-    return re.sub(r"\s+", "", s).casefold()
+def _norm_amount(raw: str) -> str:
+    """1,000 -> 1000; 49.50 -> 49.5; 100.00 -> 100."""
+    a = raw.replace(",", "")
+    if "." in a:
+        a = a.rstrip("0").rstrip(".")
+    return a
 
 
-def _unknown_amount(text: str, kb: str) -> bool:
-    """True if the text names a currency amount that is not written in the KB."""
-    kb_s = _squash(kb)
-    return any(_squash(m.group(0)) not in kb_s for m in _CURRENCY_RE.finditer(text))
+def prices(text: str) -> FrozenSet[str]:
+    """Normalised amounts of every price-like mention in the text."""
+    return frozenset(_norm_amount(m.group("pre") or m.group("post")) for m in _PRICE_RE.finditer(text))
 
 
-def post_check(result: BotResult, kb: str) -> BotResult:
+def kb_prices(kb: str) -> FrozenSet[str]:
+    return prices(kb)
+
+
+def post_check(result: BotResult, kb: str, kb_price_set: Optional[FrozenSet[str]] = None) -> BotResult:
     if result.kind != "answer":
         return BotResult(result.kind, None)
     text = (result.text or "").strip()
     if not text or len(text) > MAX_ANSWER:
         return _OUT
-    if _unknown_amount(text, kb) or _URL_RE.search(text):
+    allowed = kb_price_set if kb_price_set is not None else kb_prices(kb)
+    if not prices(text) <= allowed or _URL_RE.search(text):
         return _OUT
     return BotResult("answer", text)
 
@@ -166,7 +176,7 @@ def build_messages(history: Sequence[ChatMessage]) -> List[Dict[str, str]]:
 # ------------------------------------------------------------------ the Claude call
 
 def bot_reply(lead: Any, history: List[ChatMessage], kb: str, client: Any, *, model: str,
-              today: date) -> BotResult:
+              today: date, kb_price_set: Optional[FrozenSet[str]] = None) -> BotResult:
     """One forced tool call, then the guardrail post-checks. Never raises."""
     lead_id = getattr(lead, "id", None)
     try:
@@ -196,7 +206,7 @@ def bot_reply(lead: Any, history: List[ChatMessage], kb: str, client: Any, *, mo
     except Exception as exc:  # noqa: BLE001 - every failure goes to a human
         logger.warning("lead %s: bot reply failed: %s", lead_id, type(exc).__name__)
         return _HUMAN
-    checked = post_check(BotResult(parsed.kind, parsed.text), kb)
+    checked = post_check(BotResult(parsed.kind, parsed.text), kb, kb_price_set)
     if checked.kind != parsed.kind:
         logger.info("lead %s: bot answer failed post-check, handing off", lead_id)
     return checked
@@ -248,6 +258,7 @@ def make_bot(settings: Any, client: Any = None,
         client = anthropic.Anthropic(api_key=settings.anthropic_api_key, timeout=TIMEOUT_S, max_retries=MAX_RETRIES)
     model = settings.chatbot_model
     kb = load_kb(kb_path)
+    kb_price_set = kb_prices(kb)  # cached with the KB: every quoted price must be in this set
     if not kb:
         logger.warning("chatbot knowledge base is empty: every question goes to a person")
 
@@ -267,7 +278,7 @@ def make_bot(settings: Any, client: Any = None,
             return [WaSendText("turn_limit")]
         if not kb:
             return [StartTakeover("no_kb")]
-        result = bot_reply(lead, rows, kb, client, model=model, today=now.date())
+        result = bot_reply(lead, rows, kb, client, model=model, today=now.date(), kb_price_set=kb_price_set)
         logger.info("lead %s: bot reply kind %s", lead.id, result.kind)
         return actions_for_bot(result, lead, now)
 

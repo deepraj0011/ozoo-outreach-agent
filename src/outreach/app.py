@@ -376,6 +376,7 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
         if lead is None:
             return "lead not found"
         lead.wa_human_owner = None
+        lead.wa_bot_turns = 0  # the bot resumes with a fresh turn budget
         flags = dict(lead.variant_flags or {})
         flags["takeover_released"] = now.isoformat()
         lead.variant_flags = flags

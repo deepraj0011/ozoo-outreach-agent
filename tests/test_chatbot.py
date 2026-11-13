@@ -135,6 +135,51 @@ def test_price_question_never_quotes():
         assert ask(FakeClient(out("answer", text))) == BotResult("out_of_scope", None), text
 
 
+@pytest.mark.parametrize("text", ["It costs 500 per month.", "Price: 99/mo", "200 euros per seat",
+                                  "About 300 dollars.", "10 PER  USER", "1200 /yr", "40 per year", "5 rupees",
+                                  "12 pounds", "70 inr", "9 usd", "30 / month"])
+def test_price_without_currency_symbol_is_out_of_scope(text):
+    assert ask(FakeClient(out("answer", text))) == BotResult("out_of_scope", None), text
+
+
+def test_price_word_forms_allowed_when_in_kb():
+    kb = KB + "Team plan: 500 per month. Add-on: 1,000 rupees.\n"
+    assert ask(FakeClient(out("answer", "Team is 500 per month.")), kb=kb).kind == "answer"
+    assert ask(FakeClient(out("answer", "The add-on is 1000 rupees.")), kb=kb).kind == "answer"
+
+
+def test_kb_substring_is_not_a_match():
+    # "$4" is a substring of "$49" but a different price
+    assert ask(FakeClient(out("answer", "It is $4 per month.")), kb="Starter: $49 per month") == _OUT
+    assert ask(FakeClient(out("answer", "Just $1 to start.")), kb="Pro: $100 per month") == _OUT
+    assert ask(FakeClient(out("answer", "Pro is $100.00.")), kb="Pro: $100 per month").kind == "answer"
+    assert ask(FakeClient(out("answer", "Pro is USD 1,000.")), kb="Pro: $1000").kind == "answer"
+
+
+def test_kb_prices_normalised():
+    from outreach.chatbot import kb_prices
+
+    assert kb_prices("A $1,000 plan, B 49.50 USD, C 99/mo, D 3 steps, E $10.00") == frozenset(
+        {"1000", "49.5", "99", "10"})
+
+
+def test_make_bot_caches_kb_prices(session, tmp_path, monkeypatch):
+    import outreach.chatbot as cb
+
+    calls = []
+    real = cb.kb_prices
+    monkeypatch.setattr(cb, "kb_prices", lambda kb: calls.append(kb) or real(kb))
+    lead = wa_lead(session)
+    add_history(session, lead, ("lead", "price?"))
+    bot = make_bot(SETTINGS, client=FakeClient(out("answer", "Starter is $49 per month.")), kb_path=kb_file(tmp_path))
+    assert bot(session, lead, NOW) == [WaSendRaw("Starter is $49 per month.")]
+    assert bot(session, lead, NOW) == [WaSendRaw("Starter is $49 per month.")]
+    assert len(calls) == 1  # computed once, with the KB
+
+
+_OUT = BotResult("out_of_scope", None)
+
+
 def test_currency_in_kb_allowed():
     assert ask(FakeClient(out("answer", "The starter plan is $49 per month."))).kind == "answer"
     # a different amount next to a KB amount still hands off

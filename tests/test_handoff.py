@@ -60,7 +60,7 @@ def test_takeover_alert_contains_transcript_and_usage(session):
     assert "bot: msg10" in t and "lead: msg09" in t and "human: msg08" in t
     assert "lead: " + "L" * 300 in t and "L" * 301 not in t
     assert t.index("msg02") < t.index("msg10")  # oldest first
-    assert f"/wa {lead.id} <message>" in t and f"/wa-done {lead.id}" in t
+    assert f"/wa {lead.id} &lt;message&gt;" in t and f"/wa-done {lead.id}" in t
 
 
 def test_takeover_sets_flags_and_sends_notice(session):
@@ -227,10 +227,11 @@ def test_slash_wa_message_too_long(env):
 
 def test_slash_wa_done_releases(env, tmp_path):
     client, s, _deps, _wa = env
-    lead = add_lead(s, wa_human_owner="U123", variant_flags={"takeover_at": NOW.isoformat()})
+    lead = add_lead(s, wa_human_owner="U123", variant_flags={"takeover_at": NOW.isoformat()}, wa_bot_turns=6)
     assert reply(slash(client, "/wa-done", f"{lead.id}")) == "released"
     lead = reload(s, lead.id)
     assert lead.wa_human_owner is None
+    assert lead.wa_bot_turns == 0  # the bot gets a fresh turn budget
     assert lead.variant_flags["takeover_released"] == NOW.isoformat()
     # the bot answers again
     from tests.test_chatbot import FakeClient, out
@@ -323,3 +324,33 @@ def test_fake_wa_records_raw_text(session):
     wa = FakeWa()
     wa.send_raw_text(session, lead, "hi", NOW, "bot")
     assert wa.calls == [("send_raw_text", lead.id, "hi", "bot")]
+
+
+def test_slack_escape():
+    from outreach.alerts import slack_escape
+
+    assert slack_escape("a & <b> > c") == "a &amp; &lt;b&gt; &gt; c"
+    assert slack_escape("&lt;") == "&amp;lt;"
+
+
+def test_takeover_alert_escapes_lead_text_for_slack(session):
+    import json as _json
+
+    import httpx
+    import respx
+
+    from outreach.alerts import SlackAlerter
+
+    url = "https://hooks.slack.com/services/x"
+    evil = "<!channel> <https://evil.example|Open CRM>"
+    with respx.mock:
+        route = respx.post(url).mock(return_value=httpx.Response(200))
+        lead = wa_lead(session, name="<!here> Eve", company="<@U1> & Co")
+        add_history(session, lead, ("lead", evil))
+        deps = make_deps(alerter=SlackAlerter(url, sleep=lambda _s: None))
+        start_takeover(session, lead, "unsure", deps, NOW)
+        session.commit()
+        posted = _json.loads(route.calls[0].request.content)["text"]
+    assert "<" not in posted and ">" not in posted.replace("&gt;", "")
+    assert "&lt;!channel&gt; &lt;https://evil.example|Open CRM&gt;" in posted
+    assert "&lt;!here&gt; Eve @ &lt;@U1&gt; &amp; Co" in posted

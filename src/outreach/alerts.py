@@ -33,6 +33,12 @@ class _Pending:
     txn: Optional[SessionTransaction]  # innermost savepoint at send time (None = outer)
 
 
+def slack_escape(text: str) -> str:
+    """Escape Slack control characters so third-party text cannot ping (<!channel>), mention or
+    hide links (<url|label>). Slack requires exactly these three escapes."""
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 def _within(txn: Optional[SessionTransaction], ended: SessionTransaction) -> bool:
     while txn is not None:
         if txn is ended:
@@ -92,7 +98,7 @@ class SlackAlerter:
         sess.flush()
         if lead is not None:
             # Lead name / company are fine in Slack (internal sales tool) but never in logs.
-            msg = f"[{kind}] lead #{lead_id} {lead.name} @ {lead.company}: {text}"
+            msg = f"[{kind}] lead #{lead_id} {slack_escape(str(lead.name))} @ {slack_escape(str(lead.company))}: {text}"
         else:
             msg = f"[{kind}] no lead: {text}"
         _hook(sess)
