@@ -89,6 +89,20 @@ def window_open(lead: Lead, now: datetime) -> bool:
     return lead.wa_window_until is not None and lead.wa_window_until > now
 
 
+def phone_suppressed(session: Session, phone: str) -> bool:
+    return session.scalar(select(Suppression.id).where(
+        Suppression.value == phone, Suppression.kind == "phone").limit(1)) is not None
+
+
+def check_free_text(session: Session, lead: Lead, now: datetime) -> None:
+    """Raise exactly what send_raw_text would refuse with (WhatsAppNotAllowed, then WindowClosed),
+    without sending: lets a caller answer a person at once and send later."""
+    if not lead.consent_whatsapp or not lead.phone or phone_suppressed(session, lead.phone):
+        raise WhatsAppNotAllowed(f"lead {lead.id}: no WhatsApp consent, phone or suppressed")
+    if not window_open(lead, now):
+        raise WindowClosed(f"lead {lead.id}: WhatsApp window closed")
+
+
 class WhatsAppSender:
     """Implements actions.WaPort on top of a WhatsAppClient (or a fake with the same methods)."""
 
@@ -105,9 +119,7 @@ class WhatsAppSender:
         if not lead.consent_whatsapp or not phone:
             logger.info("lead %s: WhatsApp send refused, no consent or phone", lead.id)
             raise WhatsAppNotAllowed(f"lead {lead.id}: no WhatsApp consent or phone")
-        suppressed = session.scalar(select(Suppression.id).where(
-            Suppression.value == phone, Suppression.kind == "phone").limit(1))
-        if suppressed is not None:
+        if phone_suppressed(session, phone):
             logger.info("lead %s: WhatsApp send refused, phone suppressed", lead.id)
             raise WhatsAppNotAllowed(f"lead {lead.id}: phone suppressed")
         return phone

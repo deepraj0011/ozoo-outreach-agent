@@ -1,13 +1,18 @@
-"""SlackAlerter: every alert is an Alert row first; the Slack post happens only after the
-caller's transaction commits (never inside it). Unposted rows keep posted_at NULL for the
-worker to retry."""
+"""TeamsAlerter: every alert is an Alert row first; the Microsoft Teams post (an Adaptive Card
+sent to a Teams Workflows webhook) happens only after the caller's transaction commits (never
+inside it). Unposted rows keep posted_at NULL for the worker to retry.
+
+The webhook URL carries a secret (its sig= query parameter): it is never logged, and neither are
+exception messages from the post (they may contain the URL), only the exception type / status."""
 from __future__ import annotations
 
 import logging
+import re
 import time
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import httpx
 from sqlalchemy import event, select, update
@@ -18,25 +23,72 @@ from .models import Alert as AlertRow
 
 logger = logging.getLogger(__name__)
 
-_PENDING = "slack_pending"
-_HOOKED = "slack_hooked"
+_PENDING = "alert_pending"
+_HOOKED = "alert_hooked"
+
+BLOCK_MAX = 1000  # characters per card TextBlock (transcript lines are already cut at 300)
+BODY_BLOCKS_MAX = 50  # third-party TextBlocks per card
+CARD_SCHEMA = "http://adaptivecards.io/schemas/adaptive-card.json"
+CARD_CONTENT_TYPE = "application/vnd.microsoft.card.adaptive"
+
+# Adaptive Card markdown has no reliable backslash escape: swap markdown-active characters for
+# lookalikes so lead / model text cannot make links, emphasis, headings, code or <at> mentions.
+_LOOKALIKES = str.maketrans({
+    "[": "［", "]": "］", "(": "（", ")": "）", "*": "∗", "_": "＿", "#": "＃", "`": "ˋ",
+    "<": "‹", ">": "›",
+})
+_HTTP = re.compile(r"http", re.IGNORECASE)
+# a dot inside a host-like token (word char before, two letters after): evil.example, www.x
+_HOST_DOT = re.compile(r"(?<=\w)\.(?=[^\W\d_]{2})")
+
+
+def _keep(ch: str) -> bool:
+    if ch == "\n":
+        return True
+    # Cc = control characters (\r, \x1b ...); Cf = invisible format characters (zero-width
+    # spaces, bidi overrides) that could hide "http" from the defang step or reorder text.
+    return unicodedata.category(ch) not in ("Cc", "Cf")
+
+
+def teams_escape(text: str) -> str:
+    """Make third-party text inert in an Adaptive Card TextBlock. Pure and deterministic:
+    strip control / format characters (keep \\n), swap markdown characters for lookalikes,
+    defang URLs (hxxp, [:]//, [.] in host-like tokens) and cap the length at BLOCK_MAX."""
+    out = "".join(ch for ch in text if _keep(ch)).translate(_LOOKALIKES)
+    out = _HTTP.sub("hxxp", out).replace("://", "[:]//")
+    out = _HOST_DOT.sub("[.]", out)
+    if len(out) > BLOCK_MAX:
+        out = out[:BLOCK_MAX - 1] + "…"
+    return out
+
+
+def _block(text: str, **extra: Any) -> Dict[str, Any]:
+    return {"type": "TextBlock", "text": text, "wrap": True, **extra}
+
+
+def build_card(header: str, untrusted: List[str]) -> Dict[str, Any]:
+    """Teams Workflows message with one Adaptive Card. `header` is our own text; every entry of
+    `untrusted` (lead name / company, alert text lines) is escaped into its own TextBlock."""
+    lines = [ln for ln in untrusted if ln.strip()]
+    body = [_block(header, weight="Bolder")]
+    body += [_block(teams_escape(ln)) for ln in lines[:BODY_BLOCKS_MAX]]
+    if len(lines) > BODY_BLOCKS_MAX:
+        body.append(_block(f"({len(lines) - BODY_BLOCKS_MAX} more lines in the alert log)", isSubtle=True))
+    return {"type": "message", "attachments": [{
+        "contentType": CARD_CONTENT_TYPE, "contentUrl": None,
+        "content": {"$schema": CARD_SCHEMA, "type": "AdaptiveCard", "version": "1.4", "body": body},
+    }]}
 
 
 @dataclass
 class _Pending:
-    alerter: "SlackAlerter"
+    alerter: "TeamsAlerter"
     alert_id: int
     kind: str
     lead_id: Optional[int]
-    message: str
+    card: Dict[str, Any]
     now: datetime
     txn: Optional[SessionTransaction]  # innermost savepoint at send time (None = outer)
-
-
-def slack_escape(text: str) -> str:
-    """Escape Slack control characters so third-party text cannot ping (<!channel>), mention or
-    hide links (<url|label>). Slack requires exactly these three escapes."""
-    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 def _within(txn: Optional[SessionTransaction], ended: SessionTransaction) -> bool:
@@ -77,7 +129,7 @@ def _hook(session: Session) -> None:
         session.info[_HOOKED] = True
 
 
-class SlackAlerter:
+class TeamsAlerter:
     def __init__(self, webhook_url: str, *, client: Optional[httpx.Client] = None,
                  sleep: Callable[[float], None] = time.sleep) -> None:
         self._url = webhook_url
@@ -87,7 +139,7 @@ class SlackAlerter:
     def send(self, kind: str, text: str, lead: Any, now: datetime,
              session: Optional[Session] = None) -> None:
         """Write the Alert row in the caller's transaction (session, else the lead's session)
-        and queue the Slack post for after that transaction commits. Never raises for Slack."""
+        and queue the Teams post for after that transaction commits. Never raises for Teams."""
         lead_id = getattr(lead, "id", None)
         sess = session if session is not None else (object_session(lead) if lead is not None else None)
         if sess is None:
@@ -96,26 +148,32 @@ class SlackAlerter:
         row = AlertRow(lead_id=lead_id, kind=kind, text=text, created_at=now)
         sess.add(row)
         sess.flush()
+        # The whole alert text is treated as third-party: callers mix our wording with lead
+        # messages, transcripts, model drafts and sender addresses. Lead name / company are fine
+        # in Teams (internal sales tool) but never in logs.
+        untrusted = text.split("\n")
         if lead is not None:
-            # Lead name / company are fine in Slack (internal sales tool) but never in logs.
-            msg = f"[{kind}] lead #{lead_id} {lead.name} @ {lead.company}: {text}"
+            header = f"Alert: {kind}, lead {lead_id}"
+            untrusted.insert(0, f"{lead.name} @ {lead.company}")
         else:
-            msg = f"[{kind}] no lead: {text}"
+            header = f"Alert: {kind}, no lead"
         _hook(sess)
         sess.info.setdefault(_PENDING, []).append(
-            _Pending(self, row.id, kind, lead_id, msg, now, sess.get_nested_transaction()))
+            _Pending(self, row.id, kind, lead_id, build_card(header, untrusted), now,
+                     sess.get_nested_transaction()))
 
     def _post(self, bind: Any, p: _Pending) -> None:
         try:
-            # Escaped here, once, for every alert: lead/model text must not become Slack markup.
-            # Alert rows keep the raw text, so a later re-post escapes exactly once too.
-            resp = request_with_retry(self._client, "POST", self._url, json={"text": slack_escape(p.message)},
+            # The card was escaped once when queued; Alert rows keep the raw text, so a later
+            # re-post escapes exactly once too. Not idempotent: never retry a maybe-posted card.
+            resp = request_with_retry(self._client, "POST", self._url, json=p.card, idempotent=False,
                                       sleep=self._sleep)
-            if resp.status_code >= 300:
-                logger.warning("slack alert %s for lead %s: HTTP %s", p.kind, p.lead_id, resp.status_code)
+            if not 200 <= resp.status_code < 300:  # Workflows answers 202 Accepted
+                logger.warning("teams alert %s for lead %s: HTTP %s", p.kind, p.lead_id, resp.status_code)
                 return
         except Exception as exc:  # noqa: BLE001 - alerting must never break the caller
-            logger.warning("slack alert %s for lead %s failed: %s", p.kind, p.lead_id, type(exc).__name__)
+            # type only: httpx exception messages can contain the webhook URL and its sig
+            logger.warning("teams alert %s for lead %s failed: %s", p.kind, p.lead_id, type(exc).__name__)
             return
         try:
             with bind.begin() as conn:
@@ -125,5 +183,5 @@ class SlackAlerter:
 
 
 def unposted_alert_ids(session: Session) -> List[int]:
-    """Alert rows not yet on Slack (for the worker's retry / digest)."""
+    """Alert rows not yet on Teams (for the worker's retry / digest)."""
     return list(session.scalars(select(AlertRow.id).where(AlertRow.posted_at.is_(None))))

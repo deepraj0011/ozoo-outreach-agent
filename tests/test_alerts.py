@@ -8,15 +8,31 @@ import pytest
 import respx
 from sqlalchemy import select
 
-from outreach.alerts import SlackAlerter, unposted_alert_ids
+from outreach.alerts import TeamsAlerter, unposted_alert_ids
 from outreach.models import Alert as AlertRow
 from tests.conftest import NOW, make_lead
+from tests.fakes import TEAMS_WEBHOOK_URL
 
-URL = "https://hooks.slack.com/services/x"
+URL = TEAMS_WEBHOOK_URL
+
+
+def card_texts(request) -> list:
+    """The TextBlock texts of the posted Adaptive Card, after checking the envelope."""
+    payload = json.loads(request.content)
+    assert payload["type"] == "message"
+    (att,) = payload["attachments"]
+    assert att["contentType"] == "application/vnd.microsoft.card.adaptive"
+    assert att["contentUrl"] is None
+    card = att["content"]
+    assert card["type"] == "AdaptiveCard" and card["version"] == "1.4"
+    assert card["$schema"] == "http://adaptivecards.io/schemas/adaptive-card.json"
+    for block in card["body"]:
+        assert block["type"] == "TextBlock" and block["wrap"] is True
+    return [b["text"] for b in card["body"]]
 
 
 def alerter(**kw):
-    return SlackAlerter(URL, sleep=lambda s: None, **kw)
+    return TeamsAlerter(URL, sleep=lambda s: None, **kw)
 
 
 def row(session):
@@ -32,13 +48,12 @@ def test_send_writes_row_and_posts_after_commit(session):
     r = session.scalars(select(AlertRow)).one()
     assert (r.lead_id, r.kind, r.text, r.created_at) == (lead.id, "hot_lead", "hot lead", NOW)
     session.commit()
-    payload = json.loads(route.calls[0].request.content)
-    assert payload == {"text": f"[hot_lead] lead #{lead.id} Asha Rao @ Acme: hot lead"}
+    assert card_texts(route.calls[0].request) == [f"Alert: hot_lead, lead {lead.id}", "Asha Rao @ Acme", "hot lead"]
     assert row(session).posted_at == NOW
 
 
 @respx.mock
-def test_slack_posted_only_after_commit(session):
+def test_teams_posted_only_after_commit(session):
     route = respx.post(URL).mock(return_value=httpx.Response(200))
     lead = make_lead(session)
     alerter().send("question", "q", lead, NOW)  # session taken from the lead
@@ -51,7 +66,7 @@ def test_slack_posted_only_after_commit(session):
 
 
 @respx.mock
-def test_slack_not_posted_on_rollback(session):
+def test_teams_not_posted_on_rollback(session):
     route = respx.post(URL).mock(return_value=httpx.Response(200))
     lead = make_lead(session)
     session.commit()
@@ -73,11 +88,11 @@ def test_savepoint_rollback_drops_only_its_alerts(session):
             a.send("question", "dropped", lead, NOW, session=session)
             raise RuntimeError()
     session.commit()
-    assert [json.loads(c.request.content)["text"].rsplit(": ", 1)[1] for c in route.calls] == ["kept"]
+    assert [card_texts(c.request)[-1] for c in route.calls] == ["kept"]
 
 
 @respx.mock
-def test_slack_failure_leaves_posted_at_null(session, caplog):
+def test_teams_failure_leaves_posted_at_null(session, caplog):
     respx.post(URL).mock(side_effect=httpx.ConnectError("down"))
     lead = make_lead(session, name="Secret Name", email="secret@acme.com")
     with caplog.at_level(logging.DEBUG):
@@ -90,7 +105,7 @@ def test_slack_failure_leaves_posted_at_null(session, caplog):
 
 
 @respx.mock
-def test_slack_5xx_leaves_posted_at_null(session):
+def test_teams_5xx_leaves_posted_at_null(session):
     respx.post(URL).mock(return_value=httpx.Response(500))
     alerter().send("unmatched_reply", "from x", None, NOW, session=session)
     session.commit()
@@ -103,7 +118,7 @@ def test_unmatched_lead_text(session):
     route = respx.post(URL).mock(return_value=httpx.Response(200))
     alerter().send("unmatched_reply", "reply from unknown", None, NOW, session=session)
     session.commit()
-    assert json.loads(route.calls[0].request.content)["text"] == "[unmatched_reply] no lead: reply from unknown"
+    assert card_texts(route.calls[0].request) == ["Alert: unmatched_reply, no lead", "reply from unknown"]
 
 
 def test_integration_error_rows_unposted(session):
@@ -116,7 +131,7 @@ def test_integration_error_rows_unposted(session):
 
 
 @respx.mock
-def test_slack_not_posted_on_savepoint_release(session):
+def test_teams_not_posted_on_savepoint_release(session):
     route = respx.post(URL).mock(return_value=httpx.Response(200))
     lead = make_lead(session)
     with session.begin_nested():
@@ -172,30 +187,89 @@ def test_executor_alert_not_posted_when_outer_rolls_back(session):
 
 
 
-# ---------------------------------------------------------------- Slack escaping (Task 10 fix round 2)
+# ---------------------------------------------------------------- Teams card escaping
 
-EVIL = "<!channel> <https://evil.example|Open CRM> & co"
-EVIL_ESC = "&lt;!channel&gt; &lt;https://evil.example|Open CRM&gt; &amp; co"
+EVIL = "[Open CRM](https://evil.example) **bold** <at>x</at> see https://evil.example/x"
 
 
 def _posted(route) -> str:
-    return json.loads(route.calls[-1].request.content)["text"]
+    return "\n".join(card_texts(route.calls[-1].request))
+
+
+def assert_inert(posted: str) -> None:
+    low = posted.lower()
+    assert "](" not in posted and "http" not in low and "<at>" not in low and "www." not in low
+    assert "://" not in posted and "**" not in posted and "<" not in posted and ">" not in posted
+
+
+@pytest.mark.parametrize("raw", [
+    "[Open CRM](https://evil.example)", "**bold**", "<at>x</at>", "https://evil.example/x",
+    "HTTPS://Evil.Example", "www.evil.example", "ht\u200btp://evil.example", "`code` _it_ # h",
+])
+def test_teams_escape_makes_text_inert(raw):
+    from outreach.alerts import teams_escape
+
+    out = teams_escape(raw)
+    assert_inert(out)
+    assert "evil.example" not in out.lower() or "[.]" in out
+    assert teams_escape(raw) == out  # deterministic
+
+
+def test_teams_escape_maps_and_strips():
+    from outreach.alerts import teams_escape
+
+    assert teams_escape("[a](b) *c* _d_ #e `f` <g>") == "［a］（b） ∗c∗ ＿d＿ ＃e ˋfˋ ‹g›"
+    assert teams_escape("a\x00b\rc\nd\x1b\u202ee") == "abc\nde"
+    assert teams_escape("https://evil.example/x") == "hxxps[:]//evil[.]example/x"
+    assert teams_escape("www.evil.example") == "www[.]evil[.]example"
+    assert teams_escape("plain text, 3.5 stars") == "plain text, 3.5 stars"
+
+
+def test_teams_escape_caps_length():
+    from outreach.alerts import BLOCK_MAX, teams_escape
+
+    out = teams_escape("x" * (BLOCK_MAX + 50))
+    assert len(out) == BLOCK_MAX and out.endswith("…")
 
 
 @respx.mock
-def test_posted_text_escaped_once_row_stays_raw(session):
-    route = respx.post(URL).mock(return_value=httpx.Response(200))
-    lead = make_lead(session, name="<!here> Eve", company="<@U1> & Co")
+def test_posted_card_escaped_row_stays_raw(session):
+    route = respx.post(URL).mock(return_value=httpx.Response(202))
+    lead = make_lead(session, name="<at>Eve</at>", company="[Acme](https://evil.example)")
     alerter().send("question", EVIL, lead, NOW, session=session)
     session.commit()
     posted = _posted(route)
-    assert "<" not in posted and ">" not in posted
-    assert posted == f"[question] lead #{lead.id} &lt;!here&gt; Eve @ &lt;@U1&gt; &amp; Co: {EVIL_ESC}"
+    assert_inert(posted)
     assert row(session).text == EVIL  # raw in the DB: a later re-post escapes exactly once
+    assert row(session).posted_at == NOW  # Workflows answers 202
 
 
 @respx.mock
-def test_classifier_draft_answer_escaped_in_slack(session):
+def test_teams_url_never_logged(session, caplog):
+    caplog.set_level(logging.DEBUG)
+    respx.post(URL).mock(side_effect=httpx.ConnectError(f"cannot reach {URL}"))
+    alerter().send("booked", "b", None, NOW, session=session)
+    session.commit()
+    respx.post(URL).mock(return_value=httpx.Response(500, text=URL))
+    alerter().send("booked", "b", None, NOW, session=session)
+    session.commit()
+    respx.post(URL).mock(side_effect=RuntimeError(URL))
+    alerter().send("booked", "b", None, NOW, session=session)
+    session.commit()
+    assert "sig=" not in caplog.text and "TEAMS-SIG-SECRET" not in caplog.text and "/workflows/" not in caplog.text
+    assert "ConnectError" in caplog.text and "500" in caplog.text
+
+
+@respx.mock
+def test_teams_post_not_retried_on_500(session):
+    route = respx.post(URL).mock(return_value=httpx.Response(500))
+    alerter().send("booked", "b", None, NOW, session=session)
+    session.commit()
+    assert route.call_count == 1  # idempotent=False: a 500 may have posted; never double-post
+
+
+@respx.mock
+def test_classifier_draft_answer_escaped_in_teams(session):
     from outreach.actions import Classify, execute
     from outreach.classifier import make_classifier
     from outreach.models import Event
@@ -208,17 +282,18 @@ def test_classifier_draft_answer_escaped_in_slack(session):
                verdict="human", processed=False, data={"text": "how does it work?"})
     session.add(ev)
     session.flush()
-    client = FakeClient(out("question", draft_answer="<!channel> see <https://evil.example|here>"))
+    client = FakeClient(out("question", draft_answer="<at>all</at> see [here](https://evil.example)"))
     deps = make_deps(alerter=alerter(), classify=make_classifier(make_settings(), client=client))
     execute(session, lead, [Classify()], deps, NOW, event=ev)
     session.commit()
     posted = _posted(route)
-    assert "<" not in posted and "&lt;!channel&gt;" in posted
-    assert "<!channel>" in row(session).text
+    assert_inert(posted)
+    assert "‹at›all‹/at›" in posted
+    assert "<at>all</at>" in row(session).text
 
 
 @respx.mock
-def test_unmatched_sender_alert_escaped_in_slack(session):
+def test_unmatched_sender_alert_escaped_in_teams(session):
     from outreach.botfilter import Scanners
     from outreach.emailtool.base import NormalizedEvent
     from outreach.ingest import ingest
@@ -226,9 +301,9 @@ def test_unmatched_sender_alert_escaped_in_slack(session):
 
     route = respx.post(URL).mock(return_value=httpx.Response(200))
     ev = NormalizedEvent(provider_event_id="r-evil", channel="email", kind="reply", occurred_at=NOW,
-                         email="<!channel>@evil.example", data={"text": "hi"})
+                         email="[x](https://evil.example)@evil.example", data={"text": "hi"})
     ingest(session, [ev], make_deps(alerter=alerter()), NOW, Scanners(ua_substrings=(), cidrs=(),
                                                                        apple_proxy_cidrs=()))
     posted = _posted(route)
-    assert "<" not in posted and "&lt;!channel&gt;@evil.example" in posted
-    assert "<!channel>@evil.example" in row(session).text
+    assert_inert(posted)
+    assert "[x](https://evil.example)@evil.example" in row(session).text

@@ -243,9 +243,9 @@ def test_state_not_reemitted_when_already_qualifying(session):
 
 def test_question_email_alert_with_draft(session):
     lead = email_lead(session)
-    a = acts(session, lead, rc("question", draft_answer="Ozoo integrates with Slack."))
+    a = acts(session, lead, rc("question", draft_answer="Ozoo integrates with HubSpot."))
     assert a == [Alert("question")]
-    assert a[0].text == f"lead {lead.id} asked a question. Draft: Ozoo integrates with Slack."
+    assert a[0].text == f"lead {lead.id} asked a question. Draft: Ozoo integrates with HubSpot."
     assert acts(session, lead, rc("question"))[0].text.endswith("Draft: -")
 
 

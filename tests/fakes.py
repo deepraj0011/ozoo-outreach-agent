@@ -1,6 +1,7 @@
 """Shared test doubles: Settings builder, Deps fakes (record calls), app engine."""
 from __future__ import annotations
 
+import base64
 import json
 from datetime import datetime, timezone
 from typing import Any, List, Optional, Tuple
@@ -13,6 +14,13 @@ from outreach.models import Alert as AlertRow
 
 WEBHOOK_SECRET = "tool-webhook-secret-value"
 INTAKE_KEY = "intake-key-" + "k" * 20
+TEAMS_WEBHOOK_URL = ("https://prod-01.westeurope.logic.azure.com/workflows/abc/triggers/manual/paths/invoke"
+                     "?api-version=2016-06-01&sig=TEAMS-SIG-SECRET")
+TEAMS_SECRET_BYTES = b"teams-outgoing-secret-32-bytes!!"
+TEAMS_OUTGOING_SECRET = base64.b64encode(TEAMS_SECRET_BYTES).decode()
+TEAMS_TENANT_ID = "tenant-1111"
+TEAMS_CHANNEL_ID = "19:sales-channel@thread.tacv2"
+TEAMS_ALLOWED = ("aad-raj", "aad-mina")
 LINK_TARGETS = {
     "homepage": "https://ozoo.ai/",
     "booking": "https://cal.com/ozoo/demo",
@@ -38,8 +46,11 @@ def make_settings(**overrides: Any) -> Settings:
         intake_api_key=INTAKE_KEY,
         cal_webhook_secret="cal-secret",
         cal_booking_url="https://cal.com/ozoo/demo",
-        slack_webhook_url="https://hooks.slack.com/services/x",
-        slack_signing_secret="slack-signing",
+        teams_webhook_url=TEAMS_WEBHOOK_URL,
+        teams_outgoing_secret=TEAMS_OUTGOING_SECRET,
+        teams_tenant_id=TEAMS_TENANT_ID,
+        teams_sales_channel_id=TEAMS_CHANNEL_ID,
+        teams_allowed_aad_ids=",".join(TEAMS_ALLOWED),
         wa_phone_number_id="123",
         wa_access_token="wa-token",
         wa_app_secret="wa-app-secret",
@@ -93,7 +104,7 @@ class FakeOutreach(Recorder):
 
 
 class FakeAlerter(Recorder):
-    """Mirrors SlackAlerter's contract: writes the Alert row, records instead of posting."""
+    """Mirrors TeamsAlerter's contract: writes the Alert row, records instead of posting."""
 
     def send(self, kind: str, text: str, lead, now, session=None) -> None:
         self._rec("send", kind, lead.id if lead is not None else None)

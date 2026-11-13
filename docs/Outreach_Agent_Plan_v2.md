@@ -731,7 +731,7 @@ flowchart LR
         A7["Engagement score"]
         A8["Claude reply classifier"]
         A9["Cal.com booking + webhook"]
-        A10["Sales alerts (Slack / email)"]
+        A10["Sales alerts (Microsoft Teams / email)"]
     end
     subgraph WAIT["⏳ NEEDS OUTSIDE WAITING"]
         direction TB

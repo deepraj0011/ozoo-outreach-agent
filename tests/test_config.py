@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 
 import pytest
@@ -19,8 +20,11 @@ REQUIRED = {
     "INTAKE_API_KEY": "I" * 30,
     "CAL_WEBHOOK_SECRET": "c",
     "CAL_BOOKING_URL": "https://cal.com/x",
-    "SLACK_WEBHOOK_URL": "https://hooks.slack.com/x",
-    "SLACK_SIGNING_SECRET": "ss",
+    "TEAMS_WEBHOOK_URL": "https://prod-01.westeurope.logic.azure.com/workflows/x?sig=SIGSECRETVALUE",
+    "TEAMS_OUTGOING_SECRET": base64.b64encode(b"0123456789abcdef0123").decode(),
+    "TEAMS_TENANT_ID": "tenant-1",
+    "TEAMS_SALES_CHANNEL_ID": "19:sales@thread.tacv2",
+    "TEAMS_ALLOWED_AAD_IDS": "aad-1, aad-2",
     "WA_PHONE_NUMBER_ID": "1",
     "WA_ACCESS_TOKEN": "t",
     "WA_APP_SECRET": "as",
@@ -86,7 +90,7 @@ def test_short_intake_key_rejected(monkeypatch):
 
 
 @pytest.mark.parametrize("env", [
-    "TOOL_WEBHOOK_SECRET", "CAL_WEBHOOK_SECRET", "SLACK_SIGNING_SECRET", "WA_APP_SECRET",
+    "TOOL_WEBHOOK_SECRET", "CAL_WEBHOOK_SECRET", "TEAMS_OUTGOING_SECRET", "WA_APP_SECRET",
     "WA_VERIFY_TOKEN", "INTAKE_API_KEY", "TOOL_API_KEY", "ANTHROPIC_API_KEY",
     "ZEROBOUNCE_API_KEY", "WA_ACCESS_TOKEN",
 ])
@@ -110,3 +114,62 @@ def test_validation_error_does_not_echo_secret(monkeypatch):
         Settings(_env_file=None)
     assert "tooshort-SECRETVALUE" not in str(exc.value)
     assert "link_secret" in str(exc.value)
+
+
+# ---------------------------------------------------------------- Microsoft Teams settings
+
+def test_teams_settings_parsed(monkeypatch):
+    from outreach.config import Settings
+
+    _set_env(monkeypatch)
+    s = Settings(_env_file=None)
+    assert s.teams_allowed_aad_id_set == frozenset({"aad-1", "aad-2"})
+    assert s.teams_outgoing_key == b"0123456789abcdef0123"
+    assert s.teams_tenant_id == "tenant-1"
+    assert s.teams_sales_channel_id == "19:sales@thread.tacv2"
+
+
+@pytest.mark.parametrize("env", [
+    "TEAMS_WEBHOOK_URL", "TEAMS_OUTGOING_SECRET", "TEAMS_TENANT_ID", "TEAMS_SALES_CHANNEL_ID",
+    "TEAMS_ALLOWED_AAD_IDS",
+])
+def test_teams_setting_missing_fails(monkeypatch, env):
+    from pydantic import ValidationError
+
+    from outreach.config import Settings
+
+    _set_env(monkeypatch)
+    monkeypatch.delenv(env)
+    with pytest.raises(ValidationError, match=env.lower()):
+        Settings(_env_file=None)
+
+
+@pytest.mark.parametrize("env, value", [
+    ("TEAMS_WEBHOOK_URL", "http://prod-01.logic.azure.com/x?sig=SECRETSIG1"),
+    ("TEAMS_WEBHOOK_URL", "not a url SECRETSIG2"),
+    ("TEAMS_WEBHOOK_URL", "   "),
+    ("TEAMS_OUTGOING_SECRET", "%%%not-base64-SECRET3%%%"),
+    ("TEAMS_OUTGOING_SECRET", base64.b64encode(b"SECRET4short").decode()),  # < 16 bytes
+    ("TEAMS_OUTGOING_SECRET", "   "),
+    ("TEAMS_TENANT_ID", "  "),
+    ("TEAMS_SALES_CHANNEL_ID", ""),
+    ("TEAMS_ALLOWED_AAD_IDS", " , ,"),
+])
+def test_teams_setting_invalid_fails_without_echo(monkeypatch, env, value):
+    from pydantic import ValidationError
+
+    from outreach.config import Settings
+
+    _set_env(monkeypatch, **{env: value})
+    with pytest.raises(ValidationError, match=env.lower()) as exc:
+        Settings(_env_file=None)
+    if value.strip():
+        assert value not in str(exc.value)
+    for secret in ("SECRETSIG", "SECRET3", "SECRET4", base64.b64encode(b"SECRET4short").decode()):
+        assert secret not in str(exc.value)
+
+
+def test_old_chat_settings_gone():
+    from outreach.config import Settings
+
+    assert not [f for f in Settings.model_fields if "sl" + "ack" in f]

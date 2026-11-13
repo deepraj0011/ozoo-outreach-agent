@@ -1,9 +1,10 @@
 """WhatsApp human takeover (plan section 7).
 
-start_takeover() mutes the bot (variant_flags["takeover_at"]), alerts Slack with the recent
-transcript and the /wa usage, and tells the lead a person will reply. A person then answers with
-`/wa <lead_id> <message>` and gives the chat back with `/wa-done <lead_id>` (see app.py).
-Flushes only; the caller commits. Message text goes to the Alert row / Slack, never to logs.
+start_takeover() mutes the bot (variant_flags["takeover_at"]), alerts Microsoft Teams with the
+recent transcript and the command usage, and tells the lead a person will reply. A person then
+answers by mentioning the outreach bot in the sales channel with `wa <lead_id> <message>` and
+gives the chat back with `done <lead_id>` (POST /teams/commands in app.py).
+Flushes only; the caller commits. Message text goes to the Alert row / Teams, never to logs.
 """
 from __future__ import annotations
 
@@ -49,10 +50,10 @@ def start_takeover(session: Session, lead: Lead, reason: str, deps: "Deps", now:
         f"lead {lead.id}: WhatsApp chat needs a person (reason: {reason}). The bot is paused.",
         "Recent messages:",
         *lines,
-        f"Reply: /wa {lead.id} <message>",
-        f"Give back to the bot: /wa-done {lead.id}",
+        f"Reply: mention the outreach bot in the sales channel with: wa {lead.id} your message",
+        f"Give back to the bot: done {lead.id}",
     ])
-    deps.alerter.send("wa_human_needed", text, lead, now, session)  # the alerter escapes for Slack
+    deps.alerter.send("wa_human_needed", text, lead, now, session)  # the alerter escapes for Teams
     logger.info("lead %s: WhatsApp takeover started (%s)", lead.id, reason)
 
     if not window_open(lead, now):

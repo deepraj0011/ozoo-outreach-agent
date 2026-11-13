@@ -120,7 +120,7 @@ def _ingest_one(session: Session, ev: NormalizedEvent, deps: Deps, now: datetime
         alert_kind = UNMATCHED_ALERTS.get(ev.kind)
         if alert_kind:
             sender = ev.email or ev.phone or "unknown sender"
-            # Sender address goes to the Alert row / Slack (humans must find it), never to logs.
+            # Sender address goes to the Alert row / Teams (humans must find it), never to logs.
             try:
                 with session.begin_nested():
                     deps.alerter.send(alert_kind, f"{ev.kind} event #{row.id} from {sender} matches no lead",

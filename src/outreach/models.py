@@ -59,7 +59,9 @@ class Lead(Base):
     wa_reminder_sent_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime)
     wa_window_until: Mapped[Optional[datetime]] = mapped_column(UTCDateTime)
     wa_bot_turns: Mapped[int] = mapped_column(Integer, default=0)
+    # Entra (AAD) object id of the salesperson who took the chat over in Teams; display name next
     wa_human_owner: Mapped[Optional[str]] = mapped_column(String(100))
+    wa_human_owner_name: Mapped[Optional[str]] = mapped_column(String(100))
 
     variant_flags: Mapped[Dict[str, Any]] = mapped_column(MutableDict.as_mutable(JSON), default=dict)
     nurture_track: Mapped[Optional[str]] = mapped_column(String(50))
@@ -122,5 +124,5 @@ class Alert(Base):
     kind: Mapped[str] = mapped_column(String(50))
     text: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime)
-    posted_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime)  # NULL = not on Slack yet
+    posted_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime)  # NULL = not on Teams yet
     resolved_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime)

@@ -1,22 +1,26 @@
 """FastAPI app: email + WhatsApp webhooks, tracked-link redirect, scanner-safe unsubscribe, intake,
-Slack slash commands (/wa, /wa-done), health."""
+Microsoft Teams sales commands (outgoing webhook: wa / done / help), health."""
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import hmac
+import html
 import json
 import logging
+import re
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional
-from urllib.parse import parse_qs
+from typing import Any, Callable, Dict, Iterator, Optional, Tuple
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 from starlette.concurrency import run_in_threadpool
 
-from .actions import Deps
-from .alerts import SlackAlerter
+from .actions import Deps, record_integration_error
+from .alerts import TeamsAlerter
 from .botfilter import Scanners, load_scanners
 from .chatbot import make_bot
 from .classifier import make_classifier
@@ -32,7 +36,7 @@ from .models import Event, Lead
 from .unsubscribe_page import CONFIRM_HTML, DONE_HTML, ERROR_HTML, HEADERS as PAGE_HEADERS, NOT_FOUND_HTML
 from .verify import EmailVerifier
 from .whatsapp.client import WaSendError, WhatsAppClient, WhatsAppNotAllowed, WindowClosed
-from .whatsapp.sender import WhatsAppSender
+from .whatsapp.sender import WhatsAppSender, check_free_text
 from .whatsapp.webhook import parse_wa_webhook
 
 logger = logging.getLogger(__name__)
@@ -41,13 +45,29 @@ MAX_BODY = 1024 * 1024  # 1 MiB
 MAX_CHALLENGE_LEN = 64
 DEFAULT_HOME = "https://ozoo.ai/"
 NO_STORE = {"Cache-Control": "no-store"}
-SLACK_MAX_BODY = 64 * 1024
-SLACK_MAX_AGE_S = 300
-SLACK_TS_MAX_LEN = 12
+TEAMS_MAX_BODY = 64 * 1024
+TEAMS_MAX_AGE_S = 300
+TEAMS_SIG_MAX_LEN = 128
+TEAMS_ID_MAX = 190  # Event.provider_event_id is 200 with the "teams:" prefix
+TEAMS_TS_MAX_LEN = 40
 WA_TEXT_MAX = 4096
-OWNER_MAX = 100  # Lead.wa_human_owner column size
-WA_USAGE = "usage: /wa <lead_id> <message>"
-WA_DONE_USAGE = "usage: /wa-done <lead_id>"
+OWNER_MAX = 100  # Lead.wa_human_owner / wa_human_owner_name column size
+TEAMS_USAGE = ("Commands: wa LEAD_ID MESSAGE (send the lead a WhatsApp message and pause the bot), "
+               "done LEAD_ID (give the chat back to the bot), help.")
+NOT_ALLOWED = "Not allowed here."
+ALREADY_HANDLED = "Already handled."
+WINDOW_CLOSED_TEXT = "24h window closed — the lead must message first"
+NO_CONSENT_TEXT = "lead has opted out / no WhatsApp consent"
+INTERNAL_ERROR_TEXT = "Internal error — nothing was changed; try again."
+_TEAMS_TS = re.compile(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:\d{2})\Z")
+_AT_MENTION = re.compile(r"<at\b[^>]*>.*?</at>", re.IGNORECASE | re.DOTALL)
+_LINE_BREAK = re.compile(r"<br\s*/?>|</p>|</div>", re.IGNORECASE)
+_TAG = re.compile(r"<[^>]*>")
+_COMMAND = re.compile(r"(\S+)(?:\s+(.*))?\Z", re.DOTALL)
+_WA_ARGS = re.compile(r"(\S+)\s+(.+)\Z", re.DOTALL)
+
+# (lead_id, message) for the background WhatsApp send
+_WaJob = Tuple[int, str]
 
 
 def _utcnow() -> datetime:
@@ -103,32 +123,73 @@ def default_deps(settings: Settings) -> Deps:
     return Deps(
         tool=InstantlyTool(settings.tool_api_key, settings.tool_webhook_secret),
         wa=WhatsAppSender(WhatsAppClient(settings), settings),
-        alerter=SlackAlerter(settings.slack_webhook_url),
+        alerter=TeamsAlerter(settings.teams_webhook_url),
         outreach=_NotWired("outreach"),  # Task 12
         classify=make_classifier(settings) if settings.anthropic_api_key else None,
         bot_reply=make_bot(settings) if settings.anthropic_api_key else None,
     )
 
 
-def verify_slack_signature(headers: Mapping[str, str], body: bytes, secret: str, now: datetime) -> bool:
-    """Slack v0 request signing: HMAC-SHA256 over "v0:<ts>:<raw body>", timestamp within 5 min."""
-    sig = headers.get("x-slack-signature") or ""
-    ts = headers.get("x-slack-request-timestamp") or ""
-    if not sig or not ts or len(ts) > SLACK_TS_MAX_LEN or not (ts.isascii() and ts.isdigit()):
+def verify_teams_signature(authorization: Optional[str], body: bytes, key: bytes) -> bool:
+    """Teams outgoing webhook: "Authorization: HMAC <base64(HMAC-SHA256(key, raw body))>", where key
+    is the base64-decoded security token. Constant-time compare on bytes."""
+    if not authorization or not authorization.startswith("HMAC "):
         return False
-    if abs(now.timestamp() - int(ts)) > SLACK_MAX_AGE_S:
+    provided_b64 = authorization[len("HMAC "):].strip()
+    if not provided_b64 or len(provided_b64) > TEAMS_SIG_MAX_LEN:
         return False
-    expected = "v0=" + hmac.new(secret.encode(), b"v0:" + ts.encode() + b":" + body, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(expected.encode(), sig.encode())
+    try:
+        provided = base64.b64decode(provided_b64, validate=True)
+    except (binascii.Error, ValueError):
+        return False
+    expected = hmac.new(key, body, hashlib.sha256).digest()
+    return hmac.compare_digest(expected, provided)
+
+
+def _parse_teams_ts(raw: Any) -> Optional[datetime]:
+    """ISO 8601 with a zone; Teams sends 7 fractional digits ("...:00.1234567Z"), which
+    datetime.fromisoformat on Python 3.10 cannot read, so the fraction is cut to 6."""
+    if not isinstance(raw, str) or len(raw) > TEAMS_TS_MAX_LEN:
+        return None
+    m = _TEAMS_TS.match(raw)
+    if m is None:
+        return None
+    frac = (m.group(2) or "0")[:6].ljust(6, "0")
+    zone = "+00:00" if m.group(3) == "Z" else m.group(3)
+    try:
+        return datetime.fromisoformat(f"{m.group(1)}.{frac}{zone}")
+    except ValueError:
+        return None
+
+
+def _dig(obj: Any, *keys: str) -> Optional[str]:
+    """obj[k1][k2]... if every level is a dict and the leaf a non-empty string, else None."""
+    for k in keys:
+        if not isinstance(obj, dict):
+            return None
+        obj = obj.get(k)
+    return obj if isinstance(obj, str) and obj else None
+
+
+def _teams_channel_id(act: Dict[str, Any]) -> Optional[str]:
+    channel = _dig(act, "channelData", "channel", "id")
+    if channel:
+        return channel
+    conv = _dig(act, "conversation", "id")  # "19:...@thread.tacv2;messageid=..."
+    return conv.split(";", 1)[0] if conv else None
+
+
+def _command_text(raw: str) -> str:
+    """Strip <at>…</at> mentions and any other HTML Teams adds, unescape entities, trim."""
+    text = _AT_MENTION.sub(" ", raw)
+    text = _LINE_BREAK.sub("\n", text)
+    text = _TAG.sub("", text)
+    text = html.unescape(text).replace("\xa0", " ")
+    return "\n".join(line.strip() for line in text.split("\n")).strip()
 
 
 def _lead_id_arg(raw: str) -> Optional[int]:
     return int(raw) if raw.isascii() and raw.isdigit() and len(raw) <= 18 else None
-
-
-def _first(form: Dict[str, List[str]], key: str) -> str:
-    vals = form.get(key) or [""]
-    return vals[0]
 
 
 def _client_ip(request: Request) -> Optional[str]:
@@ -164,7 +225,8 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
             start_takeover(session, lead, reason, deps, now)
 
         deps.takeover = _takeover
-    allowed_users = frozenset(u.strip() for u in settings.slack_allowed_user_ids.split(",") if u.strip())
+    teams_key = settings.teams_outgoing_key
+    teams_allowed = settings.teams_allowed_aad_id_set
 
     app = FastAPI(title="Ozoo outreach agent", docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -337,92 +399,172 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
             status_code=201 if r.outcome == "accepted" else 200,
         )
 
-    # ------------------------------------------------------------ Slack slash commands
-    def _cmd_wa(session: Session, text: str, user_id: str, now: datetime) -> str:
-        parts = text.strip().split(None, 1)
-        lead_id = _lead_id_arg(parts[0]) if parts else None
-        if len(parts) != 2 or lead_id is None:
-            return WA_USAGE
-        message = parts[1]
+    # ------------------------------------------------------------ Teams sales commands
+    def _cmd_wa(session: Session, args: str, aad: str, name: Optional[str],
+                now: datetime) -> Tuple[str, Optional[_WaJob]]:
+        m = _WA_ARGS.match(args)
+        lead_id = _lead_id_arg(m.group(1)) if m else None
+        if m is None or lead_id is None:
+            return TEAMS_USAGE, None
+        message = m.group(2).strip()
         if not 1 <= len(message) <= WA_TEXT_MAX:
-            return f"message must be 1-{WA_TEXT_MAX} characters"
+            return f"Message must be 1-{WA_TEXT_MAX} characters.", None
         lead = session.get(Lead, lead_id)
         if lead is None:
-            return "lead not found"
+            return f"Lead {lead_id} not found.", None
         try:
-            deps.wa.send_raw_text(session, lead, message, now, "human")
+            # checked now so the person gets a clear answer; the sender re-checks when it sends
+            check_free_text(session, lead, now)
         except WindowClosed:
-            session.rollback()
-            outcome = "24h window closed — the lead must message first"
+            logger.info("teams wa: lead %s not sent, window closed", lead_id)
+            return WINDOW_CLOSED_TEXT, None
         except WhatsAppNotAllowed:
-            session.rollback()
-            outcome = "lead has opted out / no WhatsApp consent"
-        except WaSendError as exc:
-            session.rollback()
-            outcome = f"send failed (code {exc.code})"
-        else:
-            lead.wa_human_owner = (user_id or "slack")[:OWNER_MAX]
-            session.commit()
-            logger.info("slack /wa: lead %s message sent by a person", lead_id)
-            return "sent"
-        logger.info("slack /wa: lead %s not sent", lead_id)
-        return outcome
+            logger.info("teams wa: lead %s not sent, no consent or suppressed", lead_id)
+            return NO_CONSENT_TEXT, None
+        lead.wa_human_owner = aad[:OWNER_MAX]  # mutes the bot from this commit on
+        lead.wa_human_owner_name = name[:OWNER_MAX] if name else None
+        logger.info("teams wa: lead %s taken over, send queued", lead_id)
+        return f"Sending to lead {lead_id}…", (lead_id, message)
 
-    def _cmd_wa_done(session: Session, text: str, now: datetime) -> str:
-        lead_id = _lead_id_arg(text.strip())
+    def _cmd_done(session: Session, args: str, now: datetime) -> str:
+        lead_id = _lead_id_arg(args) if args else None
         if lead_id is None:
-            return WA_DONE_USAGE
+            return TEAMS_USAGE
         lead = session.get(Lead, lead_id)
         if lead is None:
-            return "lead not found"
+            return f"Lead {lead_id} not found."
         lead.wa_human_owner = None
+        lead.wa_human_owner_name = None
         lead.wa_bot_turns = 0  # the bot resumes with a fresh turn budget
         flags = dict(lead.variant_flags or {})
         flags["takeover_released"] = now.isoformat()
         lead.variant_flags = flags
-        session.commit()
-        logger.info("slack /wa-done: lead %s given back to the bot", lead_id)
-        return "released"
+        logger.info("teams done: lead %s given back to the bot", lead_id)
+        return f"Lead {lead_id} is back with the bot."
 
-    def _slash(session: Session, command: str, text: str, user_id: str, now: datetime) -> str:
-        if command == "/wa":
-            return _cmd_wa(session, text, user_id, now)
-        if command == "/wa-done":
-            return _cmd_wa_done(session, text, now)
-        return "unknown command"
-
-    @app.post("/slack/commands")
-    async def slack_commands(request: Request, session: Session = Depends(get_session)) -> Response:
+    def _teams_command(session: Session, activity_id: str, sent_at: datetime, raw_text: str, aad: str,
+                       name: Optional[str], now: datetime) -> Tuple[str, Optional[_WaJob]]:
+        """Replay check + command, committed together; any exception rolls both back."""
         try:
-            body = await _read_capped(request, SLACK_MAX_BODY)
+            with session.begin_nested():
+                session.add(Event(lead_id=None, channel="system", kind="teams_command",
+                                  provider_event_id=f"teams:{activity_id}", occurred_at=sent_at,
+                                  received_at=now, processed=True, data={}))
+        except IntegrityError:
+            session.rollback()
+            logger.info("teams command replay ignored")
+            return ALREADY_HANDLED, None
+        m = _COMMAND.match(_command_text(raw_text))
+        verb = m.group(1).lower() if m else ""
+        args = (m.group(2) or "").strip() if m else ""
+        job: Optional[_WaJob] = None
+        if verb == "wa":
+            text, job = _cmd_wa(session, args, aad, name, now)
+        elif verb == "done":
+            text = _cmd_done(session, args, now)
+        else:
+            text = TEAMS_USAGE
+        session.commit()
+        return text, job
+
+    def _send_in_background(job: _WaJob) -> None:
+        """Own session; never raises. A failure becomes an integration_error alert in Teams."""
+        lead_id, message = job
+        s = session_factory()
+        try:
+            now = clock()
+            lead = s.get(Lead, lead_id)
+            if lead is None:
+                return
+            try:
+                deps.wa.send_raw_text(s, lead, message, now, "human")  # logs the ChatMessage
+                s.commit()
+                logger.info("teams wa: lead %s message sent by a person", lead_id)
+                return
+            except WindowClosed:
+                s.rollback()
+                reason = "the 24h window closed"
+            except WhatsAppNotAllowed:
+                s.rollback()
+                reason = "the lead has opted out / no WhatsApp consent"
+            except WaSendError as exc:
+                s.rollback()
+                reason = f"Meta error code {exc.code}, HTTP {exc.status}"
+            except Exception as exc:  # noqa: BLE001
+                s.rollback()
+                reason = type(exc).__name__
+            logger.warning("teams wa: lead %s send failed", lead_id)
+            text = (f"lead {lead_id}: the WhatsApp message typed in Teams was NOT sent ({reason}). "
+                    f"Nothing reached the lead.")
+            try:
+                deps.alerter.send("integration_error", text, s.get(Lead, lead_id), now, s)
+                s.commit()
+            except Exception as exc:  # noqa: BLE001 - fall back to a plain row for the digest
+                s.rollback()
+                logger.warning("teams wa: lead %s failure alert failed: %s", lead_id, type(exc).__name__)
+                record_integration_error(s, lead_id, text, now)
+                s.commit()
+        except Exception as exc:  # noqa: BLE001 - a background task must never raise
+            s.rollback()
+            logger.error("teams wa: lead %s background send crashed: %s", lead_id, type(exc).__name__)
+        finally:
+            s.close()
+
+    @app.post("/teams/commands")
+    async def teams_commands(request: Request, background: BackgroundTasks,
+                             session: Session = Depends(get_session)) -> Response:
+        try:
+            body = await _read_capped(request, TEAMS_MAX_BODY)
         except _BodyTooLarge:
             return _fail(413)
         except _BadRequest:
             return _fail(400)
-        now = clock()
-        if not verify_slack_signature(request.headers, body, settings.slack_signing_secret, now):
-            logger.warning("slack command rejected: bad signature or timestamp")
+        if not verify_teams_signature(request.headers.get("authorization"), body, teams_key):
+            logger.warning("teams command rejected: bad signature")
             return _fail(401)
         try:
-            form = parse_qs(body.decode("utf-8"), keep_blank_values=True, max_num_fields=50)
-        except (UnicodeDecodeError, ValueError):
+            act = json.loads(body)
+        except ValueError:
             return _fail(400)
-        user_id = _first(form, "user_id")
-        if allowed_users and user_id not in allowed_users:
-            logger.warning("slack command refused: user not allowed")
-            return _ephemeral("not allowed")
+        if not isinstance(act, dict):
+            return _fail(400)
+        activity_id = act.get("id")
+        sent_at = _parse_teams_ts(act.get("timestamp"))
+        raw_text = act.get("text")
+        aad = _dig(act, "from", "aadObjectId")
+        tenant = _dig(act, "channelData", "tenant", "id")
+        channel = _teams_channel_id(act)
+        if (not isinstance(activity_id, str) or not 1 <= len(activity_id) <= TEAMS_ID_MAX or sent_at is None
+                or not isinstance(raw_text, str) or not aad or not tenant or not channel):
+            logger.warning("teams command rejected: missing or invalid fields")
+            return _fail(400)
+        now = clock()
+        if abs((now - sent_at).total_seconds()) > TEAMS_MAX_AGE_S:
+            logger.warning("teams command rejected: stale or future timestamp")
+            return _fail(401)
+        if tenant != settings.teams_tenant_id:
+            logger.warning("teams command refused: tenant not allowed")
+            return _teams_reply(NOT_ALLOWED)
+        if channel != settings.teams_sales_channel_id:
+            logger.warning("teams command refused: channel not allowed")
+            return _teams_reply(NOT_ALLOWED)
+        if aad not in teams_allowed:
+            logger.warning("teams command refused: user not allowed")
+            return _teams_reply(NOT_ALLOWED)
         try:
-            text = await run_in_threadpool(_slash, session, _first(form, "command"), _first(form, "text"),
-                                           user_id, now)
-        except Exception as exc:  # noqa: BLE001 - Slack still needs a 200 with a readable answer
+            text, job = await run_in_threadpool(_teams_command, session, activity_id, sent_at, raw_text, aad,
+                                                _dig(act, "from", "name"), now)
+        except Exception as exc:  # noqa: BLE001 - Teams still needs a 200 with a readable answer
             session.rollback()
-            logger.error("slack command failed: %s", type(exc).__name__)
-            text = "internal error — nothing was changed; try again"
-        return _ephemeral(text)
+            logger.error("teams command failed: %s", type(exc).__name__)
+            return _teams_reply(INTERNAL_ERROR_TEXT)
+        if job is not None:
+            background.add_task(_send_in_background, job)  # Teams wants the reply within 5 s
+        return _teams_reply(text)
 
     return app
 
 
-def _ephemeral(text: str) -> JSONResponse:
-    """Slack needs a 200 within 3 s; ephemeral = only the person who typed the command sees it."""
-    return JSONResponse({"response_type": "ephemeral", "text": text})
+def _teams_reply(text: str) -> JSONResponse:
+    """Outgoing-webhook reply, posted in the channel thread. Never carries lead phone or message."""
+    return JSONResponse({"type": "message", "text": text})

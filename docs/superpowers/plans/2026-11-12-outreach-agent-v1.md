@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** One outreach agent that takes any lead (email only, WhatsApp only, or both) through an intake gate and runs the right channel. Email is a 4-email sequence through a cold-email tool. WhatsApp is an opt-in template with 2 buttons, a reminder and a chatbot. The agent tracks every event, filters bots, scores engagement, classifies replies with Claude, books through Cal.com and alerts sales in Slack. Both channels run on **one lead record and one state**.
+**Goal:** One outreach agent that takes any lead (email only, WhatsApp only, or both) through an intake gate and runs the right channel. Email is a 4-email sequence through a cold-email tool. WhatsApp is an opt-in template with 2 buttons, a reminder and a chatbot. The agent tracks every event, filters bots, scores engagement, classifies replies with Claude, books through Cal.com and alerts sales in Microsoft Teams. Both channels run on **one lead record and one state**.
 
 **Architecture:** One Python service (FastAPI) owns the lead state machine in a SQL database. External tools (cold-email tool, WhatsApp Cloud API, Cal.com) only *send* and *report*. Every incoming signal from any channel is stored as an `Event`. A pure rules function `decide(lead, event) -> list[Action]` turns events into actions, and one executor applies them. A channel policy decides which channel is active for each lead; only one channel sends at a time. A 60-second `tick()` loop handles time: settled clicks, WhatsApp reminders, channel fallbacks, OOO resumes, end-of-sequence routing, score decay and SLA escalations.
 
@@ -16,6 +16,7 @@
 > 3. No email → WhatsApp switch at end of sequence (`end_of_sequence_route(lead, human_clicks)`: hot → `sales_personal`, clicks → `warm_2_3w`, else `monthly`). The hard-bounce switch and the WhatsApp → email fallback stay.
 > 4. EU leads (`eu.is_eu`): email held (`email_hold="eu_approval"`) until `EU_EMAIL_APPROVED=true`. EU email-only leads → `PAUSED("eu_approval")`, intake outcome `held_eu`. Website tracking script stays off until approved.
 > 5. Paused colleagues restart per `holds.colleague_resume_at` (table in spec §11). Task 12's tick must call `holds.resume_account_holds` and, when `EU_EMAIL_APPROVED` is on, `holds.release_eu_holds`. Task 9 must use the state-change reasons `not_now` (with `nurture_until`), `not_interested`, `wrong_person`; Task 11 / CRM uses `sales_rejected` and `low_fit`.
+> 6. Task 10b (2026-11-13): Slack replaced by Microsoft Teams — see docs/progress/decisions.md
 
 ## Global Constraints
 
@@ -55,9 +56,9 @@
 These are confirmed or removed by the Task 1 spike.
 
 1. **Email send time is per campaign, not per lead.** We use one campaign per timezone group. Only the subject-line change is per lead.
-2. **"Pull next email forward" for hot email leads** happens only if the tool supports replying in the thread (C4). Otherwise it becomes a Slack alert asking sales to email personally.
-3. **"Question" replies by email** get a human-reviewed, Claude-drafted answer through Slack. They are not auto-sent: email is async and the risk is higher. WhatsApp questions *are* answered by the chatbot, because that channel is real-time.
-4. **WhatsApp human takeover happens in Slack.** Sales reads the transcript in Slack and replies with `/wa <lead_id> <message>`. There is no shared WhatsApp inbox in v1.
+2. **"Pull next email forward" for hot email leads** happens only if the tool supports replying in the thread (C4). Otherwise it becomes a Teams alert asking sales to email personally.
+3. **"Question" replies by email** get a human-reviewed, Claude-drafted answer through Teams. They are not auto-sent: email is async and the risk is higher. WhatsApp questions *are* answered by the chatbot, because that channel is real-time.
+4. **WhatsApp human takeover happens in Microsoft Teams.** Sales reads the transcript in the Teams sales channel and replies by mentioning the outreach bot with `wa <lead_id> <message>`. There is no shared WhatsApp inbox in v1.
 5. **Apple Mail Privacy Protection detection** works only if the tool's open webhook includes the IP or user-agent.
 6. **Spam rate (Google Postmaster)** is checked manually each day. Only the bounce-rate check is automated.
 7. **WhatsApp goes live only after Meta business verification + template approval.** Until then, everything is built and tested on Meta's free **test number** (up to 5 registered recipient phones).
@@ -72,7 +73,7 @@ These are confirmed or removed by the Task 1 spike.
 
 ## If tomorrow runs short — cut line
 
-Tasks 1–9 and 11–13 are the core. **Task 10 (chatbot) is the one to cut.** Without it, an `ASK_QUESTION` tap goes straight to human takeover (Task 10's Slack part is small; build that part first). This keeps the full WhatsApp flow working, just with no bot.
+Tasks 1–9 and 11–13 are the core. **Task 10 (chatbot) is the one to cut.** Without it, an `ASK_QUESTION` tap goes straight to human takeover (Task 10's Teams part is small; build that part first). This keeps the full WhatsApp flow working, just with no bot.
 
 ---
 
@@ -108,9 +109,9 @@ src/outreach/
   outreach.py                  start_outreach(), switch_channel()
   classifier.py                classify_reply()
   chatbot.py                   bot_reply()
-  handoff.py                   Slack /wa commands, takeover, SLA
+  handoff.py                   takeover, SLA (Teams wa / done commands live in app.py)
   booking.py                   Cal.com handling, fit_from_answers()
-  alerts.py                    SlackAlerter
+  alerts.py                    TeamsAlerter (Adaptive Card to a Teams Workflows webhook)
   health.py                    check_mailboxes()
   worker.py                    tick()
   app.py                       FastAPI routes
@@ -133,7 +134,7 @@ This is the gate for the email tool choice and the WhatsApp setup.
   - Claude: `anthropic_api_key`, `classifier_model`, `chatbot_model`
   - Intake: `zerobounce_api_key`
   - Cal.com: `cal_webhook_secret`, `cal_booking_url`
-  - Slack: `slack_webhook_url`, `slack_signing_secret`
+  - Microsoft Teams: `teams_webhook_url`, `teams_outgoing_secret`, `teams_tenant_id`, `teams_sales_channel_id`, `teams_allowed_aad_ids`
   - WhatsApp: `wa_phone_number_id`, `wa_access_token`, `wa_app_secret`, `wa_verify_token`, `wa_graph_version` (e.g. `"v21.0"`)
   - Channels and hours: `primary_when_both ("whatsapp"|"email")`, `business_tz`, `business_hours`
 
@@ -376,7 +377,7 @@ This is a pure function with no I/O. Every row of §5i and every branch of §7 i
   - `NormalizedEvent(provider_event_id, channel, kind, occurred_at, tool_lead_id|None, email|None, phone|None, step, ip, user_agent, data)`. This is shared with WhatsApp in Task 8.
   - `ingest(session, events: list[NormalizedEvent], deps, now) -> None`. It matches each event to a lead, stores it idempotently and runs `decide` + `execute` (clicks are deferred to the worker). Task 8 and Task 11 reuse it.
   - `execute(session, lead, actions, deps, now)`, where `deps = Deps(tool, wa, alerter, claude)`
-  - `SlackAlerter.send(kind, text, lead)` writes an `Alert` row; a Slack failure doesn't raise
+  - `TeamsAlerter.send(kind, text, lead)` writes an `Alert` row; a Teams failure doesn't raise
   - Routes: `POST /webhooks/email`, `GET /r/{token}` (302; bad token → homepage), `POST /intake`
 
 - [ ] **Step 1: Write the tests.**
@@ -505,7 +506,7 @@ This is a pure function with no I/O. Every row of §5i and every branch of §7 i
 ### Task 10: WhatsApp chatbot + human takeover (§7)
 
 **Files:**
-- Create: `src/outreach/chatbot.py`, `src/outreach/handoff.py`, `kb/ozoo_kb.md`; add route `POST /slack/commands`
+- Create: `src/outreach/chatbot.py`, `src/outreach/handoff.py`, `kb/ozoo_kb.md`; add route `POST /teams/commands` (Task 10b; was a Slack slash-command route in Task 10)
 - Test: `tests/test_chatbot.py`, `tests/test_handoff.py`
 
 **Interfaces:**
@@ -517,9 +518,9 @@ This is a pure function with no I/O. Every row of §5i and every branch of §7 i
     - `ready_to_book` → `QUALIFYING` + booking link
     - `wants_human` / `out_of_scope` → `start_takeover`
     - `not_ready` → `NURTURE` + a polite close text
-  - `start_takeover(session, lead, reason, alerter, now)` sends a Slack alert with the transcript and the `/wa` usage. It sets `variant_flags["takeover_at"]` and sends `handoff_notice` to the lead.
-  - Slack `/wa <lead_id> <text>` → `send_text` as `author="human"`, sets `wa_human_owner = slack user`. `/wa-done <lead_id>` → clears the owner (the bot resumes).
-  - Slack request signature: verify `X-Slack-Signature` v0 with `slack_signing_secret`, and reject timestamps older than 5 min.
+  - `start_takeover(session, lead, reason, alerter, now)` sends a Teams alert with the transcript and the `wa` command usage. It sets `variant_flags["takeover_at"]` and sends `handoff_notice` to the lead.
+  - Teams `wa <lead_id> <text>` (bot mention in the sales channel) → sets `wa_human_owner` = the person's Entra object id, replies at once, sends in a background task as `author="human"`. `done <lead_id>` → clears the owner (the bot resumes).
+  - Teams outgoing-webhook signature: verify `Authorization: HMAC <base64>` with the base64-decoded `teams_outgoing_secret`, reject activity timestamps more than 5 min off, check tenant / channel / user allow-lists, dedupe on the activity id.
 
 - [ ] **Step 1: Write the tests** (mocked Claude).
   - `test_answer_sent`
@@ -528,9 +529,9 @@ This is a pure function with no I/O. Every row of §5i and every branch of §7 i
   - `test_api_error_hands_to_human` (**Review Focus 4**)
   - `test_wants_human_starts_takeover`
   - `test_slash_wa_sends_and_mutes_bot`
-  - `test_slash_wa_outside_window_returns_error_text` (Slack reply: "24h window closed — lead must message first", no send)
+  - `test_slash_wa_outside_window_returns_error_text` (Teams reply: "24h window closed — lead must message first", no send)
   - `test_slash_wa_done_releases`
-  - `test_slack_bad_signature_401`
+  - `test_teams_signature_valid_wrong_missing_malformed`
 - [ ] **Step 2: Run the tests.** Expected: FAIL.
 - [ ] **Step 3: Implement.** Use a Claude forced tool call (`tool_choice` → `bot_reply` with `kind` enum + `text`), `max_tokens=400`. KB content goes in the system prompt inside `<kb>` tags, and the chat history goes in as messages. `kb/ozoo_kb.md` starts as a structured placeholder (services, who it's for, process, FAQs), marked `# MARKETING: fill before go-live`.
 - [ ] **Step 4: Run the tests.** Expected: pass.
@@ -561,7 +562,7 @@ This is a pure function with no I/O. Every row of §5i and every branch of §7 i
   - `test_form_submitted_low_fit_to_nurture`
   - `test_no_show_first_time` (`Alert("no_show")` + a reschedule message on the lead's active channel; `BOOKED→QUALIFYING`)
   - `test_no_show_second_time_to_nurture`
-  - `test_meeting_ended_hands_off`: `HANDED_OFF` + Slack summary containing both channels' history (emails sent, reply text, WhatsApp transcript, score, form answers)
+  - `test_meeting_ended_hands_off`: `HANDED_OFF` + Teams summary containing both channels' history (emails sent, reply text, WhatsApp transcript, score, form answers)
   - `test_duplicate_booking_webhook_acts_once`
   - `test_bad_signature_401`
 - [ ] **Step 2: Run the tests.** Expected: FAIL.
@@ -631,7 +632,7 @@ This is a pure function with no I/O. Every row of §5i and every branch of §7 i
   - **Email tool:** webhooks → `/webhooks/email`; link tracking OFF; one campaign per timezone group using `{{subject_N}}` / `{{body_N}}`.
   - **Meta:** webhook → `/webhooks/whatsapp`, subscribed to `messages`; test recipients registered.
   - **Cal.com:** routing form + 2 event types + webhook → `/webhooks/cal` + 24 h / 1 h reminders.
-  - **Slack:** incoming webhook + slash commands `/wa` and `/wa-done` → `/slack/commands`.
+  - **Microsoft Teams:** a Workflows "When a Teams webhook request is received" flow for alerts, plus an outgoing webhook (Manage team > Apps > Create an outgoing webhook) → `/teams/commands` for `wa` / `done`.
 - [ ] **Step 3: Run the e2e checklist** with 3–5 test inboxes and 2–3 test WhatsApp numbers. Set the timings to minutes (`SCHEDULE_DAYS`, reminder 48 h → 2 min via env override). For each row, compare the expected state with the DB:
 
   | Lead type | Trigger | Expected |
@@ -645,7 +646,7 @@ This is a pure function with no I/O. Every row of §5i and every branch of §7 i
   | Email only | Fake address | `bounce_hard` → `SUPPRESSED` |
   | WhatsApp only | Tap **Book demo** → book | `QUALIFYING` → `BOOKED`, `booked` alert |
   | WhatsApp only | Tap **Ask a question**, ask 2 KB questions | bot answers |
-  | WhatsApp only | Ask about custom price | handoff, Slack alert, `/wa` reply reaches the phone |
+  | WhatsApp only | Ask about custom price | handoff, Teams alert, `wa` reply reaches the phone |
   | WhatsApp only | Send "STOP" | `SUPPRESSED`, no further messages |
   | WhatsApp only | No response | reminder at 2 min, then `NURTURE` |
   | Both | No WhatsApp response | reminder, then email sequence starts; no further WhatsApp messages |

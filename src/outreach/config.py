@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import base64
+import binascii
 from functools import lru_cache
-from typing import Dict, Literal
+from typing import Dict, FrozenSet, Literal
+from urllib.parse import urlsplit
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -9,11 +12,17 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 LINK_SECRET_MIN_LEN = 32
 INTAKE_KEY_MIN_LEN = 24
+TEAMS_SECRET_MIN_BYTES = 16
 NON_BLANK_SECRETS = (
-    "tool_webhook_secret", "cal_webhook_secret", "slack_signing_secret", "wa_app_secret",
+    "tool_webhook_secret", "cal_webhook_secret", "teams_outgoing_secret", "wa_app_secret",
     "wa_verify_token", "tool_api_key", "anthropic_api_key", "zerobounce_api_key",
     "wa_access_token",
 )
+NON_BLANK_IDS = ("teams_tenant_id", "teams_sales_channel_id")
+
+
+def _split_ids(raw: str) -> FrozenSet[str]:
+    return frozenset(x.strip() for x in raw.split(",") if x.strip())
 
 
 class Settings(BaseSettings):
@@ -50,11 +59,15 @@ class Settings(BaseSettings):
     cal_webhook_secret: str
     cal_booking_url: str
 
-    # Slack
-    slack_webhook_url: str
-    slack_signing_secret: str
-    # comma-separated Slack user ids allowed to use /wa and /wa-done ("" = anyone in the workspace)
-    slack_allowed_user_ids: str = ""
+    # Microsoft Teams
+    # Workflows "When a Teams webhook request is received" URL; its sig= query part is a secret
+    teams_webhook_url: str
+    # outgoing-webhook security token (base64), HMAC key for POST /teams/commands
+    teams_outgoing_secret: str
+    teams_tenant_id: str
+    teams_sales_channel_id: str
+    # comma-separated Entra (AAD) object ids allowed to use the wa / done commands
+    teams_allowed_aad_ids: str
 
     # WhatsApp
     wa_phone_number_id: str
@@ -85,12 +98,53 @@ class Settings(BaseSettings):
             raise ValueError(f"intake_api_key must be at least {INTAKE_KEY_MIN_LEN} characters")
         return v
 
-    @field_validator(*NON_BLANK_SECRETS, "intake_api_key")
+    @field_validator(*NON_BLANK_SECRETS, *NON_BLANK_IDS, "intake_api_key")
     @classmethod
     def _not_blank(cls, v: str, info) -> str:
         if not v.strip():
             raise ValueError(f"{info.field_name} must not be blank")
         return v
+
+    @field_validator("teams_webhook_url")
+    @classmethod
+    def _teams_url_https(cls, v: str) -> str:
+        # never echo the value: the sig= query parameter is a secret
+        try:
+            parts = urlsplit(v.strip())
+        except ValueError:
+            parts = None
+        if parts is None or parts.scheme != "https" or not parts.hostname or " " in v.strip():
+            raise ValueError("teams_webhook_url must be an https URL")
+        return v.strip()
+
+    @field_validator("teams_outgoing_secret")
+    @classmethod
+    def _teams_secret_base64(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("teams_outgoing_secret must not be blank")
+        try:
+            key = base64.b64decode(v.strip(), validate=True)
+        except (binascii.Error, ValueError):
+            raise ValueError("teams_outgoing_secret must be base64") from None
+        if len(key) < TEAMS_SECRET_MIN_BYTES:
+            raise ValueError(f"teams_outgoing_secret must decode to at least {TEAMS_SECRET_MIN_BYTES} bytes")
+        return v.strip()
+
+    @field_validator("teams_allowed_aad_ids")
+    @classmethod
+    def _teams_ids_present(cls, v: str) -> str:
+        if not _split_ids(v):
+            raise ValueError("teams_allowed_aad_ids needs at least one id")
+        return v
+
+    @property
+    def teams_outgoing_key(self) -> bytes:
+        """HMAC key for Teams outgoing-webhook signatures (the token is base64)."""
+        return base64.b64decode(self.teams_outgoing_secret)
+
+    @property
+    def teams_allowed_aad_id_set(self) -> FrozenSet[str]:
+        return _split_ids(self.teams_allowed_aad_ids)
 
 
 @lru_cache

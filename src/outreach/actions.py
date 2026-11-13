@@ -249,7 +249,7 @@ _FAILED = object()
 
 
 def record_integration_error(session: Session, lead_id: Optional[int], text: str, now: datetime) -> None:
-    """Written straight to the DB, not via Slack (which may be what is failing). posted_at
+    """Written straight to the DB, not via Teams (which may be what is failing). posted_at
     stays NULL so the worker's unposted-alert digest surfaces it."""
     session.add(AlertRow(lead_id=lead_id, kind="integration_error", text=text, created_at=now))
     session.flush()
