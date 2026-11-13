@@ -205,6 +205,8 @@ def assert_inert(posted: str) -> None:
 @pytest.mark.parametrize("raw", [
     "[Open CRM](https://evil.example)", "**bold**", "<at>x</at>", "https://evil.example/x",
     "HTTPS://Evil.Example", "www.evil.example", "ht\u200btp://evil.example", "`code` _it_ # h",
+    "www.3m.com", "www.a1b.com/x", "WWW.3m.com",
+    "ｈｔｔｐｓ：／／evil.example", "evil。example", "evil\u2024example", "ｗｗｗ．evil．example",
 ])
 def test_teams_escape_makes_text_inert(raw):
     from outreach.alerts import teams_escape
@@ -223,6 +225,19 @@ def test_teams_escape_maps_and_strips():
     assert teams_escape("https://evil.example/x") == "hxxps[:]//evil[.]example/x"
     assert teams_escape("www.evil.example") == "www[.]evil[.]example"
     assert teams_escape("plain text, 3.5 stars") == "plain text, 3.5 stars"
+
+
+def test_teams_escape_www_nfkc_ipv4():
+    from outreach.alerts import teams_escape
+
+    assert teams_escape("www.3m.com") == "www[.]3m[.]com"
+    assert teams_escape("www.a1b.com/x") == "www[.]a1b[.]com/x"
+    assert teams_escape("ｈｔｔｐｓ：／／evil.example") == "hxxps[:]//evil[.]example"
+    assert teams_escape("evil。example") == "evil[.]example"
+    assert teams_escape("evil\u2024example") == "evil[.]example"
+    assert teams_escape("1.2.3.4/x") == "1[.]2[.]3[.]4/x"
+    assert teams_escape("see 10.0.0.255.") == "see 10[.]0[.]0[.]255."
+    assert teams_escape("version 1.2.3 and 3.5 stars") == "version 1.2.3 and 3.5 stars"
 
 
 def test_teams_escape_caps_length():

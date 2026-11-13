@@ -262,7 +262,7 @@ def test_teams_missing_fields_400(env, mutate):
     assert wa.calls == []
 
 
-@pytest.mark.parametrize("raw", [b"[]", b"null", b"\"text\"", b"1"])
+@pytest.mark.parametrize("raw", [b"[]", b"null", b"\"text\"", b"1", b"[" * 60000, b'{"a":' * 12000])
 def test_teams_json_not_object_400(env, raw):
     client, _s, _deps, _wa = env
     assert client.post("/teams/commands", content=raw, headers=teams_headers(raw)).status_code == 400
@@ -322,6 +322,30 @@ def test_teams_every_allowed_user(env):
     for aad in TEAMS_ALLOWED:
         assert reply(cmd(client, f"wa {lead.id} hi", aad=aad)) == f"Sending to lead {lead.id}…"
     assert len(wa.calls) == len(TEAMS_ALLOWED)
+
+
+def test_teams_allow_lists_normalised():
+    """Env values with case / whitespace noise still match the incoming ids (and vice versa)."""
+    engine = make_app_engine()
+    wa = FakeWhatsApp(SETTINGS)
+    settings = make_settings(teams_tenant_id=" 72F988BF-86F1-41AF-91AB-2D7CD011DB47 ",
+                             teams_sales_channel_id=TEAMS_CHANNEL_ID + " ",
+                             teams_allowed_aad_ids=" AAD-RAJ , aad-mina ")
+    app = create_app(settings, deps=make_deps(wa=wa), engine=engine, clock=lambda: NOW, scanners=SCANNERS)
+    client = TestClient(app, raise_server_exceptions=False)
+    s = SessionLocal(bind=engine)
+    try:
+        lid = add_lead(s).id
+        act = activity(f"wa {lid} hi", tenant="72f988bf-86f1-41af-91ab-2d7cd011db47 ", aad=" aad-raj")
+        assert reply(post_activity(client, act)) == f"Sending to lead {lid}…"
+        act = activity(f"wa {lid} hi", tenant="72f988bf-86f1-41af-91ab-2d7cd011db47", aad="AAD-MINA")
+        assert reply(post_activity(client, act)) == f"Sending to lead {lid}…"
+        act = activity(f"wa {lid} hi", tenant="72f988bf-86f1-41af-91ab-2d7cd011db47", aad="aad-other")
+        assert reply(post_activity(client, act)) == "Not allowed here."
+        assert len(wa.calls) == 2
+    finally:
+        s.close()
+        engine.dispose()
 
 
 # ---- replay
@@ -426,6 +450,32 @@ def test_teams_wa_background_failure_alerts(env):
     assert "131047" in alert.text
     assert "SECRET-TEXT" not in alert.text and PHONE not in alert.text
     assert ("send", "integration_error", lead.id) in deps.alerter.calls
+
+
+def test_teams_wa_window_closes_before_background_send():
+    engine = make_app_engine()
+    wa = FakeWhatsApp(SETTINGS)
+    deps = make_deps(wa=wa)
+    times = [NOW, NOW + timedelta(hours=11)]  # request time, then background-task time
+
+    def clock():
+        return times.pop(0) if len(times) > 1 else times[0]
+
+    app = create_app(SETTINGS, deps=deps, engine=engine, clock=clock, scanners=SCANNERS)
+    client = TestClient(app, raise_server_exceptions=False)
+    s = SessionLocal(bind=engine)
+    try:
+        lid = add_lead(s).id  # window open until NOW + 10 h
+        assert reply(cmd(client, f"wa {lid} hello")) == f"Sending to lead {lid}…"
+        assert wa.calls == []
+        alert = s.scalars(select(AlertRow)).one()
+        assert alert.kind == "integration_error" and alert.lead_id == lid
+        assert "24h window closed" in alert.text
+        assert ("send", "integration_error", lid) in deps.alerter.calls
+        assert s.scalars(select(ChatMessage)).all() == []
+    finally:
+        s.close()
+        engine.dispose()
 
 
 @pytest.mark.parametrize("text, expected", [

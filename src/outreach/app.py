@@ -227,6 +227,8 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
         deps.takeover = _takeover
     teams_key = settings.teams_outgoing_key
     teams_allowed = settings.teams_allowed_aad_id_set
+    teams_tenant = settings.teams_tenant_id.strip().lower()  # GUID: case-insensitive
+    teams_channel = settings.teams_sales_channel_id.strip()
 
     app = FastAPI(title="Ozoo outreach agent", docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -524,16 +526,16 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
             return _fail(401)
         try:
             act = json.loads(body)
-        except ValueError:
+        except (ValueError, RecursionError):  # RecursionError: deeply nested body
             return _fail(400)
         if not isinstance(act, dict):
             return _fail(400)
         activity_id = act.get("id")
         sent_at = _parse_teams_ts(act.get("timestamp"))
         raw_text = act.get("text")
-        aad = _dig(act, "from", "aadObjectId")
-        tenant = _dig(act, "channelData", "tenant", "id")
-        channel = _teams_channel_id(act)
+        aad = (_dig(act, "from", "aadObjectId") or "").strip()
+        tenant = (_dig(act, "channelData", "tenant", "id") or "").strip()
+        channel = (_teams_channel_id(act) or "").strip()
         if (not isinstance(activity_id, str) or not 1 <= len(activity_id) <= TEAMS_ID_MAX or sent_at is None
                 or not isinstance(raw_text, str) or not aad or not tenant or not channel):
             logger.warning("teams command rejected: missing or invalid fields")
@@ -542,13 +544,13 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
         if abs((now - sent_at).total_seconds()) > TEAMS_MAX_AGE_S:
             logger.warning("teams command rejected: stale or future timestamp")
             return _fail(401)
-        if tenant != settings.teams_tenant_id:
+        if tenant.lower() != teams_tenant:
             logger.warning("teams command refused: tenant not allowed")
             return _teams_reply(NOT_ALLOWED)
-        if channel != settings.teams_sales_channel_id:
+        if channel != teams_channel:
             logger.warning("teams command refused: channel not allowed")
             return _teams_reply(NOT_ALLOWED)
-        if aad not in teams_allowed:
+        if aad.lower() not in teams_allowed:
             logger.warning("teams command refused: user not allowed")
             return _teams_reply(NOT_ALLOWED)
         try:

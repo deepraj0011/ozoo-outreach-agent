@@ -40,6 +40,10 @@ _LOOKALIKES = str.maketrans({
 _HTTP = re.compile(r"http", re.IGNORECASE)
 # a dot inside a host-like token (word char before, two letters after): evil.example, www.x
 _HOST_DOT = re.compile(r"(?<=\w)\.(?=[^\W\d_]{2})")
+_WWW = re.compile(r"www\.", re.IGNORECASE)
+_IPV4 = re.compile(r"(?<![\d.])\d{1,3}(?:\.\d{1,3}){3}(?![\d]|\.\d)")
+# dots NFKC leaves alone but a reader (or an autolinker) may take for "."
+_DOT_LOOKALIKES = str.maketrans({"\u3002": ".", "\uff61": "."})
 
 
 def _keep(ch: str) -> bool:
@@ -52,10 +56,16 @@ def _keep(ch: str) -> bool:
 
 def teams_escape(text: str) -> str:
     """Make third-party text inert in an Adaptive Card TextBlock. Pure and deterministic:
-    strip control / format characters (keep \\n), swap markdown characters for lookalikes,
-    defang URLs (hxxp, [:]//, [.] in host-like tokens) and cap the length at BLOCK_MAX."""
-    out = "".join(ch for ch in text if _keep(ch)).translate(_LOOKALIKES)
+    NFKC-normalise, strip control / format characters (keep \\n), swap markdown characters for
+    lookalikes, defang URLs (hxxp, [:]//, www[.], [.] in host-like tokens and IPv4 addresses) and
+    cap the length at BLOCK_MAX."""
+    # NFKC first: fullwidth / compatibility forms (ｈｔｔｐｓ：／／, U+2024) become ASCII and are
+    # then defanged like any other text.
+    out = unicodedata.normalize("NFKC", text).translate(_DOT_LOOKALIKES)
+    out = "".join(ch for ch in out if _keep(ch)).translate(_LOOKALIKES)
     out = _HTTP.sub("hxxp", out).replace("://", "[:]//")
+    out = _IPV4.sub(lambda m: m.group(0).replace(".", "[.]"), out)
+    out = _WWW.sub(lambda m: m.group(0)[:3] + "[.]", out)
     out = _HOST_DOT.sub("[.]", out)
     if len(out) > BLOCK_MAX:
         out = out[:BLOCK_MAX - 1] + "…"

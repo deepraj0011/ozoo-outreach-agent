@@ -130,6 +130,11 @@ class Settings(BaseSettings):
             raise ValueError(f"teams_outgoing_secret must decode to at least {TEAMS_SECRET_MIN_BYTES} bytes")
         return v.strip()
 
+    @field_validator(*NON_BLANK_IDS)
+    @classmethod
+    def _strip_ids(cls, v: str) -> str:
+        return v.strip()
+
     @field_validator("teams_allowed_aad_ids")
     @classmethod
     def _teams_ids_present(cls, v: str) -> str:
@@ -144,7 +149,8 @@ class Settings(BaseSettings):
 
     @property
     def teams_allowed_aad_id_set(self) -> FrozenSet[str]:
-        return _split_ids(self.teams_allowed_aad_ids)
+        """Lower-cased: Entra object ids are GUIDs, compared case-insensitively."""
+        return frozenset(x.lower() for x in _split_ids(self.teams_allowed_aad_ids))
 
 
 @lru_cache
