@@ -39,3 +39,21 @@ None.
 
 ## Open items / deferred minors
 Not started. Copy is placeholder and marked `# MARKETING: replace`.
+
+
+---
+## Update — built and reviewed (2026-11-13)
+**Status:** ✅ Done, review clean. Commit `69b8fcc`. 24 tests (`tests/test_sequencer.py`).
+
+**What was built:** `src/outreach/sequencer.py` + `templates/emails.yaml`.
+- `load_templates()` validates the YAML at load: every step 1–4 has all variants, steps 2–4 have `new_subject`, every body has `{booking_link}` + `{unsubscribe_link}`, only allowed placeholders.
+- `render_step(lead, step)` picks the body variant (`booking_slots > case_study > product > team_invite > standard`) and a new subject when the previous email wasn't opened. All links are signed tracked links (Task 4).
+- `render_reply(lead, key)` renders the short reply emails (booking link, booking slots, reschedule).
+- `enroll()` adds the lead to the right timezone campaign once (idempotent); `refresh_next_step()` re-renders the next email after any signal.
+- `end_of_sequence_route()` decides what happens after Email 4: hot → sales personal email; never opened + WhatsApp opt-in → switch to WhatsApp; clicked → warm nurture; opened → monthly nurture; silent → slow nurture.
+
+**Security:** lead name/company are cleaned (no line breaks/control chars, 80 chars) so they can't inject email headers; values are inserted once and never re-formatted; templates can't access attributes.
+
+**Links:** uses Task 4 (links, score band), Task 5/6 (actions, email tool). Used by Task 12 (starter/worker calls `enroll`, `refresh_next_step`, `end_of_sequence_route`; `send_email_text` uses `render_reply`).
+
+**Open items:** nested format-spec check; subject length cap is the same 80 chars as names (should be separate); Docker image must include `templates/`.
