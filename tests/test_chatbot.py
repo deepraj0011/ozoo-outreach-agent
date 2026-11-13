@@ -137,7 +137,8 @@ def test_price_question_never_quotes():
 
 @pytest.mark.parametrize("text", ["It costs 500 per month.", "Price: 99/mo", "200 euros per seat",
                                   "About 300 dollars.", "10 PER  USER", "1200 /yr", "40 per year", "5 rupees",
-                                  "12 pounds", "70 inr", "9 usd", "30 / month"])
+                                  "12 pounds", "70 inr", "9 usd", "30 / month", "45/year", "8/user",
+                                  "15 / seat", "900 per annum", "60 monthly", "25 a month"])
 def test_price_without_currency_symbol_is_out_of_scope(text):
     assert ask(FakeClient(out("answer", text))) == BotResult("out_of_scope", None), text
 
@@ -159,8 +160,27 @@ def test_kb_substring_is_not_a_match():
 def test_kb_prices_normalised():
     from outreach.chatbot import kb_prices
 
-    assert kb_prices("A $1,000 plan, B 49.50 USD, C 99/mo, D 3 steps, E $10.00") == frozenset(
-        {"1000", "49.5", "99", "10"})
+    assert kb_prices("A $1,000 plan, B 49.50 USD, C 99/mo, D 3 steps, E €10.00, F Rs. 500, G 7 rupees, "
+                     "H £2 per seat") == frozenset(
+        {("USD", "1000"), ("USD", "49.5"), (None, "99"), ("EUR", "10"), ("INR", "500"), ("INR", "7"),
+         ("GBP", "2")})
+
+
+@pytest.mark.parametrize("text", ["We answer 24/7.", "Up to 2 per day.", "Works for 3 users.",
+                                  "Launched on 2026-11-13.", "Since 13/11/2026.", "Since Nov 13, 2026.",
+                                  "12 months of support"])
+def test_non_prices_still_answer(text):
+    assert ask(FakeClient(out("answer", text))).kind == "answer", text
+
+
+def test_currency_aware_comparison():
+    kb = "Starter: €49 per month. Team: 99/mo."
+    assert ask(FakeClient(out("answer", "Starter is $49.")), kb=kb) == _OUT  # other currency
+    assert ask(FakeClient(out("answer", "Starter is €49.")), kb=kb).kind == "answer"
+    assert ask(FakeClient(out("answer", "Starter is EUR 49.")), kb=kb).kind == "answer"
+    assert ask(FakeClient(out("answer", "Starter is 49 per month.")), kb=kb).kind == "answer"  # no currency
+    assert ask(FakeClient(out("answer", "Team is $99.")), kb=kb) == _OUT  # KB has no currency for 99
+    assert ask(FakeClient(out("answer", "Team is 99 a month.")), kb=kb).kind == "answer"
 
 
 def test_make_bot_caches_kb_prices(session, tmp_path, monkeypatch):

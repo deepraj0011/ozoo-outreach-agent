@@ -98,7 +98,7 @@ class SlackAlerter:
         sess.flush()
         if lead is not None:
             # Lead name / company are fine in Slack (internal sales tool) but never in logs.
-            msg = f"[{kind}] lead #{lead_id} {slack_escape(str(lead.name))} @ {slack_escape(str(lead.company))}: {text}"
+            msg = f"[{kind}] lead #{lead_id} {lead.name} @ {lead.company}: {text}"
         else:
             msg = f"[{kind}] no lead: {text}"
         _hook(sess)
@@ -107,7 +107,9 @@ class SlackAlerter:
 
     def _post(self, bind: Any, p: _Pending) -> None:
         try:
-            resp = request_with_retry(self._client, "POST", self._url, json={"text": p.message},
+            # Escaped here, once, for every alert: lead/model text must not become Slack markup.
+            # Alert rows keep the raw text, so a later re-post escapes exactly once too.
+            resp = request_with_retry(self._client, "POST", self._url, json={"text": slack_escape(p.message)},
                                       sleep=self._sleep)
             if resp.status_code >= 300:
                 logger.warning("slack alert %s for lead %s: HTTP %s", p.kind, p.lead_id, resp.status_code)

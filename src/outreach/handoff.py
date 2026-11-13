@@ -15,7 +15,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .actions import record_integration_error
-from .alerts import slack_escape
 from .models import ChatMessage, Lead
 from .whatsapp.sender import window_open
 
@@ -53,8 +52,7 @@ def start_takeover(session: Session, lead: Lead, reason: str, deps: "Deps", now:
         f"Reply: /wa {lead.id} <message>",
         f"Give back to the bot: /wa-done {lead.id}",
     ])
-    # lead-written text must not become Slack markup (<!channel>, <url|label>)
-    deps.alerter.send("wa_human_needed", slack_escape(text), lead, now, session)
+    deps.alerter.send("wa_human_needed", text, lead, now, session)  # the alerter escapes for Slack
     logger.info("lead %s: WhatsApp takeover started (%s)", lead.id, reason)
 
     if not window_open(lead, now):

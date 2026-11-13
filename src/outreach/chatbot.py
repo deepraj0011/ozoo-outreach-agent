@@ -12,7 +12,7 @@ import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Callable, Dict, FrozenSet, List, Literal, Optional, Sequence, Union
+from typing import Any, Callable, Dict, FrozenSet, List, Literal, Optional, Sequence, Tuple, Union
 
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
@@ -108,12 +108,20 @@ _AMOUNT = r"\d(?:[\d,]*\d)?(?:\.\d+)?"
 _SYM = r"[$€£₹]"
 _CODE = r"(?:USD|EUR|GBP|INR|Rs)"
 _WORD = r"(?:dollars?|euros?|rupees?|pounds?|usd|inr)"
-_PER = r"(?:per\s*(?:month|user|seat|year)\b|/\s*(?:month|mo|yr)\b)"
+_PER = (r"(?:per\s*(?:month|user|seat|year|annum)\b|/\s*(?:month|mo|year|yr|user|seat)\b"
+        r"|monthly\b|a\s+month\b)")
 _PRICE_RE = re.compile(
-    rf"(?:{_SYM}|\b{_CODE}\.?)\s*(?P<pre>{_AMOUNT})"  # $500, Rs. 999, USD 75
-    rf"|(?P<post>{_AMOUNT})\s*(?:{_SYM}|{_CODE}\b|{_WORD}\b|{_PER})",  # 300 USD, 500€, 300 dollars, 99/mo
+    rf"(?P<pc>{_SYM}|\b{_CODE}\.?)\s*(?P<pre>{_AMOUNT})"  # $500, Rs. 999, USD 75
+    rf"|(?P<post>{_AMOUNT})\s*(?:(?P<qc>{_SYM}|{_CODE}\b|{_WORD}\b)|{_PER})",  # 300 USD, 300 dollars, 99/mo
     re.IGNORECASE,
 )
+_CURRENCY = {
+    "$": "USD", "usd": "USD", "dollar": "USD", "dollars": "USD",
+    "€": "EUR", "eur": "EUR", "euro": "EUR", "euros": "EUR",
+    "£": "GBP", "gbp": "GBP", "pound": "GBP", "pounds": "GBP",
+    "₹": "INR", "inr": "INR", "rs": "INR", "rupee": "INR", "rupees": "INR",
+}
+Price = Tuple[Optional[str], str]  # (ISO currency or None when only "per month" etc., amount)
 _URL_RE = re.compile(r"https?://|www\.|://", re.IGNORECASE)
 
 
@@ -125,23 +133,35 @@ def _norm_amount(raw: str) -> str:
     return a
 
 
-def prices(text: str) -> FrozenSet[str]:
-    """Normalised amounts of every price-like mention in the text."""
-    return frozenset(_norm_amount(m.group("pre") or m.group("post")) for m in _PRICE_RE.finditer(text))
+def _currency(token: Optional[str]) -> Optional[str]:
+    return _CURRENCY.get(token.rstrip(".").strip().lower()) if token else None
 
 
-def kb_prices(kb: str) -> FrozenSet[str]:
+def prices(text: str) -> FrozenSet[Price]:
+    """(currency, normalised amount) for every price-like mention in the text."""
+    return frozenset((_currency(m.group("pc") or m.group("qc")), _norm_amount(m.group("pre") or m.group("post")))
+                     for m in _PRICE_RE.finditer(text))
+
+
+def kb_prices(kb: str) -> FrozenSet[Price]:
     return prices(kb)
 
 
-def post_check(result: BotResult, kb: str, kb_price_set: Optional[FrozenSet[str]] = None) -> BotResult:
+def _prices_in_kb(quoted: FrozenSet[Price], kb_set: FrozenSet[Price]) -> bool:
+    """A price with a currency needs the same currency and amount in the KB; a price without a
+    currency needs the amount under any currency."""
+    kb_amounts = {amount for _cur, amount in kb_set}
+    return all((cur, amount) in kb_set if cur else amount in kb_amounts for cur, amount in quoted)
+
+
+def post_check(result: BotResult, kb: str, kb_price_set: Optional[FrozenSet[Price]] = None) -> BotResult:
     if result.kind != "answer":
         return BotResult(result.kind, None)
     text = (result.text or "").strip()
     if not text or len(text) > MAX_ANSWER:
         return _OUT
     allowed = kb_price_set if kb_price_set is not None else kb_prices(kb)
-    if not prices(text) <= allowed or _URL_RE.search(text):
+    if not _prices_in_kb(prices(text), allowed) or _URL_RE.search(text):
         return _OUT
     return BotResult("answer", text)
 
@@ -176,7 +196,7 @@ def build_messages(history: Sequence[ChatMessage]) -> List[Dict[str, str]]:
 # ------------------------------------------------------------------ the Claude call
 
 def bot_reply(lead: Any, history: List[ChatMessage], kb: str, client: Any, *, model: str,
-              today: date, kb_price_set: Optional[FrozenSet[str]] = None) -> BotResult:
+              today: date, kb_price_set: Optional[FrozenSet[Price]] = None) -> BotResult:
     """One forced tool call, then the guardrail post-checks. Never raises."""
     lead_id = getattr(lead, "id", None)
     try:

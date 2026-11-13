@@ -169,3 +169,66 @@ def test_executor_alert_not_posted_when_outer_rolls_back(session):
     session.rollback()
     session.commit()
     assert route.call_count == 0
+
+
+
+# ---------------------------------------------------------------- Slack escaping (Task 10 fix round 2)
+
+EVIL = "<!channel> <https://evil.example|Open CRM> & co"
+EVIL_ESC = "&lt;!channel&gt; &lt;https://evil.example|Open CRM&gt; &amp; co"
+
+
+def _posted(route) -> str:
+    return json.loads(route.calls[-1].request.content)["text"]
+
+
+@respx.mock
+def test_posted_text_escaped_once_row_stays_raw(session):
+    route = respx.post(URL).mock(return_value=httpx.Response(200))
+    lead = make_lead(session, name="<!here> Eve", company="<@U1> & Co")
+    alerter().send("question", EVIL, lead, NOW, session=session)
+    session.commit()
+    posted = _posted(route)
+    assert "<" not in posted and ">" not in posted
+    assert posted == f"[question] lead #{lead.id} &lt;!here&gt; Eve @ &lt;@U1&gt; &amp; Co: {EVIL_ESC}"
+    assert row(session).text == EVIL  # raw in the DB: a later re-post escapes exactly once
+
+
+@respx.mock
+def test_classifier_draft_answer_escaped_in_slack(session):
+    from outreach.actions import Classify, execute
+    from outreach.classifier import make_classifier
+    from outreach.models import Event
+    from tests.fakes import make_deps, make_settings
+    from tests.test_classifier import FakeClient, out
+
+    route = respx.post(URL).mock(return_value=httpx.Response(200))
+    lead = make_lead(session, state="engaged", active_channel="email")
+    ev = Event(lead_id=lead.id, channel="email", kind="reply", occurred_at=NOW, received_at=NOW,
+               verdict="human", processed=False, data={"text": "how does it work?"})
+    session.add(ev)
+    session.flush()
+    client = FakeClient(out("question", draft_answer="<!channel> see <https://evil.example|here>"))
+    deps = make_deps(alerter=alerter(), classify=make_classifier(make_settings(), client=client))
+    execute(session, lead, [Classify()], deps, NOW, event=ev)
+    session.commit()
+    posted = _posted(route)
+    assert "<" not in posted and "&lt;!channel&gt;" in posted
+    assert "<!channel>" in row(session).text
+
+
+@respx.mock
+def test_unmatched_sender_alert_escaped_in_slack(session):
+    from outreach.botfilter import Scanners
+    from outreach.emailtool.base import NormalizedEvent
+    from outreach.ingest import ingest
+    from tests.fakes import make_deps
+
+    route = respx.post(URL).mock(return_value=httpx.Response(200))
+    ev = NormalizedEvent(provider_event_id="r-evil", channel="email", kind="reply", occurred_at=NOW,
+                         email="<!channel>@evil.example", data={"text": "hi"})
+    ingest(session, [ev], make_deps(alerter=alerter()), NOW, Scanners(ua_substrings=(), cidrs=(),
+                                                                       apple_proxy_cidrs=()))
+    posted = _posted(route)
+    assert "<" not in posted and "&lt;!channel&gt;@evil.example" in posted
+    assert "<!channel>@evil.example" in row(session).text

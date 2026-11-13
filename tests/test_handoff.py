@@ -60,7 +60,7 @@ def test_takeover_alert_contains_transcript_and_usage(session):
     assert "bot: msg10" in t and "lead: msg09" in t and "human: msg08" in t
     assert "lead: " + "L" * 300 in t and "L" * 301 not in t
     assert t.index("msg02") < t.index("msg10")  # oldest first
-    assert f"/wa {lead.id} &lt;message&gt;" in t and f"/wa-done {lead.id}" in t
+    assert f"/wa {lead.id} <message>" in t and f"/wa-done {lead.id}" in t  # raw in the DB
 
 
 def test_takeover_sets_flags_and_sends_notice(session):
@@ -351,6 +351,9 @@ def test_takeover_alert_escapes_lead_text_for_slack(session):
         start_takeover(session, lead, "unsure", deps, NOW)
         session.commit()
         posted = _json.loads(route.calls[0].request.content)["text"]
-    assert "<" not in posted and ">" not in posted.replace("&gt;", "")
+    assert "<" not in posted and ">" not in posted
     assert "&lt;!channel&gt; &lt;https://evil.example|Open CRM&gt;" in posted
     assert "&lt;!here&gt; Eve @ &lt;@U1&gt; &amp; Co" in posted
+    assert "&amp;lt;" not in posted and "&amp;amp;" not in posted  # escaped exactly once
+    assert f"/wa {lead.id} &lt;message&gt;" in posted
+    assert evil in session.scalars(select(AlertRow.text)).one()  # stored raw
