@@ -15,6 +15,7 @@ from starlette.concurrency import run_in_threadpool
 from .actions import Deps
 from .alerts import SlackAlerter
 from .botfilter import Scanners, load_scanners
+from .classifier import make_classifier
 from .config import Settings, get_settings
 from .db import init_db, make_engine
 from .emailtool.base import BadSignature, NormalizedEvent, ToolUnsupported
@@ -92,6 +93,7 @@ def default_deps(settings: Settings) -> Deps:
         wa=WhatsAppSender(WhatsAppClient(settings), settings),
         alerter=SlackAlerter(settings.slack_webhook_url),
         outreach=_NotWired("outreach"),  # Task 12
+        classify=make_classifier(settings) if settings.anthropic_api_key else None,
     )
 
 
@@ -116,6 +118,13 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
     verifier = verifier or EmailVerifier(settings.zerobounce_api_key)
     session_factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
     home = settings.link_targets.get("homepage") or DEFAULT_HOME
+    if deps.intake is None:
+        # referrals from "wrong person" replies go through the same intake as POST /intake
+        def _referral_intake(session: Session, payload: Dict[str, Any], now: datetime) -> Any:
+            return intake_lead(session, payload, verifier, now, primary_when_both=settings.primary_when_both,
+                               eu_email_approved=settings.eu_email_approved)
+
+        deps.intake = _referral_intake
 
     app = FastAPI(title="Ozoo outreach agent", docs_url=None, redoc_url=None, openapi_url=None)
 

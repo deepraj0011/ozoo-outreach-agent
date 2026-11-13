@@ -17,6 +17,7 @@ from .states import IllegalTransition, LeadState, transition
 
 if TYPE_CHECKING:  # pragma: no cover
     from .emailtool.base import EmailTool
+    from .intake import IntakeResult
 
 ALERT_KINDS = frozenset({
     "hot_lead", "hot_no_reply", "question", "unsure", "unmatched_reply", "unmatched_inbound",
@@ -142,6 +143,20 @@ class PauseColleagues:
 
 
 @dataclass(frozen=True)
+class SetNurtureUntil:
+    until: datetime
+
+
+@dataclass(frozen=True)
+class IntakeReferral:
+    """A reply named the right person: take them in as a new lead (source "referral").
+    Contacts are kept out of repr so they never reach a log line."""
+    email: Optional[str] = field(default=None, repr=False)
+    phone: Optional[str] = field(default=None, repr=False)
+    name: Optional[str] = field(default=None, repr=False)
+
+
+@dataclass(frozen=True)
 class HandOff:
     pass
 
@@ -158,7 +173,7 @@ Action = Union[
     SetState, Suppress, SuppressAllChannels, ToolStop, ToolPause, ToolResume,
     WaCancelReminder, WaSendText, WaSendTemplate, SwitchChannel, SetVariant, AddScore,
     SetFlag, SetStepSent, RefreshNextStep, Alert, Classify, BotReply, SendReply,
-    PauseColleagues, HandOff, StopAllOutreach,
+    PauseColleagues, HandOff, StopAllOutreach, SetNurtureUntil, IntakeReferral,
 ]
 
 
@@ -210,6 +225,7 @@ class Deps:
     classify: Optional[Callable[[Session, Lead, Event, datetime], List[Action]]] = None
     bot_reply: Optional[Callable[[Session, Lead, datetime], List[Action]]] = None
     handoff: Optional[Callable[[Session, Lead, datetime], None]] = None
+    intake: Optional[Callable[[Session, Dict[str, Any], datetime], "IntakeResult"]] = None
 
 
 _FAILED = object()
@@ -319,11 +335,30 @@ class _Run:
                 self.external("tool.pause", self.deps.tool.pause, c.tool_lead_id, lead=c)
             logger.info("lead %s paused: colleague lead %s engaged", c.id, lead.id)
 
+    def intake_referral(self, a: IntakeReferral) -> None:
+        lead = self.lead
+        if self.deps.intake is None:
+            self.alert("unsure", f"lead {lead.id}: referral intake not available; please add the referral manually")
+            return
+        payload: Dict[str, Any] = {
+            "name": a.name or "Referral", "company": lead.company, "role": "unknown", "source": "referral",
+            "email": a.email, "phone": a.phone, "consent_email": bool(lead.consent_email),
+            "consent_whatsapp": False,
+        }
+        result = self.external("intake", self.deps.intake, self.session, payload, self.now)
+        if result is _FAILED:
+            return
+        logger.info("lead %s: referral intake %s (lead %s)", lead.id, result.outcome, result.lead_id)
+        if result.outcome == "rejected":
+            self.alert("unsure", f"lead {lead.id}: referral could not be added ({result.reason}); "
+                                 "please add it manually")
+
     # ---------------------------------------------------------------- dispatch
     def apply(self, a: Action) -> None:  # noqa: C901 - flat dispatch table
         lead, deps, s = self.lead, self.deps, self.session
         if isinstance(a, SetState):
-            self.set_state(lead, a.to, a.reason)
+            if self.set_state(lead, a.to, a.reason) and LeadState(a.to) == LeadState.PAUSED:
+                lead.pause_reason = a.reason
         elif isinstance(a, Suppress):
             self.suppress(a.value, a.kind, a.reason)
         elif isinstance(a, SuppressAllChannels):
@@ -368,6 +403,10 @@ class _Run:
             self.alert(a.kind, a.text)
         elif isinstance(a, PauseColleagues):
             self.pause_colleagues()
+        elif isinstance(a, SetNurtureUntil):
+            lead.nurture_until = a.until
+        elif isinstance(a, IntakeReferral):
+            self.intake_referral(a)
         elif isinstance(a, Classify):
             if self.event is None:
                 self.alert("unsure", f"lead {lead.id}: classify requested without an event")
