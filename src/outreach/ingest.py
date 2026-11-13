@@ -25,7 +25,8 @@ logger = logging.getLogger(__name__)
 WA_WINDOW = timedelta(hours=24)
 WA_INBOUND_KINDS = frozenset({"wa_text", "wa_button"})
 HUMAN_KINDS = frozenset({"reply", "wa_read"}) | WA_INBOUND_KINDS
-UNMATCHED_ALERTS = {"reply": "unmatched_reply", "wa_text": "unmatched_inbound", "wa_button": "unmatched_inbound"}
+UNMATCHED_ALERTS = {"reply": "unmatched_reply", "wa_text": "unmatched_inbound", "wa_button": "unmatched_inbound",
+                    "booking_created": "unmatched_booking"}
 _TERMINAL_VALUES = tuple(s.value for s in TERMINAL)
 UA_MAX = 512
 IP_MAX = 64

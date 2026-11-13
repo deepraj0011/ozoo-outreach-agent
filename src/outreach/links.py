@@ -57,3 +57,42 @@ def parse_token(token: str, *, settings: Optional[Settings] = None) -> Optional[
         return int(lead_s), int(step_s), tag, channel
     except (ValueError, binascii.Error, UnicodeError, AttributeError, TypeError):
         return None
+
+
+# ------------------------------------------------------------------ lead token (Cal.com metadata)
+# Same secret as click tokens, but the signed payload starts with "L." so a lead token can never
+# decode as a click token (4 dot-separated fields) and a click token can never decode as a lead
+# token (no "L." prefix).
+LEAD_PREFIX = "L."
+LEAD_TOKEN_MAX = 128
+
+
+def lead_token(lead_id: int, *, settings: Optional[Settings] = None) -> str:
+    """Signed lead id for booking links (Cal.com echoes it back as metadata.lead)."""
+    if lead_id < 0:
+        raise ValueError("lead_id must be non-negative")
+    s = settings or get_settings()
+    payload = base64.urlsafe_b64encode(f"{LEAD_PREFIX}{lead_id}".encode()).decode().rstrip("=")
+    return f"{payload}.{_sign(payload, s.link_secret)}"
+
+
+def parse_lead_token(token: object, *, settings: Optional[Settings] = None) -> Optional[int]:
+    """Verify and decode a lead token. Returns None on any problem; never raises."""
+    try:
+        if not isinstance(token, str) or not token or len(token) > LEAD_TOKEN_MAX:
+            return None
+        s = settings or get_settings()
+        payload, sep, sig = token.partition(".")
+        if not sep or not payload or "." in sig:
+            return None
+        if not hmac.compare_digest(sig.encode(), _sign(payload, s.link_secret).encode()):
+            return None
+        raw = base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)).decode()
+        if not raw.startswith(LEAD_PREFIX):
+            return None
+        lead_s = raw[len(LEAD_PREFIX):]
+        if not (lead_s.isascii() and lead_s.isdigit() and len(lead_s) <= 18):
+            return None
+        return int(lead_s)
+    except (ValueError, binascii.Error, UnicodeError, AttributeError, TypeError):
+        return None

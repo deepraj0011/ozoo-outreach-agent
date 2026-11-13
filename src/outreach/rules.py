@@ -10,13 +10,13 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import MappingProxyType
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from .actions import (
     Action, AddScore, Alert, BotReply, Classify, HandOff, PauseColleagues, RefreshNextStep,
-    SendReply, SetFlag, SetState, SetStepSent, SetVariant, StopAllOutreach, Suppress,
+    SendReply, SetFlag, SetNurtureUntil, SetState, SetStepSent, SetVariant, StopAllOutreach, Suppress,
     SuppressAllChannels, SwitchChannel, ToolStop, WaSendText,
 )
 from .channels import email_usable, whatsapp_usable
@@ -38,6 +38,10 @@ WA_USER_STOPPED_MARKETING = 131050
 
 OUTREACH_STATES = frozenset({S.IN_SEQUENCE, S.PAUSED, S.NURTURE})
 CONVERSATION_STATES = frozenset({S.ENGAGED, S.QUALIFYING, S.BOOKED})
+
+FITS = frozenset({"high", "medium", "low"})
+LOW_FIT_STATES = frozenset({S.IN_SEQUENCE, S.ENGAGED, S.QUALIFYING, S.NURTURE})
+LOW_FIT_NURTURE = timedelta(days=90)
 
 
 @dataclass(frozen=True)
@@ -315,19 +319,60 @@ def _on_wa_text(lead: LeadSnapshot, event: EventSnapshot) -> List[Action]:
     return []
 
 
+def _booking_flags(event: EventSnapshot) -> List[Action]:
+    """Remember the current booking (uid / end) so a cancel of an older booking is ignored."""
+    out: List[Action] = []
+    end, uid = event.data.get("end"), event.data.get("uid")
+    if end:
+        out.append(SetFlag("booking_end", end))
+    if uid:
+        out.append(SetFlag("booking_uid", uid))
+    return out
+
+
 def _on_booking_created(lead: LeadSnapshot, event: EventSnapshot) -> List[Action]:
-    tail: List[Action] = [_alert(lead, "booked", "meeting booked"), PauseColleagues()]
+    flags = _booking_flags(event)
+    tail: List[Action] = [*flags, _alert(lead, "booked", "meeting booked"), PauseColleagues()]
     if lead.state in (S.IN_SEQUENCE, S.ENGAGED, S.NURTURE, S.QUALIFYING):
         return [StopAllOutreach(), SetState(S.BOOKED, "booking_created"), *tail]
     if lead.state == S.PAUSED:
         return [StopAllOutreach(), SetState(S.ENGAGED, "booking_created"),
                 SetState(S.BOOKED, "booking_created"), *tail]
+    if lead.state == S.BOOKED:
+        return flags  # a second booking: track the newest one
     return []
+
+
+def _on_booking_rescheduled(lead: LeadSnapshot, event: EventSnapshot) -> List[Action]:
+    return _booking_flags(event)
+
+
+def _stale_booking(lead: LeadSnapshot, event: EventSnapshot) -> bool:
+    """The event is about an older booking than the one the lead holds now."""
+    current, uid = lead.flags.get("booking_uid"), event.data.get("uid")
+    return bool(current and uid and current != uid)
+
+
+def _on_booking_cancelled(lead: LeadSnapshot, event: EventSnapshot) -> List[Action]:
+    if lead.state != S.BOOKED or _stale_booking(lead, event):
+        return []  # an older booking was cancelled; the current one stands
+    return [SetState(S.QUALIFYING, "booking_cancelled"), _alert(lead, "booked", "booking cancelled")]
+
+
+def _on_form_submitted(lead: LeadSnapshot, event: EventSnapshot, now: datetime) -> List[Action]:
+    fit = event.data.get("fit")
+    if fit not in FITS:
+        return []
+    out: List[Action] = [SetFlag("fit", fit)]
+    if fit != "low" or lead.state not in LOW_FIT_STATES:
+        return out
+    return [*out, StopAllOutreach(), *_set_state(lead, S.NURTURE, "low_fit"),
+            SetNurtureUntil(now + LOW_FIT_NURTURE)]
 
 
 def _on_no_show(lead: LeadSnapshot, event: EventSnapshot) -> List[Action]:
     # A no-show can only follow a booking; other states have no legal target path.
-    if lead.state != S.BOOKED:
+    if lead.state != S.BOOKED or _stale_booking(lead, event):
         return []
     alert = _alert(lead, "no_show", "lead did not attend the meeting")
     if int(lead.flags.get("no_show_count", 0)) == 0:
@@ -337,7 +382,7 @@ def _on_no_show(lead: LeadSnapshot, event: EventSnapshot) -> List[Action]:
 
 
 def _on_meeting_ended(lead: LeadSnapshot, event: EventSnapshot) -> List[Action]:
-    if lead.state != S.BOOKED:
+    if lead.state != S.BOOKED or _stale_booking(lead, event):
         return []
     return [SetState(S.HANDED_OFF, "attended"), HandOff()]
 
@@ -362,12 +407,18 @@ _HANDLERS: Dict[str, Handler] = {
     "booking_created": _on_booking_created,
     "no_show": _on_no_show,
     "meeting_ended": _on_meeting_ended,
+    "booking_rescheduled": _on_booking_rescheduled,
+    "booking_cancelled": _on_booking_cancelled,
+}
+
+_TIMED_HANDLERS: Dict[str, Callable[[LeadSnapshot, EventSnapshot, datetime], List[Action]]] = {
+    "form_submitted": _on_form_submitted,
 }
 
 
 def decide(lead: LeadSnapshot, event: EventSnapshot, now: datetime) -> List[Action]:
-    """Return the ordered actions for `event` on `lead`. Pure; `now` is accepted for
-    interface stability (time-dependent facts are precomputed into the snapshots)."""
+    """Return the ordered actions for `event` on `lead`. Pure; `now` is only used to compute
+    future dates (nurture_until); other time-dependent facts are precomputed into the snapshots."""
     pre = _pre_guard(lead, event)
     if pre is not None:
         return pre
@@ -375,6 +426,9 @@ def decide(lead: LeadSnapshot, event: EventSnapshot, now: datetime) -> List[Acti
         return []
     if event.kind in HINT_KINDS and event.verdict != "human":
         return []
+    timed = _TIMED_HANDLERS.get(event.kind)
+    if timed is not None:
+        return timed(lead, event, now)
     handler = _HANDLERS.get(event.kind)
     if handler is None:
         logger.debug("lead %s: no rule for event kind %s", lead.id, event.kind)

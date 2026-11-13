@@ -1,5 +1,5 @@
-"""FastAPI app: email + WhatsApp webhooks, tracked-link redirect, scanner-safe unsubscribe, intake,
-Microsoft Teams sales commands (outgoing webhook: wa / done / help), health."""
+"""FastAPI app: email, WhatsApp and Cal.com webhooks, tracked-link redirect, scanner-safe unsubscribe,
+intake, Microsoft Teams sales commands (outgoing webhook: wa / done / help), health."""
 from __future__ import annotations
 
 import base64
@@ -12,6 +12,7 @@ import logging
 import re
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Iterator, Optional, Tuple
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
@@ -21,6 +22,7 @@ from starlette.concurrency import run_in_threadpool
 
 from .actions import Deps, record_integration_error
 from .alerts import TeamsAlerter
+from .booking import make_handoff, parse_cal_webhook
 from .botfilter import Scanners, load_scanners
 from .chatbot import make_bot
 from .classifier import make_classifier
@@ -31,7 +33,7 @@ from .emailtool.instantly import InstantlyTool
 from .handoff import start_takeover
 from .ingest import IP_MAX, UA_MAX, ingest
 from .intake import intake_lead
-from .links import parse_token
+from .links import lead_token, parse_token
 from .models import Event, Lead
 from .unsubscribe_page import CONFIRM_HTML, DONE_HTML, ERROR_HTML, HEADERS as PAGE_HEADERS, NOT_FOUND_HTML
 from .verify import EmailVerifier
@@ -192,6 +194,18 @@ def _lead_id_arg(raw: str) -> Optional[int]:
     return int(raw) if raw.isascii() and raw.isdigit() and len(raw) <= 18 else None
 
 
+BOOKING_LEAD_PARAM = "metadata[lead]"  # Cal.com stores metadata[...] query params on the booking
+
+
+def with_lead_token(target: str, lead_id: int, settings: Settings) -> str:
+    """The configured booking URL plus metadata[lead]=<signed lead token>. Only the query changes
+    (scheme / host / path come from config), so this can never become an open redirect."""
+    parts = urlsplit(target)
+    query = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if k != BOOKING_LEAD_PARAM]
+    query.append((BOOKING_LEAD_PARAM, lead_token(lead_id, settings=settings)))
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+
+
 def _client_ip(request: Request) -> Optional[str]:
     fwd = request.headers.get("x-forwarded-for")
     if fwd:
@@ -220,6 +234,8 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
                                eu_email_approved=settings.eu_email_approved)
 
         deps.intake = _referral_intake
+    if deps.handoff is None:
+        deps.handoff = make_handoff(deps.alerter)
     if deps.takeover is None:
         def _takeover(session: Session, lead: Lead, reason: str, now: datetime) -> None:
             start_takeover(session, lead, reason, deps, now)
@@ -310,6 +326,32 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
             return _fail(500)
         return JSONResponse({"ok": True})
 
+    # ------------------------------------------------------------ Cal.com webhook
+    @app.post("/webhooks/cal")
+    async def cal_webhook(request: Request, session: Session = Depends(get_session)) -> Response:
+        try:
+            body = await _read_capped(request)
+        except _BodyTooLarge:
+            return _fail(413)
+        except _BadRequest:
+            return _fail(400)
+        now = clock()
+        try:
+            events = parse_cal_webhook(request.headers, body, settings.cal_webhook_secret,
+                                       received_at=now, settings=settings)
+        except BadSignature:
+            logger.warning("cal webhook rejected: bad signature")
+            return _fail(401)
+        except ValueError:
+            logger.warning("cal webhook rejected: malformed body")
+            return _fail(400)
+        try:
+            await run_in_threadpool(ingest, session, events, deps, now, scanners)
+        except Exception as exc:  # noqa: BLE001 - Cal.com may retry; idempotency makes it safe
+            logger.error("cal webhook ingest failed: %s", type(exc).__name__)
+            return _fail(500)
+        return JSONResponse({"ok": True})
+
     # ------------------------------------------------------------ tracked links
     @app.get("/r/{token}")
     def redirect(token: str, request: Request, session: Session = Depends(get_session)) -> Response:
@@ -335,6 +377,8 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
             logger.error("click store failed for lead %s: %s", lead_id, type(exc).__name__)
         if tag == "unsubscribe":
             target = f"/u/{token}"
+        elif tag == "booking" and settings.link_targets.get("booking"):
+            target = with_lead_token(settings.link_targets["booking"], lead_id, settings)
         else:
             target = settings.link_targets.get(tag) or home
         return RedirectResponse(target, status_code=302, headers=NO_STORE)

@@ -19,7 +19,8 @@ from tests.conftest import NOW, make_lead
 EMAIL = "lead@acme.com"
 PHONE = "+14155550100"
 
-_CHANNEL = {"booking_created": "cal", "no_show": "cal", "meeting_ended": "cal", "click": "web"}
+_CHANNEL = {"booking_created": "cal", "no_show": "cal", "meeting_ended": "cal", "click": "web",
+            "booking_rescheduled": "cal", "booking_cancelled": "cal", "form_submitted": "cal"}
 
 
 def lead_snap(**kw) -> LeadSnapshot:
@@ -585,12 +586,17 @@ _ALL_EVENTS = [
     failed(131026), failed(131049), failed(131050), failed(131047), failed(1),
     button("BOOK_DEMO"), button("ASK_QUESTION"), button("X"), text("stop"), text("hello"),
     ev("booking_created"), ev("no_show"), ev("meeting_ended"),
+    ev("booking_created", data={"uid": "u1", "end": "E"}), ev("booking_rescheduled", data={"uid": "u2", "end": "E"}),
+    ev("booking_cancelled", data={"uid": "u1"}), ev("booking_cancelled", data={"uid": "other"}),
+    ev("form_submitted", data={"fit": "low"}), ev("form_submitted", data={"fit": "high"}),
+    ev("form_submitted", data={"fit": "medium"}),
 ]
 _LEADS = [
     lead_snap(), both(), wa_lead(), wa_lead(wa_window_open=True),
     both(active_channel="whatsapp", channel_switched=True),
     lead_snap(flags={"soft_bounce_count": 2, "no_show_count": 1, "human_opens": 2}),
     wa_lead(wa_human_owner="sam"),
+    lead_snap(flags={"booking_uid": "u1"}),
 ]
 
 

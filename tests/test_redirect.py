@@ -87,7 +87,8 @@ def test_redirect_db_failure_still_redirects(env):
     with engine.begin() as c:
         c.exec_driver_sql("DROP TABLE event")
     r = client.get(f"/r/{token(lead.id, 1, 'booking')}")
-    assert r.status_code == 302 and r.headers["location"] == LINK_TARGETS["booking"]
+    # booking links carry the signed lead token for Cal.com (Task 11)
+    assert r.status_code == 302 and r.headers["location"].startswith(LINK_TARGETS["booking"] + "?metadata%5Blead%5D=")
 
 
 def test_redirect_unknown_lead_still_stored(env):

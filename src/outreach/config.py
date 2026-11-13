@@ -6,7 +6,7 @@ from functools import lru_cache
 from typing import Dict, FrozenSet, Literal
 from urllib.parse import urlsplit
 
-from pydantic import field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -58,6 +58,13 @@ class Settings(BaseSettings):
     # Cal.com
     cal_webhook_secret: str
     cal_booking_url: str
+    # Qualifying-form fit (sales lead confirms; the Cal.com routing form uses the same rule):
+    # high = size >= fit_high_min_size AND months <= fit_high_max_months;
+    # medium = size >= fit_medium_min_size OR months <= fit_medium_max_months; else low.
+    fit_high_min_size: int = Field(50, ge=0)
+    fit_high_max_months: int = Field(3, ge=0)
+    fit_medium_min_size: int = Field(10, ge=0)
+    fit_medium_max_months: int = Field(6, ge=0)
 
     # Microsoft Teams
     # Workflows "When a Teams webhook request is received" URL; its sig= query part is a secret
@@ -141,6 +148,14 @@ class Settings(BaseSettings):
         if not _split_ids(v):
             raise ValueError("teams_allowed_aad_ids needs at least one id")
         return v
+
+    @model_validator(mode="after")
+    def _fit_thresholds_ordered(self) -> "Settings":
+        if self.fit_high_min_size < self.fit_medium_min_size:
+            raise ValueError("fit_high_min_size must be >= fit_medium_min_size")
+        if self.fit_high_max_months > self.fit_medium_max_months:
+            raise ValueError("fit_high_max_months must be <= fit_medium_max_months")
+        return self
 
     @property
     def teams_outgoing_key(self) -> bytes:
