@@ -21,13 +21,14 @@ Branch: `feat/outreach-agent-v1`. Plan: `docs/superpowers/plans/2026-11-12-outre
 | 10 | WhatsApp chatbot + human takeover | ✅ Done (2 fix rounds, review clean) | `f792478`, `e76a81b`, `739846b` | 107 | [task-10](tasks/task-10-chatbot-handoff.md) |
 | 10b | Replace Slack with Microsoft Teams (alerts + sales commands) | ✅ Done (1 fix round, verified) | `89df43c`, `98867c1` | 77 | [task-10b](tasks/task-10b-teams.md) |
 | 11 | Cal.com booking + handoff | ✅ Done (2 fix rounds, reviewed) | `7c4a09c`, `8236b23`, `b2ee102` | 157 | [task-11](tasks/task-11-calcom-booking.md) |
-| 9b | Pluggable AI model provider (company chooses: Claude, OpenAI, Azure OpenAI, any OpenAI-compatible) | 🔨 Building | none | 0 | see decisions |
+| 9b | Pluggable AI model provider (company chooses: Claude, OpenAI, Azure OpenAI, any OpenAI-compatible) | ✅ Done (1 fix round, verified) | `9630116`, `1929218` | 144 | [task-09b](tasks/task-09b-pluggable-llm.md) |
+| 12a | Run AI calls as background jobs (not inside webhooks) | 🔨 Building | none | 0 | see decisions |
 | 12 | Outreach starter + worker + mailbox health | ⏳ To do | none | 0 | [task-12](tasks/task-12-worker-health.md) |
 | 13 | Deploy + end-to-end test | ⏳ To do | none | 0 | [task-13](tasks/task-13-deploy-e2e.md) |
 
-**Tests now:** 982 passing (`.venv/bin/pytest -q`).
+**Tests now:** 1126 passing (`.venv/bin/pytest -q`).
 
-**What's next:** Task 9b (pluggable AI provider, decided 2026-11-13) is being built. Then, **Task 12a (new: run Claude calls in the background, not inside webhook requests)**, Task 12 (starter + worker), Task 13 (deploy + end-to-end test). Cut line if time runs short: Task 10's chatbot part; `ASK_QUESTION` then goes straight to human takeover.
+**What's next:** Task 12a (AI calls as background jobs) is being built. Then, **Task 12a (new: run Claude calls in the background, not inside webhook requests)**, Task 12 (starter + worker), Task 13 (deploy + end-to-end test). Cut line if time runs short: Task 10's chatbot part; `ASK_QUESTION` then goes straight to human takeover.
 
 ## Files in this folder
 
