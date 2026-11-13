@@ -38,3 +38,8 @@ Task 6 (executor and ingest call `decide`). Task 7 (`SwitchChannel`, variants), 
 - A hard bounce with `active_channel=None` in an outreach state is still suppressed (guard uses `== "whatsapp"`, not `!= "email"`). Unlikely.
 - `no_show` acts only in BOOKED. Other states return nothing.
 - Hard bounce while WhatsApp is active suppresses fully (may be too strict).
+
+## Review update (2026-11-13)
+- `_on_open` now only counts (`SetFlag("human_opens", n+1)`): no score, no `team_invite`, no `opened_steps` / `RefreshNextStep`. Opens never act.
+- `points_for("open", ...)` returns 0.
+- Executor `pause_colleagues` stores `paused_by` on each paused colleague, read by `holds.py`.

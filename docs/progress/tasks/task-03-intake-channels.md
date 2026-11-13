@@ -40,3 +40,9 @@ Task 6 (`POST /intake`), Task 9 (`wrong_person` referral creates a lead), Task 1
 - Any `IntegrityError` maps to `skipped_duplicate`; narrow it.
 - httpx log silencing is set at import time. Task 13 must keep httpx logging at WARNING or higher.
 - SQLite SAVEPOINT workaround not applied here (production is Postgres).
+
+## Review update (2026-11-13)
+- Email no longer needs `consent_email` (recorded only); every email is verified. Leads are rejected only with no valid email and no WhatsApp opt-in.
+- EU / EEA leads: `is_eu` + `email_hold="eu_approval"` unless `EU_EMAIL_APPROVED`. Email-only EU leads → `PAUSED`, outcome `held_eu`.
+- Account hold now also triggers on a HANDED_OFF colleague, and stores `paused_by` (the blocking colleague's id).
+- Tests: `tests/test_eu.py` (new), extra cases in `test_intake.py`, `test_channels.py`.

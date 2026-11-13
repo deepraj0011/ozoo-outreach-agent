@@ -29,3 +29,6 @@ None.
 
 ## Open items / deferred minors
 Not started. K3 (does `metadata.lead` round-trip) is UNVERIFIED; fallback is attendee email.
+
+## Review update (2026-11-13)
+Use state-change reason `low_fit` for low-fit → NURTURE, and `sales_rejected` (CRM, later) for HANDED_OFF → NURTURE, so `holds.py` restarts colleagues correctly.

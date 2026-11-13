@@ -57,3 +57,7 @@ Not started. Copy is placeholder and marked `# MARKETING: replace`.
 **Links:** uses Task 4 (links, score band), Task 5/6 (actions, email tool). Used by Task 12 (starter/worker calls `enroll`, `refresh_next_step`, `end_of_sequence_route`; `send_email_text` uses `render_reply`).
 
 **Open items:** nested format-spec check; subject length cap is the same 80 chars as names (should be separate); Docker image must include `templates/`.
+
+## Review update (2026-11-13)
+- Variants are now `standard, case_study, product, booking_slots`; `team_invite` and `new_subject` are removed from code and `templates/emails.yaml`. Subject never depends on opens.
+- `end_of_sequence_route(lead, human_clicks)`: hot → `sales_personal`, clicks → `warm_2_3w`, else `monthly`. The "never opened → WhatsApp" switch is gone.

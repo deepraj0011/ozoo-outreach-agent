@@ -29,3 +29,6 @@ None.
 
 ## Open items / deferred minors
 Not started. The carry-forward above is the main open item.
+
+## Review update (2026-11-13)
+State-change reasons matter now: `holds.py` reads them to decide when paused colleagues restart. Use `not_now` (and set `nurture_until` to the later date), `not_interested`, `wrong_person`.

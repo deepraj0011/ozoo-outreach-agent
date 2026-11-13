@@ -29,3 +29,9 @@ None.
 
 ## Open items / deferred minors
 Not started. Instantly per-lead pause/resume stays manual until verified.
+
+## Review update (2026-11-13): must also do
+- Call `holds.resume_account_holds(session, tool, now)` each tick (restarts paused colleagues per the §11 table).
+- When `settings.eu_email_approved` is true, call `holds.release_eu_holds(session, tool, now)`.
+- `end_of_sequence` job calls `end_of_sequence_route(lead, human_clicks)` (no opens argument).
+- Restarted leads with no `tool_lead_id` are picked up by `start_new`.
