@@ -38,6 +38,7 @@ from .db import init_db, make_engine
 from .emailtool.base import BadSignature, NormalizedEvent
 from .emailtool.fake import FakeEmailTool
 from .emailtool.instantly import InstantlyTool
+from .mailpit_sender import make_tool as make_mailpit_tool
 from .handoff import start_takeover
 from .ingest import IP_MAX, UA_MAX, ingest
 from .intake import intake_lead
@@ -141,6 +142,8 @@ def default_deps(settings: Settings) -> Deps:
     if settings.email_mode == "fake":
         tool: Any = FakeEmailTool(webhook_secret=settings.tool_webhook_secret, log_calls=True,
                                   id_prefix=f"fake-{run_id}-")
+    elif settings.email_mode == "mailpit":
+        tool = make_mailpit_tool(settings)  # local SMTP to Mailpit; the mailpit_sender sends the steps
     elif settings.tool_name != "instantly":
         raise ValueError(f"no adapter for tool {settings.tool_name!r} yet")
     else:

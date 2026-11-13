@@ -1,0 +1,291 @@
+"""Local-only EmailTool (EMAIL_MODE=mailpit): emails go over SMTP to Mailpit on this machine
+(browser inbox at http://localhost:8025), never to the internet.
+
+It plays the part Instantly plays in production: it keeps each enrolled lead's 4-step sequence
+and sends the steps when they are due. State lives in a small SQLite file shared by the server
+(which enrols / pauses / stops leads) and `python -m outreach.mailpit_sender` (which sends the
+due steps and reports them back as signed `email_sent` webhooks).
+
+Safety: the SMTP host must be a loopback address. Logs carry ids only, never addresses or text.
+"""
+from __future__ import annotations
+
+import ipaddress
+import json
+import logging
+import smtplib
+import sqlite3
+import uuid
+from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
+from email.message import EmailMessage
+from email.utils import format_datetime, make_msgid
+from pathlib import Path
+from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional
+
+from .base import NormalizedEvent
+from .instantly import parse_instantly_webhook
+
+logger = logging.getLogger(__name__)
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+DEFAULT_STATE_FILE = REPO_ROOT / ".mailpit_tool.db"
+DEFAULT_SMTP_HOST = "127.0.0.1"
+DEFAULT_SMTP_PORT = 1025
+FROM_ADDR = "Ozoo.ai (local test) <outreach@ozoo.local>"
+LAST_STEP = 4
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS mp_lead (
+    tool_lead_id TEXT PRIMARY KEY,
+    lead_id INTEGER,
+    email TEXT NOT NULL,
+    campaign_id TEXT,
+    variables TEXT NOT NULL,
+    enrolled_at TEXT NOT NULL,
+    last_step INTEGER NOT NULL DEFAULT 0,
+    notified_step INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'active',
+    last_subject TEXT,
+    last_message_id TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_mp_lead_email ON mp_lead(email);
+CREATE TABLE IF NOT EXISTS mp_blocked (email TEXT PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS mp_send (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tool_lead_id TEXT NOT NULL,
+    campaign_id TEXT,
+    step INTEGER,
+    sent_at TEXT NOT NULL
+);
+"""
+
+
+class MailpitError(Exception):
+    pass
+
+
+def is_loopback_host(host: str) -> bool:
+    if host.strip().lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host.strip()).is_loopback
+    except ValueError:
+        return False
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _iso(dt: datetime) -> str:
+    return dt.astimezone(timezone.utc).isoformat()
+
+
+def _parse(raw: str) -> datetime:
+    return datetime.fromisoformat(raw)
+
+
+class MailpitEmailTool:
+    def __init__(self, webhook_secret: str, *, state_file: Optional[Path] = None,
+                 smtp_host: str = DEFAULT_SMTP_HOST, smtp_port: int = DEFAULT_SMTP_PORT,
+                 now: Callable[[], datetime] = _utcnow,
+                 smtp_factory: Callable[[str, int], Any] = smtplib.SMTP) -> None:
+        if not is_loopback_host(smtp_host):
+            raise MailpitError("mailpit mode only sends to a loopback SMTP host (127.0.0.1 / localhost)")
+        self.webhook_secret = webhook_secret
+        self.state_file = Path(state_file) if state_file else DEFAULT_STATE_FILE
+        self.smtp_host, self.smtp_port = smtp_host, int(smtp_port)
+        self._now = now
+        self._smtp_factory = smtp_factory
+        self.state_file.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(self.state_file), timeout=10)
+        try:
+            conn.executescript(_SCHEMA)  # executescript manages its own commit
+        finally:
+            conn.close()
+
+    # ------------------------------------------------------------------ state
+    @contextmanager
+    def _db(self, immediate: bool = False) -> Iterator[sqlite3.Connection]:
+        self.state_file.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(self.state_file), timeout=10, isolation_level=None)
+        conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
+            try:
+                yield conn
+            except BaseException:
+                conn.execute("ROLLBACK")
+                raise
+            conn.execute("COMMIT")
+        finally:
+            conn.close()
+
+    def _row(self, db: sqlite3.Connection, tool_lead_id: str) -> sqlite3.Row:
+        row = db.execute("SELECT * FROM mp_lead WHERE tool_lead_id = ?", (tool_lead_id,)).fetchone()
+        if row is None:
+            raise KeyError(f"unknown tool lead {tool_lead_id}")
+        return row
+
+    @staticmethod
+    def _blocked(db: sqlite3.Connection, email: str) -> bool:
+        return db.execute("SELECT 1 FROM mp_blocked WHERE email = ?", (email.lower(),)).fetchone() is not None
+
+    def _set_status(self, tool_lead_id: str, status: str, only_from: tuple = ()) -> None:
+        with self._db(immediate=True) as db:
+            row = self._row(db, tool_lead_id)
+            if only_from and row["status"] not in only_from:
+                return
+            db.execute("UPDATE mp_lead SET status = ? WHERE tool_lead_id = ?", (status, tool_lead_id))
+        logger.info("mailpit tool: %s -> %s", tool_lead_id, status)
+
+    # ------------------------------------------------------------------ EmailTool port
+    def add_lead(self, campaign_id: str, lead: Any, variables: Mapping[str, str]) -> str:
+        email = (getattr(lead, "email", None) or "").strip().lower()
+        if not email:
+            raise MailpitError("lead has no email")
+        tool_lead_id = f"mp-{uuid.uuid4().hex[:12]}"
+        with self._db(immediate=True) as db:
+            if self._blocked(db, email):
+                raise MailpitError("address is blocked")
+            db.execute(
+                "INSERT INTO mp_lead (tool_lead_id, lead_id, email, campaign_id, variables, enrolled_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (tool_lead_id, getattr(lead, "id", None), email, campaign_id,
+                 json.dumps(dict(variables)), _iso(self._now())))
+        # Step 1 goes out on the sender's next pass (a few seconds), like a real tool's schedule.
+        logger.info("mailpit tool: enrolled lead %s as %s", getattr(lead, "id", None), tool_lead_id)
+        return tool_lead_id
+
+    def update_variables(self, tool_lead_id: str, variables: Mapping[str, str]) -> None:
+        with self._db(immediate=True) as db:
+            row = self._row(db, tool_lead_id)
+            merged = {**json.loads(row["variables"]), **dict(variables)}
+            db.execute("UPDATE mp_lead SET variables = ? WHERE tool_lead_id = ?",
+                       (json.dumps(merged), tool_lead_id))
+
+    def pause(self, tool_lead_id: str) -> None:
+        self._set_status(tool_lead_id, "paused", only_from=("active",))
+
+    def resume(self, tool_lead_id: str) -> None:
+        self._set_status(tool_lead_id, "active", only_from=("paused",))
+
+    def stop(self, tool_lead_id: str) -> None:
+        self._set_status(tool_lead_id, "stopped")
+
+    def block(self, email: str) -> None:
+        email = email.strip().lower()
+        with self._db(immediate=True) as db:
+            db.execute("INSERT OR IGNORE INTO mp_blocked (email) VALUES (?)", (email,))
+            db.execute("UPDATE mp_lead SET status = 'stopped' WHERE email = ?", (email,))
+        logger.info("mailpit tool: an address was blocked")
+
+    def find_lead(self, email: str) -> Optional[str]:
+        with self._db() as db:
+            row = db.execute("SELECT tool_lead_id FROM mp_lead WHERE email = ? ORDER BY rowid DESC LIMIT 1",
+                             (email.strip().lower(),)).fetchone()
+        return row["tool_lead_id"] if row else None
+
+    def reply(self, tool_lead_id: str, body: str) -> bool:
+        """A one-off reply in the lead's thread (booking link, slots, reschedule): sent now."""
+        with self._db(immediate=True) as db:
+            row = self._row(db, tool_lead_id)
+            if self._blocked(db, row["email"]):
+                return False
+            subject = row["last_subject"] or "Following up"
+            subject = subject if subject.lower().startswith("re:") else f"Re: {subject}"
+            msg_id = self._smtp_send(row["email"], subject, body, in_reply_to=row["last_message_id"])
+            db.execute("UPDATE mp_lead SET last_message_id = ? WHERE tool_lead_id = ?", (msg_id, tool_lead_id))
+        logger.info("mailpit tool: reply sent for %s", tool_lead_id)
+        return True
+
+    def parse_webhook(self, headers: Mapping[str, str], body: bytes,
+                      received_at: Optional[datetime] = None) -> List[NormalizedEvent]:
+        return parse_instantly_webhook(headers, body, self.webhook_secret, received_at)
+
+    def mailbox_stats(self, campaign_id: str, since: datetime) -> Dict[str, int]:
+        with self._db() as db:
+            n = db.execute("SELECT COUNT(*) FROM mp_send WHERE campaign_id = ? AND sent_at >= ?",
+                           (campaign_id, _iso(since))).fetchone()[0]
+        return {"sent": int(n), "bounced": 0}
+
+    # ------------------------------------------------------------------ sending (used by the sender)
+    def _smtp_send(self, to: str, subject: str, body: str, in_reply_to: Optional[str] = None) -> str:
+        msg = EmailMessage()
+        msg["From"] = FROM_ADDR
+        msg["To"] = to
+        msg["Subject"] = subject
+        msg["Date"] = format_datetime(self._now())
+        msg_id = make_msgid(domain="ozoo.local")
+        msg["Message-ID"] = msg_id
+        if in_reply_to:
+            msg["In-Reply-To"] = in_reply_to
+            msg["References"] = in_reply_to
+        msg.set_content(body)
+        smtp = self._smtp_factory(self.smtp_host, self.smtp_port)
+        try:
+            smtp.send_message(msg)
+        finally:
+            try:
+                smtp.quit()
+            except Exception:  # noqa: BLE001 - the message is already handed over
+                pass
+        return msg_id
+
+    def _candidates(self) -> List[str]:
+        with self._db() as db:
+            return [r["tool_lead_id"] for r in db.execute(
+                "SELECT tool_lead_id FROM mp_lead WHERE status = 'active' AND last_step < ? ORDER BY rowid",
+                (LAST_STEP,))]
+
+    def due_at(self, enrolled_at: datetime, step: int, schedule_days: Mapping[int, int],
+               time_scale: float = 1.0) -> datetime:
+        return enrolled_at + timedelta(days=schedule_days[step]) / time_scale
+
+    def send_due(self, schedule_days: Mapping[int, int], time_scale: float = 1.0) -> List[Dict[str, Any]]:
+        """Send every step that is due now. State is re-checked inside the same write transaction
+        right before each SMTP send, so a stop / pause / block that landed in the meantime wins.
+        Returns the sends made: [{tool_lead_id, lead_id, email, step, subject, sent_at}]."""
+        now = self._now()
+        candidates = self._candidates()
+        sent: List[Dict[str, Any]] = []
+        for tid in candidates:
+            with self._db(immediate=True) as db:
+                row = db.execute("SELECT * FROM mp_lead WHERE tool_lead_id = ?", (tid,)).fetchone()
+                if row is None or row["status"] != "active" or row["last_step"] >= LAST_STEP:
+                    continue
+                if self._blocked(db, row["email"]):
+                    db.execute("UPDATE mp_lead SET status = 'stopped' WHERE tool_lead_id = ?", (tid,))
+                    continue
+                step = row["last_step"] + 1
+                if self.due_at(_parse(row["enrolled_at"]), step, schedule_days, time_scale) > now:
+                    continue
+                variables = json.loads(row["variables"])
+                subject = variables.get(f"subject_{step}")
+                body = variables.get(f"body_{step}")
+                if not subject or not body:
+                    logger.warning("mailpit tool: %s step %s has no content; skipped", tid, step)
+                    continue
+                msg_id = self._smtp_send(row["email"], subject, body)
+                status = "done" if step >= LAST_STEP else "active"
+                db.execute("UPDATE mp_lead SET last_step = ?, last_subject = ?, last_message_id = ?, status = ? "
+                           "WHERE tool_lead_id = ?", (step, subject, msg_id, status, tid))
+                db.execute("INSERT INTO mp_send (tool_lead_id, campaign_id, step, sent_at) VALUES (?, ?, ?, ?)",
+                           (tid, row["campaign_id"], step, _iso(now)))
+            logger.info("mailpit tool: %s step %s sent", tid, step)
+            sent.append({"tool_lead_id": tid, "lead_id": row["lead_id"], "email": row["email"],
+                         "step": step, "subject": subject, "sent_at": now})
+        return sent
+
+    def unnotified(self) -> List[Dict[str, Any]]:
+        """Steps sent but not yet reported to the agent (the sent webhook failed or is pending)."""
+        with self._db() as db:
+            rows = db.execute("SELECT tool_lead_id, lead_id, email, campaign_id, last_step, notified_step "
+                              "FROM mp_lead WHERE last_step > notified_step").fetchall()
+        return [dict(r) for r in rows]
+
+    def mark_notified(self, tool_lead_id: str, step: int) -> None:
+        with self._db(immediate=True) as db:
+            db.execute("UPDATE mp_lead SET notified_step = MAX(notified_step, ?) WHERE tool_lead_id = ?",
+                       (step, tool_lead_id))

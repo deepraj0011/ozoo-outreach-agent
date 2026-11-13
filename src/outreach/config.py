@@ -23,6 +23,9 @@ NON_BLANK_SECRETS = (
 NON_BLANK_IDS = ("teams_tenant_id", "teams_sales_channel_id")
 LLMProvider = Literal["anthropic", "openai", "azure_openai", "openai_compatible"]
 Mode = Literal["fake", "real"]
+# email only: "mailpit" = local SMTP to Mailpit (emailtool/mailpit.py); local-only like "fake"
+EmailMode = Literal["fake", "real", "mailpit"]
+LOCAL_ONLY_MODES = frozenset({"fake", "mailpit"})
 MODE_FIELDS = ("email_mode", "whatsapp_mode", "llm_mode", "alerts_mode", "verify_mode")
 # Credentials each service needs only when its mode is "real" (blank is fine in fake mode).
 REAL_MODE_REQUIRES: Dict[str, tuple] = {
@@ -99,7 +102,7 @@ class Settings(BaseSettings):
     # Run mode. "local" (one machine, scripts/run_local) defaults every service below to "fake":
     # no real accounts, no network, no cost. "production" allows only "real" (validated).
     app_env: Literal["local", "production"] = "production"
-    email_mode: Optional[Mode] = None  # fake: in-memory email tool (emailtool/fake.py)
+    email_mode: Optional[EmailMode] = None  # fake: in-memory tool; mailpit: local SMTP (emailtool/mailpit.py)
     whatsapp_mode: Optional[Mode] = None  # fake: FakeWhatsAppClient (sender policy still runs)
     llm_mode: Optional[Mode] = None  # fake: deterministic keyword RuleBasedLLM
     alerts_mode: Optional[Mode] = None  # fake: console line + Alert row
@@ -121,6 +124,11 @@ class Settings(BaseSettings):
     # Email tool
     tool_name: Literal["instantly", "smartlead"]
     tool_api_key: str = ""  # required when email_mode is real
+    # EMAIL_MODE=mailpit only: Mailpit's SMTP port on this machine (loopback host enforced) and the
+    # tool's state file (default .mailpit_tool.db in the repo).
+    smtp_host: str = "127.0.0.1"
+    smtp_port: int = Field(1025, ge=1, le=65535)
+    mailpit_state_file: Optional[str] = None
     tool_webhook_secret: str
     campaign_ids: Dict[str, str]
     default_tz_group: str
@@ -207,9 +215,9 @@ class Settings(BaseSettings):
             if getattr(self, name) is None:
                 object.__setattr__(self, name, default)
         if self.app_env == "production":
-            fakes = [n for n in MODE_FIELDS if getattr(self, n) == "fake"]
+            fakes = [n for n in MODE_FIELDS if getattr(self, n) in LOCAL_ONLY_MODES]
             if fakes:
-                raise ValueError(f"fake mode is not allowed in production: {', '.join(fakes)}")
+                raise ValueError(f"fake / mailpit mode is not allowed in production: {', '.join(fakes)}")
             if self.time_scale != 1.0:
                 raise ValueError("time_scale is not allowed in production")
             short = [f"{n}_s" for n, default in DELAY_DEFAULTS_S.items() if getattr(self, f"{n}_s") < default]
@@ -238,6 +246,16 @@ class Settings(BaseSettings):
     def real_sending(self) -> bool:
         """Email or WhatsApp goes to real people (a real provider)."""
         return "real" in (self.email_mode, self.whatsapp_mode)
+
+    @field_validator("smtp_host")
+    @classmethod
+    def _smtp_loopback(cls, v: str) -> str:
+        """Mailpit mode must never relay to a real mail server."""
+        from .emailtool.mailpit import is_loopback_host
+
+        if not is_loopback_host(v):
+            raise ValueError("smtp_host must be a loopback address (127.0.0.1, localhost or ::1)")
+        return v.strip()
 
     @model_validator(mode="after")
     def _links(self) -> "Settings":

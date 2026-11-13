@@ -12,5 +12,18 @@ fi
 export RUN_WORKER=1
 export WORKER_INTERVAL_S="${WORKER_INTERVAL_S:-10}"
 export PYTHONUNBUFFERED=1
-exec "$ROOT/.venv/bin/uvicorn" --factory outreach.app:create_app --env-file "$ENV_FILE" \
-  --host 127.0.0.1 --port "${PORT:-8000}" --no-access-log "$@"
+UVICORN=("$ROOT/.venv/bin/uvicorn" --factory outreach.app:create_app --env-file "$ENV_FILE"
+  --host 127.0.0.1 --port "${PORT:-8000}" --no-access-log "$@")
+
+# EMAIL_MODE=mailpit: also run the local sender (sends due emails to Mailpit), stopped with the app.
+EMAIL_MODE_VALUE="$(grep -E '^[[:space:]]*EMAIL_MODE=' "$ENV_FILE" | tail -n1 | cut -d= -f2- | tr -d '"'"'"' [:space:]')"
+if [ "$EMAIL_MODE_VALUE" = "mailpit" ]; then
+  "$ROOT/.venv/bin/python" -m outreach.mailpit_sender --env-file "$ENV_FILE" \
+    --base-url "http://127.0.0.1:${PORT:-8000}" &
+  SENDER_PID=$!
+  trap 'kill "$SENDER_PID" 2>/dev/null || true' EXIT INT TERM
+  echo "mailpit sender started (pid $SENDER_PID). Inbox: http://localhost:8025"
+  "${UVICORN[@]}"
+else
+  exec "${UVICORN[@]}"
+fi

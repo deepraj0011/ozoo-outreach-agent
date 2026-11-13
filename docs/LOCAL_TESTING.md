@@ -208,6 +208,64 @@ stop (it retries 5 min, 30 min, 2 h, then every 6 h).
 **The automated version.** `.venv/bin/pytest tests/test_local_e2e.py` runs every row of the plan's
 e2e table this way, in about 3 seconds.
 
+## 4b. See the real emails with Mailpit (free, local)
+
+Fake mode only records that an email was "sent". With **Mailpit** you see every email the agent
+sends, exactly as a lead would, in a browser inbox on your own machine. Nothing leaves your
+computer, there is no account and no cost.
+
+**1. Install and start Mailpit** (once per boot; leave it running):
+
+```bash
+# no Docker, no sudo: one file in ~/.local/bin
+mailpit --listen 127.0.0.1:8025 --smtp 127.0.0.1:1025
+```
+
+Install it first if `mailpit` is not found: download `mailpit-linux-amd64.tar.gz` from
+<https://github.com/axllent/mailpit/releases/latest>, unpack it and copy `mailpit` to `~/.local/bin/`.
+Docker works too: `docker run -d --name mailpit -p 127.0.0.1:8025:8025 -p 127.0.0.1:1025:1025 axllent/mailpit`.
+Open <http://localhost:8025>: an empty inbox means it is ready.
+
+**2. Switch email to Mailpit.** In `.env.local`:
+
+```
+EMAIL_MODE=mailpit
+```
+
+Restart `scripts/run_local`. It now also starts the **mailpit sender** and prints
+`mailpit sender started`. (Without run_local: `$P -m outreach.mailpit_sender` in another terminal.)
+
+**3. Add a lead and watch the inbox.**
+
+```bash
+$P -m outreach.dev seed      # or add your own lead with curl to /intake
+$P -m outreach.dev tick      # enrols the email leads
+```
+
+Within a few seconds **Email 1** appears in Mailpit and the terminal prints
+`[MAILPIT] lead 1: Email 1 sent`. The sender tells the agent with the same signed `email_sent`
+webhook Instantly would send, so `show 1` shows `step_sent=1`.
+
+| Try | What to do | You should see |
+|---|---|---|
+| Email 2, 3, 4 | `advance --hours 96` and wait ~5 s (or set `TIME_SCALE=1440` so a day is a minute) | the next email in Mailpit; `step_sent` goes up |
+| Tailored next email | click the **case study** link in an email (wait 1 minute after it arrived), then `advance --hours 96` | the next email is the case-study version |
+| Pricing click | click the **pricing** link in Mailpit (after 1 minute), then `tick` | score 10, `[ALERT hot_lead]`, and a "pick a time" email in Mailpit |
+| Interested reply | `sim email-reply --lead 1 --text "Interested, can we talk?"` | `qualifying`, and the **booking link reply** arrives in Mailpit in the same thread |
+| Unsubscribe | click the **unsubscribe** link in an email and confirm | `suppressed`; no more emails, even after `advance` |
+| Any reply stops the sequence | reply with `sim email-reply`, then `advance --hours 400` | no further sequence emails |
+
+Notes:
+
+- **Click after one minute.** A click within 60 seconds of the email being sent is treated as a
+  security scanner (`bot`) and ignored, exactly as in production.
+- **Replies are still simulated** with `sim email-reply`: Mailpit cannot reply.
+- Bounces and tool unsubscribes are not simulated by Mailpit: use `sim email-bounce` / `sim email-unsub`.
+- If Mailpit is not running, the sender logs `Mailpit not reachable` and retries; nothing is lost.
+- The sender's state is `.mailpit_tool.db` (git-ignored). Delete it together with `local.db` to start over.
+- Mailpit mode is refused unless `APP_ENV=local`, and it only ever talks to an SMTP server on
+  this machine (`SMTP_HOST` must be 127.0.0.1 / localhost / ::1).
+
 ## 5. Switching one service to real
 
 Edit `.env.local`: set that service's mode to `real` and fill in its settings, then restart
@@ -292,4 +350,4 @@ A quick tunnel's address changes every time it starts, so update the URLs each t
 | Nothing happens after `advance` | Run `tick`, or wait 10 seconds for the server's worker. |
 | `database is locked` | Something else is writing `local.db`. Stop any extra `worker --loop`. The database runs in WAL mode with a 5 s busy timeout, so short overlaps wait instead of failing. |
 | `lead N has no phone` / `has no email` | That scenario needs that contact. Use another lead. |
-| Start fresh | Stop the app, then `rm -f local.db local.db-wal local.db-shm .local_clock.json`, `scripts/local_setup`, start the app and `seed` (section 3). |
+| Start fresh | Stop the app, then `rm -f local.db local.db-wal local.db-shm .local_clock.json .mailpit_tool.db`, `scripts/local_setup`, start the app and `seed` (section 3). |
