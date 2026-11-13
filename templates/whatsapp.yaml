@@ -17,6 +17,8 @@ templates:
 buttons:
   # MARKETING: replace
   booking_link: "Book a demo"
+  # MARKETING: replace
+  turn_limit: "Book a demo"
 
 texts:
   # MARKETING: replace
@@ -31,3 +33,5 @@ texts:
   booking_slots: "Happy to set up a demo for {company}. Choose any open slot here: {booking_link}"
   # MARKETING: replace
   not_ready_close: "Understood, {first_name}. Thanks for your time. We will be here if things change."
+  # MARKETING: replace (sent after 6 bot replies; offers the demo button or a person)
+  turn_limit: "I hope that helped, {first_name}. To go further, tap below to book a short demo, or reply HUMAN to talk to a person on our team."

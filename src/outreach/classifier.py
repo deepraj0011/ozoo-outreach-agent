@@ -16,8 +16,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.orm import Session
 
 from .actions import (
-    Action, Alert, BotReply, IntakeReferral, SendReply, SetNurtureUntil, SetState, StopAllOutreach, Suppress,
-    SuppressAllChannels, ToolPause, WaSendText,
+    Action, Alert, BotReply, IntakeReferral, SendReply, SetNurtureUntil, SetState, StartTakeover, StopAllOutreach,
+    Suppress, SuppressAllChannels, ToolPause, WaSendText,
 )
 from .intake import FREE_MAIL_DOMAINS
 from .models import Event, Lead
@@ -255,10 +255,6 @@ def _at_send_hour(d: date) -> datetime:
     return datetime.combine(d, SEND_HOUR)
 
 
-def _wa_window_open(lead: Lead, now: datetime) -> bool:
-    return lead.wa_window_until is not None and lead.wa_window_until > now
-
-
 def _colleague(rc: ReplyClass, lead: Lead, event: Event) -> List[Action]:
     """The writer shares the lead's domain but is not the lead: nothing is sent and the lead's
     state is untouched. Only an opt-out acts, and only on the writer's own address."""
@@ -359,10 +355,10 @@ def actions_for_class(rc: ReplyClass, lead: Lead, event: Event, now: datetime) -
         moved = move(S.CLOSED, "wrong_person")
         return _referral(rc, lead) + (review(S.CLOSED) if moved is None else moved)
     # unsure (and anything unexpected)
-    out = [Alert("unsure", f"lead {lead.id}: needs human review ({rc.reason})")]
-    if not email and _wa_window_open(lead, now):
-        out.append(WaSendText("handoff_notice"))
-    return out
+    if not email:
+        # WhatsApp: a person takes over (alert with transcript + handoff notice if the window is open)
+        return [StartTakeover("unsure")]
+    return [Alert("unsure", f"lead {lead.id}: needs human review ({rc.reason})")]
 
 
 # ------------------------------------------------------------------ Deps.classify

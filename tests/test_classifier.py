@@ -10,8 +10,8 @@ import pytest
 from sqlalchemy import select
 
 from outreach.actions import (
-    Alert, BotReply, IntakeReferral, SendReply, SetNurtureUntil, SetState, StopAllOutreach, Suppress,
-    SuppressAllChannels, ToolPause, WaSendText, execute,
+    Alert, BotReply, IntakeReferral, SendReply, SetNurtureUntil, SetState, StartTakeover, StopAllOutreach,
+    Suppress, SuppressAllChannels, ToolPause, WaSendText, execute,
 )
 from outreach.classifier import (
     CLASSIFY_TOOL, LABELS, SYSTEM_PROMPT, ReplyClass, actions_for_class, classify_reply, make_classifier,
@@ -297,14 +297,15 @@ def test_unsure_email_alert(session):
     assert a[0].text == f"lead {lead.id}: needs human review (ambiguous)"
 
 
-def test_unsure_whatsapp_handoff_notice(session):
-    assert acts(session, wa_lead(session), rc("unsure")) == [Alert("unsure"), WaSendText("handoff_notice")]
+def test_unsure_whatsapp_starts_takeover(session):
+    # Task 10: the takeover sends the alert (with transcript) and the handoff notice
+    assert acts(session, wa_lead(session), rc("unsure")) == [StartTakeover("unsure")]
 
 
-def test_unsure_whatsapp_window_closed_no_notice(session):
+def test_unsure_whatsapp_window_closed_still_takeover(session):
     lead = wa_lead(session)
     lead.wa_window_until = NOW - timedelta(minutes=1)
-    assert acts(session, lead, rc("unsure")) == [Alert("unsure")]
+    assert acts(session, lead, rc("unsure")) == [StartTakeover("unsure")]
 
 
 def test_disallowed_transition_becomes_review_alert(session):

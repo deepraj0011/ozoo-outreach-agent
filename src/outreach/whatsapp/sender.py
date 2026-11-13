@@ -26,10 +26,11 @@ logger = logging.getLogger(__name__)
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_WA_TEMPLATES = REPO_ROOT / "templates" / "whatsapp.yaml"
 TEMPLATE_NAMES = ("ozoo_intro", "ozoo_reminder")
-TEXT_KEYS = ("booking_link", "ask_away", "handoff_notice", "reschedule", "booking_slots", "not_ready_close")
+TEXT_KEYS = ("booking_link", "ask_away", "handoff_notice", "reschedule", "booking_slots", "not_ready_close",
+             "turn_limit")
 TEXT_PLACEHOLDERS = frozenset({"first_name", "company", "booking_link"})
 TEMPLATE_VARIABLES = frozenset({"first_name", "company"})
-CTA_KEYS = ("booking_link",)
+CTA_KEYS = ("booking_link", "turn_limit")  # sent with the tracked booking link as a button
 BUTTON_MAX = 20  # Meta cta_url display_text limit
 SENT_AT_FIELD = {"ozoo_intro": "wa_template_sent_at", "ozoo_reminder": "wa_reminder_sent_at"}
 # Meta rejects empty template parameters; never send a blank variable.

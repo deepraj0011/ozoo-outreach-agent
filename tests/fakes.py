@@ -74,6 +74,9 @@ class FakeWa(Recorder):
     def send_text(self, session, lead, key: str, now: datetime) -> None:
         self._rec("send_text", lead.id, key)
 
+    def send_raw_text(self, session, lead, text: str, now: datetime, author: str = "human") -> None:
+        self._rec("send_raw_text", lead.id, text, author)
+
     def send_template(self, session, lead, name: str, now: datetime) -> None:
         self._rec("send_template", lead.id, name)
 

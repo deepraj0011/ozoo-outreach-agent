@@ -1,11 +1,14 @@
-"""FastAPI app: email webhook, tracked-link redirect, scanner-safe unsubscribe, intake, health."""
+"""FastAPI app: email + WhatsApp webhooks, tracked-link redirect, scanner-safe unsubscribe, intake,
+Slack slash commands (/wa, /wa-done), health."""
 from __future__ import annotations
 
+import hashlib
 import hmac
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, Iterator, Optional
+from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional
+from urllib.parse import parse_qs
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
@@ -15,18 +18,20 @@ from starlette.concurrency import run_in_threadpool
 from .actions import Deps
 from .alerts import SlackAlerter
 from .botfilter import Scanners, load_scanners
+from .chatbot import make_bot
 from .classifier import make_classifier
 from .config import Settings, get_settings
 from .db import init_db, make_engine
 from .emailtool.base import BadSignature, NormalizedEvent, ToolUnsupported
 from .emailtool.instantly import InstantlyTool
+from .handoff import start_takeover
 from .ingest import IP_MAX, UA_MAX, ingest
 from .intake import intake_lead
 from .links import parse_token
 from .models import Event, Lead
 from .unsubscribe_page import CONFIRM_HTML, DONE_HTML, ERROR_HTML, HEADERS as PAGE_HEADERS, NOT_FOUND_HTML
 from .verify import EmailVerifier
-from .whatsapp.client import WhatsAppClient
+from .whatsapp.client import WaSendError, WhatsAppClient, WhatsAppNotAllowed, WindowClosed
 from .whatsapp.sender import WhatsAppSender
 from .whatsapp.webhook import parse_wa_webhook
 
@@ -36,6 +41,13 @@ MAX_BODY = 1024 * 1024  # 1 MiB
 MAX_CHALLENGE_LEN = 64
 DEFAULT_HOME = "https://ozoo.ai/"
 NO_STORE = {"Cache-Control": "no-store"}
+SLACK_MAX_BODY = 64 * 1024
+SLACK_MAX_AGE_S = 300
+SLACK_TS_MAX_LEN = 12
+WA_TEXT_MAX = 4096
+OWNER_MAX = 100  # Lead.wa_human_owner column size
+WA_USAGE = "usage: /wa <lead_id> <message>"
+WA_DONE_USAGE = "usage: /wa-done <lead_id>"
 
 
 def _utcnow() -> datetime:
@@ -94,7 +106,29 @@ def default_deps(settings: Settings) -> Deps:
         alerter=SlackAlerter(settings.slack_webhook_url),
         outreach=_NotWired("outreach"),  # Task 12
         classify=make_classifier(settings) if settings.anthropic_api_key else None,
+        bot_reply=make_bot(settings) if settings.anthropic_api_key else None,
     )
+
+
+def verify_slack_signature(headers: Mapping[str, str], body: bytes, secret: str, now: datetime) -> bool:
+    """Slack v0 request signing: HMAC-SHA256 over "v0:<ts>:<raw body>", timestamp within 5 min."""
+    sig = headers.get("x-slack-signature") or ""
+    ts = headers.get("x-slack-request-timestamp") or ""
+    if not sig or not ts or len(ts) > SLACK_TS_MAX_LEN or not (ts.isascii() and ts.isdigit()):
+        return False
+    if abs(now.timestamp() - int(ts)) > SLACK_MAX_AGE_S:
+        return False
+    expected = "v0=" + hmac.new(secret.encode(), b"v0:" + ts.encode() + b":" + body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected.encode(), sig.encode())
+
+
+def _lead_id_arg(raw: str) -> Optional[int]:
+    return int(raw) if raw.isascii() and raw.isdigit() and len(raw) <= 18 else None
+
+
+def _first(form: Dict[str, List[str]], key: str) -> str:
+    vals = form.get(key) or [""]
+    return vals[0]
 
 
 def _client_ip(request: Request) -> Optional[str]:
@@ -125,6 +159,12 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
                                eu_email_approved=settings.eu_email_approved)
 
         deps.intake = _referral_intake
+    if deps.takeover is None:
+        def _takeover(session: Session, lead: Lead, reason: str, now: datetime) -> None:
+            start_takeover(session, lead, reason, deps, now)
+
+        deps.takeover = _takeover
+    allowed_users = frozenset(u.strip() for u in settings.slack_allowed_user_ids.split(",") if u.strip())
 
     app = FastAPI(title="Ozoo outreach agent", docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -297,4 +337,91 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
             status_code=201 if r.outcome == "accepted" else 200,
         )
 
+    # ------------------------------------------------------------ Slack slash commands
+    def _cmd_wa(session: Session, text: str, user_id: str, now: datetime) -> str:
+        parts = text.strip().split(None, 1)
+        lead_id = _lead_id_arg(parts[0]) if parts else None
+        if len(parts) != 2 or lead_id is None:
+            return WA_USAGE
+        message = parts[1]
+        if not 1 <= len(message) <= WA_TEXT_MAX:
+            return f"message must be 1-{WA_TEXT_MAX} characters"
+        lead = session.get(Lead, lead_id)
+        if lead is None:
+            return "lead not found"
+        try:
+            deps.wa.send_raw_text(session, lead, message, now, "human")
+        except WindowClosed:
+            session.rollback()
+            outcome = "24h window closed — the lead must message first"
+        except WhatsAppNotAllowed:
+            session.rollback()
+            outcome = "lead has opted out / no WhatsApp consent"
+        except WaSendError as exc:
+            session.rollback()
+            outcome = f"send failed (code {exc.code})"
+        else:
+            lead.wa_human_owner = (user_id or "slack")[:OWNER_MAX]
+            session.commit()
+            logger.info("slack /wa: lead %s message sent by a person", lead_id)
+            return "sent"
+        logger.info("slack /wa: lead %s not sent", lead_id)
+        return outcome
+
+    def _cmd_wa_done(session: Session, text: str, now: datetime) -> str:
+        lead_id = _lead_id_arg(text.strip())
+        if lead_id is None:
+            return WA_DONE_USAGE
+        lead = session.get(Lead, lead_id)
+        if lead is None:
+            return "lead not found"
+        lead.wa_human_owner = None
+        flags = dict(lead.variant_flags or {})
+        flags["takeover_released"] = now.isoformat()
+        lead.variant_flags = flags
+        session.commit()
+        logger.info("slack /wa-done: lead %s given back to the bot", lead_id)
+        return "released"
+
+    def _slash(session: Session, command: str, text: str, user_id: str, now: datetime) -> str:
+        if command == "/wa":
+            return _cmd_wa(session, text, user_id, now)
+        if command == "/wa-done":
+            return _cmd_wa_done(session, text, now)
+        return "unknown command"
+
+    @app.post("/slack/commands")
+    async def slack_commands(request: Request, session: Session = Depends(get_session)) -> Response:
+        try:
+            body = await _read_capped(request, SLACK_MAX_BODY)
+        except _BodyTooLarge:
+            return _fail(413)
+        except _BadRequest:
+            return _fail(400)
+        now = clock()
+        if not verify_slack_signature(request.headers, body, settings.slack_signing_secret, now):
+            logger.warning("slack command rejected: bad signature or timestamp")
+            return _fail(401)
+        try:
+            form = parse_qs(body.decode("utf-8"), keep_blank_values=True, max_num_fields=50)
+        except (UnicodeDecodeError, ValueError):
+            return _fail(400)
+        user_id = _first(form, "user_id")
+        if allowed_users and user_id not in allowed_users:
+            logger.warning("slack command refused: user not allowed")
+            return _ephemeral("not allowed")
+        try:
+            text = await run_in_threadpool(_slash, session, _first(form, "command"), _first(form, "text"),
+                                           user_id, now)
+        except Exception as exc:  # noqa: BLE001 - Slack still needs a 200 with a readable answer
+            session.rollback()
+            logger.error("slack command failed: %s", type(exc).__name__)
+            text = "internal error — nothing was changed; try again"
+        return _ephemeral(text)
+
     return app
+
+
+def _ephemeral(text: str) -> JSONResponse:
+    """Slack needs a 200 within 3 s; ephemeral = only the person who typed the command sees it."""
+    return JSONResponse({"response_type": "ephemeral", "text": text})

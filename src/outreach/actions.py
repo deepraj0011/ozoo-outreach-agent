@@ -75,6 +75,14 @@ class WaSendText:
 
 
 @dataclass(frozen=True)
+class WaSendRaw:
+    """Free-form text written by the bot (or a person); window rules as WaSendText. The text is kept
+    out of repr so it never reaches a log line. A successful bot send counts as one bot turn."""
+    text: str = field(repr=False)
+    author: str = "bot"
+
+
+@dataclass(frozen=True)
 class WaSendTemplate:
     name: str
 
@@ -162,6 +170,12 @@ class HandOff:
 
 
 @dataclass(frozen=True)
+class StartTakeover:
+    """WhatsApp: a person takes over the chat (bot goes quiet until /wa-done)."""
+    reason: str
+
+
+@dataclass(frozen=True)
 class StopAllOutreach:
     """Composite: stop the email tool and cancel any pending WhatsApp reminder."""
 
@@ -173,7 +187,7 @@ Action = Union[
     SetState, Suppress, SuppressAllChannels, ToolStop, ToolPause, ToolResume,
     WaCancelReminder, WaSendText, WaSendTemplate, SwitchChannel, SetVariant, AddScore,
     SetFlag, SetStepSent, RefreshNextStep, Alert, Classify, BotReply, SendReply,
-    PauseColleagues, HandOff, StopAllOutreach, SetNurtureUntil, IntakeReferral,
+    PauseColleagues, HandOff, StopAllOutreach, SetNurtureUntil, IntakeReferral, WaSendRaw, StartTakeover,
 ]
 
 
@@ -199,6 +213,8 @@ MAX_FOLLOWUP_DEPTH = 2
 
 class WaPort(Protocol):
     def send_text(self, session: Session, lead: Lead, key: str, now: datetime) -> Any: ...
+
+    def send_raw_text(self, session: Session, lead: Lead, text: str, now: datetime, author: str) -> Any: ...
 
     def send_template(self, session: Session, lead: Lead, name: str, now: datetime) -> Any: ...
 
@@ -226,6 +242,7 @@ class Deps:
     bot_reply: Optional[Callable[[Session, Lead, datetime], List[Action]]] = None
     handoff: Optional[Callable[[Session, Lead, datetime], None]] = None
     intake: Optional[Callable[[Session, Dict[str, Any], datetime], "IntakeResult"]] = None
+    takeover: Optional[Callable[[Session, Lead, str, datetime], None]] = None
 
 
 _FAILED = object()
@@ -380,6 +397,10 @@ class _Run:
             self.flags()["wa_reminder_cancelled"] = True
         elif isinstance(a, WaSendText):
             self.external("wa.send_text", deps.wa.send_text, s, lead, a.text_key, self.now)
+        elif isinstance(a, WaSendRaw):
+            sent = self.external("wa.send_raw_text", deps.wa.send_raw_text, s, lead, a.text, self.now, a.author)
+            if sent is not _FAILED and a.author == "bot":
+                lead.wa_bot_turns = (lead.wa_bot_turns or 0) + 1
         elif isinstance(a, WaSendTemplate):
             self.external("wa.send_template", deps.wa.send_template, s, lead, a.name, self.now)
         elif isinstance(a, SendReply):
@@ -421,6 +442,11 @@ class _Run:
                 self.alert("handoff", f"lead {lead.id}: hand off to sales")
             else:
                 self.external("handoff", deps.handoff, s, lead, self.now)
+        elif isinstance(a, StartTakeover):
+            if deps.takeover is None:
+                self.alert("wa_human_needed", f"lead {lead.id}: WhatsApp chat needs a person ({a.reason})")
+            else:
+                self.external("takeover", deps.takeover, s, lead, a.reason, self.now)
         else:  # pragma: no cover - new action type without an executor branch
             logger.error("lead %s: no executor for %s", lead.id, type(a).__name__)
             self.integration_error(f"no executor for {type(a).__name__}")

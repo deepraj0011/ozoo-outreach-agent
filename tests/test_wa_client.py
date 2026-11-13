@@ -230,7 +230,8 @@ def test_fake_satisfies_port_and_records(session):
 
 def test_texts_have_no_raw_urls():
     t = load_wa_templates()
-    for key in ("booking_link", "ask_away", "handoff_notice", "reschedule", "booking_slots", "not_ready_close"):
+    for key in ("booking_link", "ask_away", "handoff_notice", "reschedule", "booking_slots", "not_ready_close",
+                "turn_limit"):
         assert key in t["texts"]
         assert "http" not in t["texts"][key].lower()
         assert "www." not in t["texts"][key].lower()
@@ -242,16 +243,17 @@ def test_marketing_markers_present():
     from outreach.whatsapp.sender import DEFAULT_WA_TEMPLATES
 
     raw = DEFAULT_WA_TEMPLATES.read_text()
-    assert raw.count("# MARKETING: replace") >= 6
+    assert raw.count("# MARKETING: replace") >= 8
 
 
 def _base():
     return {
         "templates": {"ozoo_intro": {"language": "en", "variables": ["first_name", "company"]},
                       "ozoo_reminder": {"language": "en", "variables": ["first_name"]}},
-        "buttons": {"booking_link": "Book a demo"},
+        "buttons": {"booking_link": "Book a demo", "turn_limit": "Book a demo"},
         "texts": {k: "Hi {first_name}" for k in (
-            "booking_link", "ask_away", "handoff_notice", "reschedule", "booking_slots", "not_ready_close")},
+            "booking_link", "ask_away", "handoff_notice", "reschedule", "booking_slots", "not_ready_close",
+            "turn_limit")},
     }
 
 
@@ -279,6 +281,14 @@ def test_validation_rejects_bad_config():
         validate_wa_templates(bad)
     bad = _base()
     bad["buttons"]["booking_link"] = "x" * 21  # Meta display_text limit is 20
+    with pytest.raises(ValueError):
+        validate_wa_templates(bad)
+    bad = _base()
+    del bad["texts"]["turn_limit"]
+    with pytest.raises(ValueError):
+        validate_wa_templates(bad)
+    bad = _base()
+    del bad["buttons"]["turn_limit"]
     with pytest.raises(ValueError):
         validate_wa_templates(bad)
 

@@ -53,6 +53,8 @@ class Settings(BaseSettings):
     # Slack
     slack_webhook_url: str
     slack_signing_secret: str
+    # comma-separated Slack user ids allowed to use /wa and /wa-done ("" = anyone in the workspace)
+    slack_allowed_user_ids: str = ""
 
     # WhatsApp
     wa_phone_number_id: str
