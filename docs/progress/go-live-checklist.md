@@ -54,3 +54,7 @@ Nothing below is done yet. Do not send to real prospects until all boxes are tic
 - [ ] Run the e2e checklist with 3-5 test inboxes and 2-3 test WhatsApp numbers. Every row passes.
 - [ ] Re-run the Task 6 reviewer's follow-ups once the final review closes.
 - [ ] Daily manual check of Google Postmaster spam rate (not automated in v1).
+
+## Added 2026-11-13 (Tasks 9b, 11)
+- [ ] **AI provider:** choose `LLM_PROVIDER` and the models. Check the provider's data-processing terms and data location, because lead reply text is sent to it. Use a self-hosted model if the data must stay in-house.
+- [ ] **Cal.com, real account:** confirm that `metadata[lead]` arrives through the routing form, that a reschedule carries the new booking id, the form answer keys (`response`/`value`), the phone fields and the signature format. Use dropdowns for company size and timeline.

@@ -114,3 +114,19 @@ Decided on 2026-11-13: the office uses Microsoft Teams, not Slack. Slack is repl
 | Config: `TEAMS_WEBHOOK_URL` (secret, https), `TEAMS_OUTGOING_SECRET` (base64, non-blank), `TEAMS_TENANT_ID`, `TEAMS_SALES_CHANNEL_ID`, `TEAMS_ALLOWED_AAD_IDS`. | n/a | n/a |
 | Review fixes: `teams_escape` applies NFKC, defangs `www.`, bare IPv4, and lookalike dots; allow-list ids are stripped, tenant/AAD compared case-insensitively; deeply nested JSON → 400. | Security review of 10b. | n/a |
 | Bot stays muted if a background `wa` send fails, until `done`; the failure is alerted. ChatMessage stored only after a successful send. | Avoid the bot talking over a human; no record of unsent messages. | Sales must type `done` after a failed send. |
+
+## Task 11: Cal.com booking
+
+| Decision | Why | Cost if wrong |
+|---|---|---|
+| Handoff happens as soon as the meeting ends. A no-show reported after the handoff only alerts sales. | Sales hosted the meeting and own the lead from then on. | A no-show lead sits with sales, but they are told. |
+| An unmatched form with high or medium fit raises an alert. Low fit is stored silently. | A good lead is never invisible. | Some alert noise. |
+| The Cal signature is accepted as bare hex or with a `sha256=` prefix. | The exact format is unverified. | n/a |
+| A reschedule while QUALIFYING counts as a rebooking (back to BOOKED). | A lead who rebooks through Cal.com's own reschedule link must still be handed off. | n/a |
+
+## Task 9b: pluggable AI model (2026-11-13)
+
+| Decision | Why | Cost if wrong |
+|---|---|---|
+| Reply classification and the chatbot use one `LLMClient` port. The provider is set in config with `LLM_PROVIDER` = `anthropic`, `openai`, `azure_openai` or `openai_compatible` (Gemini, Mistral, Groq, OpenRouter, Ollama, vLLM). Models are set separately for the classifier and the chat. | The company decides which model to use. | n/a |
+| The safety checks stay outside the model: any model error goes to unsure / a human, and the price, link and referral checks and prompt-injection handling stay unchanged. | The same safety holds whatever the provider. | n/a |
