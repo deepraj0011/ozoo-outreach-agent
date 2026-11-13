@@ -1,5 +1,7 @@
 # Task 13: Deploy + end-to-end test
 
+> **Re-scoped 2026-11-13:** deployment is not a priority; the owner will test locally first. This task is now: one-command local start, dry-run/fake mode for the email tool, WhatsApp and AI (real ones optional), sample leads, signed webhook simulator scripts, tunnel how-to for real webhooks, and `docs/LOCAL_TESTING.md`. Dockerfile/hosting deferred.
+
 ## Status
 ⏳ To do. Not started.
 
