@@ -65,27 +65,48 @@ def _message_event(msg: Dict[str, Any]) -> NormalizedEvent:
     )
 
 
+def _item_failed(what: str, item: Any, exc: Exception) -> None:
+    wamid = item.get("id") if isinstance(item, dict) else None
+    logger.warning("WhatsApp webhook: skipped malformed %s %s: %s",
+                   what, wamid if isinstance(wamid, str) else "(no id)", type(exc).__name__)
+
+
+def _items(container: Any, key: str) -> List[Any]:
+    items = container.get(key) if isinstance(container, dict) else None
+    return items if isinstance(items, list) else []
+
+
 def parse_wa_webhook(headers: Mapping[str, str], raw: bytes, app_secret: str) -> List[NormalizedEvent]:
-    """Verify, then map every status / message in the payload. Raises BadSignature or ValueError."""
+    """Verify, then map every status / message in the payload.
+
+    BadSignature on auth failure; ValueError (-> 400) only for an undecodable body, a
+    non-object top level or a non-list `entry`. A single malformed item is logged (wamid +
+    exception type only) and skipped, so one odd item never blocks the rest of the batch
+    (e.g. another lead's STOP) behind Meta's retries.
+    """
     verify_signature(headers, raw, app_secret)
-    try:
-        payload = json.loads(raw)
-        if not isinstance(payload, dict):
-            raise ValueError("payload is not an object")
-        entries = payload.get("entry") or []
-        if not isinstance(entries, list):
-            raise ValueError("entry is not a list")
-        events: List[NormalizedEvent] = []
-        for entry in entries:
-            for change in entry.get("changes") or []:
-                value = change.get("value") or {}
-                for st in value.get("statuses") or []:
+    payload = json.loads(raw)  # JSONDecodeError / UnicodeDecodeError are ValueErrors
+    if not isinstance(payload, dict):
+        raise ValueError("payload is not an object")
+    entries = payload.get("entry") or []
+    if not isinstance(entries, list):
+        raise ValueError("entry is not a list")
+    events: List[NormalizedEvent] = []
+    for entry in entries:
+        for change in _items(entry, "changes"):
+            value = change.get("value") if isinstance(change, dict) else None
+            for st in _items(value, "statuses"):
+                try:
                     ev = _status_event(st)
-                    if ev is not None:
-                        events.append(ev)
-                for msg in value.get("messages") or []:
+                except Exception as exc:  # noqa: BLE001 - skip only this item
+                    _item_failed("status", st, exc)
+                    continue
+                if ev is not None:
+                    events.append(ev)
+            for msg in _items(value, "messages"):
+                try:
                     events.append(_message_event(msg))
-    except (KeyError, TypeError, AttributeError, OverflowError, OSError) as exc:
-        raise ValueError(f"malformed WhatsApp payload: {type(exc).__name__}") from exc
+                except Exception as exc:  # noqa: BLE001 - skip only this item
+                    _item_failed("message", msg, exc)
     logger.info("WhatsApp webhook: %d events", len(events))
     return events

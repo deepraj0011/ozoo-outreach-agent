@@ -26,6 +26,10 @@ class WindowClosed(Exception):
     """Free-form send refused locally: the lead's 24 h customer-service window is not open."""
 
 
+class WhatsAppNotAllowed(Exception):
+    """Send refused locally: no WhatsApp consent, no phone, or the phone is suppressed."""
+
+
 class WaSendError(Exception):
     """Meta refused or failed the send. Carries only the HTTP status and Meta error code:
     never the token, phone number or message body."""

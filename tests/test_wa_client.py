@@ -281,3 +281,77 @@ def test_validation_rejects_bad_config():
     bad["buttons"]["booking_link"] = "x" * 21  # Meta display_text limit is 20
     with pytest.raises(ValueError):
         validate_wa_templates(bad)
+
+
+# ------------------------------------------------------------------ consent / suppression (fix round 1)
+
+
+@respx.mock(assert_all_called=False)
+def test_template_refused_without_consent(session):
+    from outreach.whatsapp.client import WhatsAppNotAllowed
+
+    route = respx.post(URL).mock(return_value=httpx.Response(200, json=OK))
+    sender = WhatsAppSender(_client(), SETTINGS)
+    lead = _wa_lead(session, consent_whatsapp=False, wa_window_until=NOW + timedelta(hours=1))
+    with pytest.raises(WhatsAppNotAllowed):
+        sender.send_template(session, lead, "ozoo_intro", NOW)
+    with pytest.raises(WhatsAppNotAllowed):
+        sender.send_text(session, lead, "ask_away", NOW)
+    with pytest.raises(WhatsAppNotAllowed):
+        sender.send_raw_text(session, lead, "hi", NOW, "human")
+    assert not route.called
+    assert lead.wa_template_sent_at is None
+    assert session.scalars(select(ChatMessage)).all() == []
+
+
+@respx.mock(assert_all_called=False)
+def test_suppressed_phone_refused_even_with_consent(session):
+    from outreach.models import Suppression
+    from outreach.whatsapp.client import WhatsAppNotAllowed
+
+    route = respx.post(URL).mock(return_value=httpx.Response(200, json=OK))
+    lead = _wa_lead(session, wa_window_until=NOW + timedelta(hours=1))
+    session.add(Suppression(value=PHONE, kind="phone", reason="wa_optout", created_at=NOW))
+    session.flush()
+    sender = WhatsAppSender(_client(), SETTINGS)
+    for call in (lambda: sender.send_template(session, lead, "ozoo_intro", NOW),
+                 lambda: sender.send_text(session, lead, "ask_away", NOW),
+                 lambda: sender.send_raw_text(session, lead, "hi", NOW, "human")):
+        with pytest.raises(WhatsAppNotAllowed):
+            call()
+    assert not route.called
+
+
+@respx.mock
+def test_url_in_company_not_inserted(session):
+    route = respx.post(URL).mock(return_value=httpx.Response(200, json=OK))
+    lead = _wa_lead(session, name="www.evil.example Rao", company="Acme HTTPS://evil.example",
+                    wa_window_until=NOW + timedelta(hours=1))
+    sender = WhatsAppSender(_client(), SETTINGS)
+    sender.send_template(session, lead, "ozoo_intro", NOW)
+    params = [p["text"] for p in json.loads(route.calls.last.request.content)["template"]["components"][0]["parameters"]]
+    assert params == ["there", "your team"]
+    sender.send_text(session, lead, "booking_slots", NOW)  # uses {company} and {booking_link}
+    body = json.loads(route.calls.last.request.content)["text"]["body"]
+    assert "evil" not in body and "your team" in body
+    assert "https://go.example.com/r/" in body  # our tracked link still present
+    lead2 = _wa_lead(session, phone="+919800000009", name="Ravi", company="ftp://x.example",
+                     wa_window_until=NOW + timedelta(hours=1))
+    sender.send_template(session, lead2, "ozoo_intro", NOW)
+    params = [p["text"] for p in json.loads(route.calls.last.request.content)["template"]["components"][0]["parameters"]]
+    assert params == ["Ravi", "your team"]
+
+
+@respx.mock
+def test_booking_url_only_built_when_needed(session, monkeypatch):
+    respx.post(URL).mock(return_value=httpx.Response(200, json=OK))
+    lead = _wa_lead(session, wa_window_until=NOW + timedelta(hours=1))
+    sender = WhatsAppSender(_client(), SETTINGS)
+    built = []
+    real = sender._booking_url
+    monkeypatch.setattr(sender, "_booking_url", lambda ld: built.append(ld.id) or real(ld))
+    sender.send_text(session, lead, "ask_away", NOW)
+    assert built == []
+    sender.send_text(session, lead, "reschedule", NOW)
+    sender.send_text(session, lead, "booking_link", NOW)
+    assert built == [lead.id, lead.id]

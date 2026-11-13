@@ -12,13 +12,14 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import yaml
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..config import Settings, get_settings
 from ..links import make_link
-from ..models import ChatMessage, Lead
+from ..models import ChatMessage, Lead, Suppression
 from ..sequencer import _clean, _fields
-from .client import WhatsAppClient, WindowClosed
+from .client import WhatsAppClient, WhatsAppNotAllowed, WindowClosed
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,8 @@ SENT_AT_FIELD = {"ozoo_intro": "wa_template_sent_at", "ozoo_reminder": "wa_remin
 # Meta rejects empty template parameters; never send a blank variable.
 VARIABLE_FALLBACK = {"first_name": "there", "company": "your team"}
 _URL_MARKERS = ("http", "www.")
+# anti-phishing: a lead-supplied name/company that looks like a link is never inserted
+_VALUE_URL_MARKERS = ("http", "www.", "://")
 
 _cache: Dict[str, Dict[str, Any]] = {}
 
@@ -95,17 +98,34 @@ class WhatsAppSender:
         self.templates = validate_wa_templates(templates) if templates is not None else load_wa_templates()
 
     # ------------------------------------------------------------ helpers
-    def _phone(self, lead: Lead) -> str:
-        if not lead.phone:
-            raise ValueError(f"lead {lead.id} has no phone")
-        return lead.phone
+    def _require_consent(self, session: Session, lead: Lead) -> str:
+        """Checked before the window: an opt-out ("STOP") itself opens the 24 h window."""
+        phone = lead.phone
+        if not lead.consent_whatsapp or not phone:
+            logger.info("lead %s: WhatsApp send refused, no consent or phone", lead.id)
+            raise WhatsAppNotAllowed(f"lead {lead.id}: no WhatsApp consent or phone")
+        suppressed = session.scalar(select(Suppression.id).where(
+            Suppression.value == phone, Suppression.kind == "phone").limit(1))
+        if suppressed is not None:
+            logger.info("lead %s: WhatsApp send refused, phone suppressed", lead.id)
+            raise WhatsAppNotAllowed(f"lead {lead.id}: phone suppressed")
+        return phone
 
     def _booking_url(self, lead: Lead) -> str:
         return make_link(lead.id, lead.step_sent or 0, "booking", "whatsapp", settings=self.settings)
 
+    @staticmethod
+    def _safe(field: str, value: str) -> str:
+        low = value.lower()
+        if any(m in low for m in _VALUE_URL_MARKERS):
+            return VARIABLE_FALLBACK[field]
+        return value
+
     def _values(self, lead: Lead) -> Dict[str, str]:
         name = _clean(lead.name)
-        return {"first_name": name.split(" ")[0] if name else "", "company": _clean(lead.company)}
+        first = name.split(" ")[0] if name else ""
+        return {"first_name": self._safe("first_name", first),
+                "company": self._safe("company", _clean(lead.company))}
 
     def _require_window(self, lead: Lead, now: datetime) -> None:
         if not window_open(lead, now):
@@ -119,13 +139,14 @@ class WhatsAppSender:
 
     # ------------------------------------------------------------ WaPort
     def send_text(self, session: Session, lead: Lead, key: str, now: datetime, author: str = "bot") -> str:
+        phone = self._require_consent(session, lead)
         self._require_window(lead, now)
         texts = self.templates["texts"]
         if key not in texts:
             raise ValueError(f"unknown WhatsApp text {key!r}")
-        phone = self._phone(lead)
-        url = self._booking_url(lead)
-        text = texts[key].format_map({**self._values(lead), "booking_link": url})
+        tpl = texts[key]
+        url = self._booking_url(lead) if key in CTA_KEYS or "booking_link" in _fields(tpl) else ""
+        text = tpl.format_map({**self._values(lead), "booking_link": url})
         if key in CTA_KEYS:
             wamid = self.client.send_cta_link(phone, text, self.templates["buttons"][key], url)
         else:
@@ -135,19 +156,21 @@ class WhatsAppSender:
         return wamid
 
     def send_raw_text(self, session: Session, lead: Lead, text: str, now: datetime, author: str = "human") -> str:
+        phone = self._require_consent(session, lead)
         self._require_window(lead, now)
-        wamid = self.client.send_text(self._phone(lead), text)
+        wamid = self.client.send_text(phone, text)
         self._log(session, lead, author, text, wamid, now)
         logger.info("lead %s: WhatsApp %s text sent", lead.id, author)
         return wamid
 
     def send_template(self, session: Session, lead: Lead, name: str, now: datetime) -> str:
+        phone = self._require_consent(session, lead)
         cfg = self.templates["templates"].get(name)
         if cfg is None:
             raise ValueError(f"unknown WhatsApp template {name!r}")
         vals = self._values(lead)
         variables: List[str] = [vals.get(v) or VARIABLE_FALLBACK[v] for v in cfg["variables"]]
-        wamid = self.client.send_template(self._phone(lead), name, cfg["language"], variables)
+        wamid = self.client.send_template(phone, name, cfg["language"], variables)
         field = SENT_AT_FIELD.get(name)
         if field:
             setattr(lead, field, now)

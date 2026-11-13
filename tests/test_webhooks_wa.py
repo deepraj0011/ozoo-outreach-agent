@@ -7,7 +7,9 @@ import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import httpx
 import pytest
+import respx
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
@@ -317,3 +319,62 @@ def test_default_deps_wires_whatsapp_sender():
 
     deps = default_deps(make_settings())
     assert isinstance(deps.wa, WhatsAppSender)
+
+
+# ------------------------------------------------------------------ fix round 1
+
+
+@respx.mock(assert_all_called=False)
+def test_stop_then_raw_text_refused_no_http(env):
+    from outreach.whatsapp.client import WhatsAppClient, WhatsAppNotAllowed
+    from outreach.whatsapp.sender import WhatsAppSender
+
+    route = respx.post(url__startswith="https://graph.facebook.com/").mock(
+        return_value=httpx.Response(200, json={"messages": [{"id": "wamid.X"}]}))
+    client, s, _ = env
+    lead = add_wa_lead(s)
+    body = message_body({"from": "919800000000", "id": "wamid.STOP", "timestamp": "1762941700",
+                         "type": "text", "text": {"body": "  STOP "}})
+    assert post(client, body).status_code == 200
+    s.expire_all()
+    lead = s.get(Lead, lead.id)
+    assert lead.state == S.SUPPRESSED.value
+    sender = WhatsAppSender(WhatsAppClient(make_settings(), client=httpx.Client(timeout=10.0)), make_settings())
+    now = TS_IN + timedelta(minutes=5)  # the STOP itself opened the 24 h window
+    assert lead.wa_window_until > now
+    with pytest.raises(WhatsAppNotAllowed):
+        sender.send_raw_text(s, lead, "Sorry to see you go", now, "human")
+    with pytest.raises(WhatsAppNotAllowed):
+        sender.send_text(s, lead, "ask_away", now)
+    assert route.call_count == 0
+
+
+def test_batch_with_one_broken_item_still_ingests_stop(env):
+    client, s, _ = env
+    broken_lead = add_wa_lead(s, phone="+919811111111")
+    stop_lead = add_wa_lead(s)
+    data = json.loads(raw("wa_text.json"))
+    data["entry"][0]["changes"][0]["value"]["messages"] = [
+        {"from": "919811111111", "id": "wamid.BROKEN", "timestamp": "1762941700", "type": "button"},
+        {"from": "919800000000", "id": "wamid.STOP", "timestamp": "1762941700", "type": "text",
+         "text": {"body": "stop"}},
+    ]
+    data["entry"].append("not-an-entry")
+    r = post(client, json.dumps(data).encode())
+    assert r.status_code == 200
+    s.expire_all()
+    assert s.get(Lead, stop_lead.id).state == S.SUPPRESSED.value
+    assert s.get(Lead, broken_lead.id).state == S.IN_SEQUENCE.value
+    assert count(s, Event, Event.channel == "whatsapp") == 1
+
+
+def test_broken_items_skipped_by_parser(caplog):
+    data = json.loads(raw("wa_status_sent.json"))
+    value = data["entry"][0]["changes"][0]["value"]
+    value["statuses"].insert(0, {"id": "wamid.BAD", "status": "sent", "timestamp": "not-a-number",
+                                 "recipient_id": "919800000000"})
+    value["statuses"].append(42)
+    body = json.dumps(data).encode()
+    events = parse_wa_webhook(sign(body), body, SECRET)
+    assert [e.provider_event_id for e in events] == ["wa:wamid.OUT1:sent"]
+    assert "wamid.BAD" in caplog.text and "919800000000" not in caplog.text
