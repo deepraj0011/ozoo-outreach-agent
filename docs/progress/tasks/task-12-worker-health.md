@@ -19,7 +19,7 @@ Tasks 3 (`fallback_channel`), 4 (decay, settling), 6 (executor, ports, unposted 
 Task 13 (deploy runs the worker).
 
 ## Key decisions (from the rulings)
-No rulings file yet. Carry-forward from Task 6: post `Alert` rows with `posted_at` NULL to Slack (retry) and send a digest of `integration_error` alerts. Pass an absolute path to `load_scanners`. This task provides the real `Deps` ports and the "rewiring" the ledger expects.
+No rulings file yet. Carry-forward from Task 6: post `Alert` rows with `posted_at` NULL to Teams (retry) and send a digest of `integration_error` alerts. Pass an absolute path to `load_scanners`. This task provides the real `Deps` ports and the "rewiring" the ledger expects.
 
 ## Tests
 Not started. Planned: both channels send only once, 47 h vs 48 h reminder, reply cancels reminder, OOO resume, SLA across weekend, idempotent tick, health thresholds.

@@ -1,6 +1,6 @@
 # Ozoo.ai Outreach Agent: progress board
 
-**What it is.** One outreach agent that takes a lead (email only, WhatsApp only, or both) through an intake gate and runs the right channel. Email is a 4-email sequence sent by a cold-email tool (Instantly). WhatsApp is an opt-in template with two buttons, a reminder and a chatbot. The agent records every event, filters bots, scores engagement, classifies replies with Claude, books demos through Cal.com and alerts sales in Slack. Both channels share **one lead record and one state**. Lead sourcing is out of scope: the agent starts at intake.
+**What it is.** One outreach agent that takes a lead (email only, WhatsApp only, or both) through an intake gate and runs the right channel. Email is a 4-email sequence sent by a cold-email tool (Instantly). WhatsApp is an opt-in template with two buttons, a reminder and a chatbot. The agent records every event, filters bots, scores engagement, classifies replies with Claude, books demos through Cal.com and alerts sales in Microsoft Teams. Both channels share **one lead record and one state**. Lead sourcing is out of scope: the agent starts at intake.
 
 Branch: `feat/outreach-agent-v1`. Plan: `docs/superpowers/plans/2026-11-12-outreach-agent-v1.md`. Spec: `docs/Outreach_Agent_Plan_v2.md`.
 
@@ -19,14 +19,14 @@ Branch: `feat/outreach-agent-v1`. Plan: `docs/superpowers/plans/2026-11-12-outre
 | 8 | WhatsApp client + webhook | ✅ Done (1 fix round, review clean) | `f0fd2e5`, `61cdaa3`, `66b0d48` | 49 | [task-08](tasks/task-08-whatsapp-client-webhook.md) |
 | 9 | Claude reply classifier | ✅ Done (1 fix round, review clean) | `af4022a`, `721ea7b` | 70 | [task-09](tasks/task-09-reply-classifier.md) |
 | 10 | WhatsApp chatbot + human takeover | ✅ Done (2 fix rounds, review clean) | `f792478`, `e76a81b`, `739846b` | 107 | [task-10](tasks/task-10-chatbot-handoff.md) |
-| 10b | Replace Slack with Microsoft Teams (alerts + sales commands) | 🔨 Building | none | 0 | [decisions](decisions.md#task-10b-microsoft-teams-instead-of-slack) |
+| 10b | Replace Slack with Microsoft Teams (alerts + sales commands) | ✅ Done (1 fix round, verified) | `89df43c`, `98867c1` | 77 | [task-10b](tasks/task-10b-teams.md) |
 | 11 | Cal.com booking + handoff | ⏳ To do | none | 0 | [task-11](tasks/task-11-calcom-booking.md) |
 | 12 | Outreach starter + worker + mailbox health | ⏳ To do | none | 0 | [task-12](tasks/task-12-worker-health.md) |
 | 13 | Deploy + end-to-end test | ⏳ To do | none | 0 | [task-13](tasks/task-13-deploy-e2e.md) |
 
-**Tests now:** 748 passing (`.venv/bin/pytest -q`).
+**Tests now:** 825 passing (`.venv/bin/pytest -q`).
 
-**What's next:** Task 10b (Slack → Microsoft Teams, decided 2026-11-13) is being built. Then Task 11 (Cal.com booking), **Task 12a (new: run Claude calls in the background, not inside webhook requests)**, Task 12 (starter + worker), Task 13 (deploy + end-to-end test). Cut line if time runs short: Task 10's chatbot part; `ASK_QUESTION` then goes straight to human takeover.
+**What's next:** Task 11 (Cal.com booking) is being built, **Task 12a (new: run Claude calls in the background, not inside webhook requests)**, Task 12 (starter + worker), Task 13 (deploy + end-to-end test). Cut line if time runs short: Task 10's chatbot part; `ASK_QUESTION` then goes straight to human takeover.
 
 ## Files in this folder
 

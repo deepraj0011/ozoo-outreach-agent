@@ -12,7 +12,7 @@ flowchart TD
         CL[Link clicks and unsubscribe page] -->|GET /r, GET+POST /u| APP
         WAW[Meta WhatsApp webhooks]:::planned -->|/webhooks/whatsapp| APP
         CAW[Cal.com webhooks]:::planned -->|/webhooks/cal| APP
-        SLC[Slack commands]:::planned -->|/slack/commands| APP
+        TMC[Teams outgoing webhook] -->|/teams/commands| APP
     end
     APP[app.py routes] --> INTAKE[intake.py + verify.py + channels.py]
     APP --> INGEST[ingest.py]
@@ -23,7 +23,7 @@ flowchart TD
     STATES --> DB[(db.py + models.py)]
     ACTIONS --> PORTS{{Deps ports}}
     PORTS --> EMAIL[emailtool: Instantly adapter]
-    PORTS --> SLACK[alerts.py SlackAlerter]
+    PORTS --> TEAMS[alerts.py TeamsAlerter]
     PORTS --> WA[WhatsApp client]:::planned
     PORTS --> CLS[Claude classifier]:::planned
     PORTS --> CHAT[Claude chatbot + handoff]:::planned
@@ -43,9 +43,9 @@ flowchart TD
 4. **Match lead:** by `lead_id`, tool lead id, email, phone, then (replies only) company domain. No match gives an `unmatched_*` alert.
 5. **Verdict:** bot filter marks opens/clicks `human`, `bot` or `machine`. Only `human` events change the flow.
 6. **Decide:** `rules.decide()` is pure. It takes snapshots of lead and event and returns an ordered list of actions. No DB, no I/O.
-7. **Execute:** `actions.execute()` applies each action. State changes go through `states.transition()`. External calls (email tool, WhatsApp, Slack) go through `Deps` ports. A failing port becomes an `integration_error` row and the rest continues.
+7. **Execute:** `actions.execute()` applies each action. State changes go through `states.transition()`. External calls (email tool, WhatsApp, Teams) go through `Deps` ports. A failing port becomes an `integration_error` row and the rest continues.
 8. **Commit:** ingest owns the commit. Any error rolls back and returns 500 so the provider retries.
-9. **Slack after commit:** alerts are written as rows during step 7, but posted to Slack only after the commit succeeds. Failed posts keep `posted_at` empty for a worker retry (task 12).
+9. **Teams after commit:** alerts are written as rows during step 7, but posted to Microsoft Teams (Workflows webhook, Adaptive Card) only after the commit succeeds. Failed posts keep `posted_at` empty for a worker retry (task 12).
 
 Clicks are stored unprocessed and decided later by the worker (30 s settle window, so two-link scanner bursts can be spotted). The unsubscribe click is the exception: the GET only redirects to a confirm page, and the POST opts the lead out.
 
@@ -69,14 +69,14 @@ Clicks are stored unprocessed and decided later by the worker (30 s settle windo
 | `rules.py` | `decide()`: events to actions, both channels | Task 5 | yes |
 | `http.py` | Retrying HTTP helper with timeouts | Task 6 | yes |
 | `emailtool/base.py`, `fake.py`, `instantly.py` | Email tool port, test fake, Instantly adapter | Task 6 | yes |
-| `alerts.py` | Alert rows plus Slack post after commit | Task 6 | yes |
+| `alerts.py` | Alert rows plus Teams post after commit; `teams_escape` makes third-party text inert | Task 6 | yes |
 | `ingest.py` | Shared event pipeline: dedup, match, verdict, decide, execute, commit | Task 6 | yes |
 | `app.py` | FastAPI: `/webhooks/email`, `/r`, `/u`, `/intake`, `/healthz` | Task 6 | yes (more routes planned) |
 | `unsubscribe_page.py` | Confirm and success HTML for `/u/{token}` | Task 6 | yes |
 | `sequencer.py`, `templates/emails.yaml` | Email enroll, variants, end-of-sequence routing | Task 7 | yes |
 | `whatsapp/client.py`, `whatsapp/webhook.py` | Cloud API client and webhook parser | Task 8 | planned |
 | `classifier.py` | Claude reply classification | Task 9 | planned |
-| `chatbot.py`, `handoff.py` | WhatsApp bot, Slack takeover | Task 10 | planned |
+| `chatbot.py`, `handoff.py` | WhatsApp bot, Teams takeover (`/teams/commands`) | Task 10, 10b | yes |
 | `booking.py` | Cal.com events, fit routing, handoff summary | Task 11 | planned |
 | `outreach.py`, `worker.py`, `health.py` | Start/switch channel, 60 s tick, mailbox health | Task 12 | planned |
 | `Dockerfile`, runbook, e2e checklist | Deploy and verify | Task 13 | planned |

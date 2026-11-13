@@ -2,7 +2,7 @@
 
 ## Status
 ✅ Done after 2 fix rounds; the second review was clean. Commits: `f792478`, `e76a81b`, `739846b`. Tests: 641 → 748.
-**Being replaced:** in Task 10b, Slack becomes Microsoft Teams (the office uses Teams). The chatbot logic stays as it is. Only the alert channel and the sales commands change.
+**Updated in Task 10b:** Slack was replaced by Microsoft Teams. Sales now type `@OzooAgent wa <lead_id> <text>` / `@OzooAgent done <lead_id>` in the sales channel; alerts arrive as Teams cards. Any Slack wording below is historical.
 
 ## What it does (plain language)
 - **Answers questions.** When a lead asks a question on WhatsApp, Claude answers from `kb/ozoo_kb.md`.
@@ -16,7 +16,7 @@
 - **Escaping.** Lead text is never trusted in alerts. All alert text is escaped in one place, at the moment it is posted.
 
 ## Files
-`src/outreach/chatbot.py`, `src/outreach/handoff.py`, `src/outreach/alerts.py` (escaping), and the `POST /slack/commands` route in `app.py`. Also `templates/whatsapp.yaml` (`turn_limit`, `handoff_notice`), `kb/ozoo_kb.md`, `tests/test_chatbot.py` and `tests/test_handoff.py`.
+`src/outreach/chatbot.py`, `src/outreach/handoff.py`, `src/outreach/alerts.py` (escaping), and the `POST /teams/commands` route (originally `/slack/commands`) in `app.py`. Also `templates/whatsapp.yaml` (`turn_limit`, `handoff_notice`), `kb/ozoo_kb.md`, `tests/test_chatbot.py` and `tests/test_handoff.py`.
 
 ## Key functions and interfaces
 - `bot_reply(...) -> BotResult`. It never raises; any failure becomes `wants_human`.

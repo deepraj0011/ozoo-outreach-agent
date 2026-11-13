@@ -1,6 +1,8 @@
 # Task 09: Claude reply classifier
 
 ## Status
+> Note: Slack was replaced by Microsoft Teams in Task 10b (2026-11-13). "Slack" below is historical; read it as Teams (`TeamsAlerter`, `/teams/commands`).
+
 ⏳ To do. Not started.
 
 ## What it does (plain language)

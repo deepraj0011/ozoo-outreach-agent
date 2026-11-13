@@ -4,7 +4,7 @@
 ⏳ To do. Not started.
 
 ## What it does (plain language)
-Packages the app (Dockerfile), deploys it, configures the external tools (email tool, Meta, Cal.com, Slack), documents it in a runbook and runs an end-to-end checklist. A simulated e2e test with fakes is built locally. The real-inbox run needs real accounts and DNS, so the user does it.
+Packages the app (Dockerfile), deploys it, configures the external tools (email tool, Meta, Cal.com, Microsoft Teams), documents it in a runbook and runs an end-to-end checklist. A simulated e2e test with fakes is built locally. The real-inbox run needs real accounts and DNS, so the user does it.
 
 ## Files
 Planned: `Dockerfile`, `docs/runbook.md`, `scripts/e2e_checklist.md`, `tests/test_e2e_sim.py`.

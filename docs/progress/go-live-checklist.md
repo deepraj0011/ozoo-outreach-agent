@@ -42,8 +42,12 @@ Nothing below is done yet. Do not send to real prospects until all boxes are tic
 
 - [ ] Disable or redact uvicorn access logs (they record `/r` and `/u` tokens). Document X-Forwarded-For trust.
 - [ ] App logging keeps `httpx` at WARNING or higher (no email or key in logs).
-- [ ] Slack incoming webhook plus slash commands `/wa` and `/wa-done`.
-- [ ] Worker running (`RUN_WORKER=1`) and retrying Slack alerts with `posted_at` empty (Task 12).
+- [ ] Microsoft Teams: a team member creates the Workflows flow "When a Teams webhook request is received → post card to the sales channel" and puts its URL in `TEAMS_WEBHOOK_URL` (keep it secret; the flow stops if its owner leaves).
+- [ ] Teams admin allows outgoing webhooks / custom apps in the sales team (some tenants block them).
+- [ ] In the sales team: Manage team → Apps → Create an outgoing webhook named `OzooAgent`, callback `https://<host>/teams/commands`; copy its security token into `TEAMS_OUTGOING_SECRET`.
+- [ ] Set `TEAMS_TENANT_ID`, `TEAMS_SALES_CHANNEL_ID`, `TEAMS_ALLOWED_AAD_IDS` (sales people's Entra object ids).
+- [ ] Verify on the real tenant: `@OzooAgent help` replies; signature passes; `channelData.channel.id` is present; a test alert card renders and returns 202; lookalike characters display acceptably.
+- [ ] Worker running (`RUN_WORKER=1`) and retrying Teams alerts with `posted_at` empty (Task 12).
 - [ ] Postgres in production (SQLite workarounds are not applied there). Plan a migration tool; the `Alert.posted_at` column has none.
 - [ ] Marketing replaces placeholder email and WhatsApp copy (`# MARKETING: replace`) and fills `kb/ozoo_kb.md`.
 - [ ] Add observed scanner IP ranges to `config/scanners.yaml`; load it with an absolute path.

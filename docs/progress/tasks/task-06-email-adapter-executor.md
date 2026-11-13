@@ -1,6 +1,8 @@
 # Task 06: Email adapter, webhooks, click redirect, executor
 
 ## Status
+> Note: Slack was replaced by Microsoft Teams in Task 10b (2026-11-13). "Slack" below is historical; read it as Teams (`TeamsAlerter`, `/teams/commands`).
+
 ✅ Done. Review clean after 2 fix rounds (`a521f9b`, `4cb3162`).
 
 ## What it does (plain language)
