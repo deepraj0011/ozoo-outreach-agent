@@ -130,3 +130,19 @@ Decided on 2026-11-13: the office uses Microsoft Teams, not Slack. Slack is repl
 |---|---|---|
 | Reply classification and the chatbot use one `LLMClient` port. The provider is set in config with `LLM_PROVIDER` = `anthropic`, `openai`, `azure_openai` or `openai_compatible` (Gemini, Mistral, Groq, OpenRouter, Ollama, vLLM). Models are set separately for the classifier and the chat. | The company decides which model to use. | n/a |
 | The safety checks stay outside the model: any model error goes to unsure / a human, and the price, link and referral checks and prompt-injection handling stay unchanged. | The same safety holds whatever the provider. | n/a |
+
+## Final review (2026-11-13)
+
+Verdict: safe for local testing. Real sending is blocked until Instantly is verified on a trial account.
+
+| Decision | Why | Cost if wrong |
+|---|---|---|
+| A failed stop at the email tool is retried (5 min, 30 min, 2 h, then every 6 h) and sends an immediate Teams alert. Any `sent` event for a lead that has left the sequence re-issues the stop. Opt-outs are also added to the tool's block list. End of sequence stops the tool lead. | Otherwise opted-out or replying leads keep getting cold emails. | Without it, emails go to opted-out people. |
+| The lead row is locked and refreshed before ingest and before each worker action. An AI job re-checks the lead after the AI call and discards its result if the lead changed. | Stops a background job from undoing a booking, and stops a worker from acting on a stale copy. | n/a |
+| A transient WhatsApp failure is retried with backoff. A permanent failure falls back to email, or to nurture. A failed email enrolment goes to nurture after 3 tries. A `stuck_leads` alert is the safety net. | No lead stays stuck forever. | n/a |
+| Teams commands `retry`, `nurture`, `close` and `status` were added. | Sales need a way to recover leads in production. | n/a |
+| Once-only sends: booking slots at most once per 7 days, no repeat booking link within 24 h, and an email "enrol attempted" marker with a lookup before re-adding. | Avoids repeat messages to prospects. | n/a |
+| If the email verifier itself fails, the lead is held (`verify_error`) and retried. It is never sendable. | "Every email is verified." | n/a |
+| Local mode with real email or WhatsApp refuses time speed-ups unless `ALLOW_REAL_LOCAL=1` is set. | Real prospects must never get the 48 h reminder within minutes. | n/a |
+| Ops: `outreach` logging is configured, the access log is off locally, `X-Forwarded-For` is trusted only with `TRUST_PROXY_HEADERS=1`, and dependencies are pinned (`requirements.lock`). | Go-live hygiene. | n/a |
+| Deferred to the Instantly trial account: per-lead and campaign pause, and the block, find and delete semantics. Database migrations are deferred to go-live. | Needs real accounts. | n/a |

@@ -58,3 +58,18 @@ Nothing below is done yet. Do not send to real prospects until all boxes are tic
 ## Added 2026-11-13 (Tasks 9b, 11)
 - [ ] **AI provider:** choose `LLM_PROVIDER` and the models. Check the provider's data-processing terms and data location, because lead reply text is sent to it. Use a self-hosted model if the data must stay in-house.
 - [ ] **Cal.com, real account:** confirm that `metadata[lead]` arrives through the routing form, that a reschedule carries the new booking id, the form answer keys (`response`/`value`), the phone fields and the signature format. Use dropdowns for company size and timeline.
+
+## Added by the final review (2026-11-13)
+- [ ] **Instantly trial account.** Confirm:
+  - the `sent` webhook carries the step number;
+  - which field marks a bounce as hard or soft;
+  - the event ids are unique per event;
+  - DELETE stops the lead, and a 404 means it is already stopped;
+  - the block-list endpoint;
+  - lead lookup by email;
+  - per-lead and campaign pause.
+  
+  Also turn on Instantly's own "stop on reply" as a backstop.
+- [ ] Add database migrations (Alembic) before the first production database.
+- [ ] Production: disable or redact the uvicorn access log (it contains `/r/` and `/u/` tokens). Set `TRUST_PROXY_HEADERS=1` only behind a trusted proxy.
+- [ ] A lead paused because a colleague engaged needs a re-enrol path when it resumes, because Instantly has no resume.
