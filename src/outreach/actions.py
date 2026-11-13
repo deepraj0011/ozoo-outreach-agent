@@ -197,7 +197,7 @@ class OutreachPort(Protocol):
 
 
 class Alerter(Protocol):
-    def send(self, kind: str, text: str, lead: Optional[Lead] = None,
+    def send(self, kind: str, text: str, lead: Optional[Lead], now: datetime,
              session: Optional[Session] = None) -> None: ...
 
 
@@ -213,6 +213,13 @@ class Deps:
 
 
 _FAILED = object()
+
+
+def record_integration_error(session: Session, lead_id: Optional[int], text: str, now: datetime) -> None:
+    """Written straight to the DB, not via Slack (which may be what is failing). posted_at
+    stays NULL so the worker's unposted-alert digest surfaces it."""
+    session.add(AlertRow(lead_id=lead_id, kind="integration_error", text=text, created_at=now))
+    session.flush()
 
 
 class _Run:
@@ -235,11 +242,8 @@ class _Run:
         return ld.variant_flags
 
     def integration_error(self, what: str, lead: Optional[Lead] = None) -> None:
-        """Recorded straight to the DB (not via Slack, which may be what is failing)."""
         ld = lead or self.lead
-        self.session.add(AlertRow(lead_id=ld.id, kind="integration_error",
-                                  text=f"lead {ld.id}: {what}", created_at=self.now))
-        self.session.flush()
+        record_integration_error(self.session, ld.id, f"lead {ld.id}: {what}", self.now)
 
     def external(self, what: str, fn: Callable[..., Any], *args: Any,
                  lead: Optional[Lead] = None) -> Any:
@@ -254,7 +258,7 @@ class _Run:
             return _FAILED
 
     def alert(self, kind: str, text: str) -> None:
-        self.external("alerter.send", self.deps.alerter.send, kind, text, self.lead, self.session)
+        self.external("alerter.send", self.deps.alerter.send, kind, text, self.lead, self.now, self.session)
 
     def set_state(self, lead: Lead, to: Any, reason: str) -> bool:
         frm = lead.state
@@ -356,8 +360,9 @@ class _Run:
         elif isinstance(a, SetFlag):
             self.flags()[a.key] = a.value
         elif isinstance(a, SetStepSent):
-            lead.step_sent = max(lead.step_sent or 0, a.step)
-            lead.last_sent_at = self.event_time
+            if a.step >= (lead.step_sent or 0):  # a late "sent" for an earlier step is ignored
+                lead.step_sent = a.step
+                lead.last_sent_at = self.event_time
         elif isinstance(a, Alert):
             self.alert(a.kind, a.text)
         elif isinstance(a, PauseColleagues):

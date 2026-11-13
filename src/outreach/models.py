@@ -119,4 +119,5 @@ class Alert(Base):
     kind: Mapped[str] = mapped_column(String(50))
     text: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    posted_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime)  # NULL = not on Slack yet
     resolved_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime)

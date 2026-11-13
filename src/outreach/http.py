@@ -16,6 +16,10 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 DEFAULT_TIMEOUT = 10.0
 RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
 RETRY_AFTER_CAP = 10.0
+# Non-idempotent requests (e.g. sending an email) retry only when the request surely never
+# reached / was refused by the server, so a retry cannot double-send.
+SAFE_RETRY_STATUSES = frozenset({429, 503})
+SAFE_RETRY_EXCEPTIONS = (httpx.ConnectError, httpx.ConnectTimeout)
 
 
 def make_client(**kw: Any) -> httpx.Client:
@@ -42,23 +46,29 @@ def request_with_retry(
     attempts: int = 3,
     backoff: Sequence[float] = (0.5, 1.0, 2.0),
     sleep: Callable[[float], None] = time.sleep,
+    idempotent: bool = True,
     **kw: Any,
 ) -> httpx.Response:
     """Send a request, retrying transport errors / timeouts and 429/5xx.
 
     Returns the last response (never raise_for_status). If every attempt failed at the
     transport level, the last exception is re-raised.
+
+    idempotent=False (POSTs that send something): retry only on ConnectError / ConnectTimeout
+    and 429 / 503; never on read timeouts or 500 / 502 / 504.
     """
+    retry_statuses = RETRY_STATUSES if idempotent else SAFE_RETRY_STATUSES
+    retry_excs = (httpx.TransportError, httpx.TimeoutException) if idempotent else SAFE_RETRY_EXCEPTIONS
     last_exc: Optional[Exception] = None
     resp: Optional[httpx.Response] = None
     for i in range(attempts):
         try:
             resp = client.request(method, url, **kw)
             last_exc = None
-        except (httpx.TransportError, httpx.TimeoutException) as exc:
+        except retry_excs as exc:
             resp, last_exc = None, exc
         final = i == attempts - 1
-        if resp is not None and resp.status_code not in RETRY_STATUSES:
+        if resp is not None and resp.status_code not in retry_statuses:
             return resp
         if final:
             break

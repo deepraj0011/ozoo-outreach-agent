@@ -149,7 +149,7 @@ class InstantlyTool:
             "company_name": lead.company,
             "custom_variables": dict(variables),
         }
-        return str(self._ok("POST", "/leads", json=body).json()["id"])
+        return str(self._ok("POST", "/leads", json=body, idempotent=False).json()["id"])
 
     def update_variables(self, tool_lead_id: str, variables: Mapping[str, str]) -> None:
         # UNVERIFIED: whether in-flight steps pick up changed custom_variables.
@@ -184,7 +184,7 @@ class InstantlyTool:
                 "eaccount": last.get("eaccount"),
                 "subject": last.get("subject") or "",
                 "body": {"text": body},
-            })
+            }, idempotent=False)
             return 200 <= r.status_code < 300
         except (httpx.HTTPError, ValueError, KeyError, AttributeError) as exc:
             logger.warning("instantly reply failed: %s", type(exc).__name__)

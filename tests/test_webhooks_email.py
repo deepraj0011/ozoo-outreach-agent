@@ -105,6 +105,7 @@ def test_reply_matched_by_tool_lead_id(env):
     assert post(client, fixture_body("tool_reply.json", lead_id="T-77")).status_code == 200
     ev = s.scalars(select(Event).where(Event.kind == "reply")).one()
     assert ev.lead_id == by_id.id and ev.verdict == "human"
+    assert "matched_by" not in ev.data and "sender_email" not in ev.data
     s.expire_all()
     assert s.get(Lead, by_id.id).state == "engaged"
 
@@ -117,6 +118,8 @@ def test_reply_from_colleague_matches_by_domain(env):
     assert post(client, fixture_body("tool_reply.json", lead_email="colleague@BigCo.com")).status_code == 200
     ev = s.scalars(select(Event).where(Event.kind == "reply")).one()
     assert ev.lead_id == newer.id
+    assert ev.data["matched_by"] == "domain"
+    assert ev.data["sender_email"] == "colleague@bigco.com"
     s.expire_all()
     assert s.get(Lead, newer.id).state == "engaged"
     assert s.get(Lead, older.id).state == "paused"  # PauseColleagues
@@ -325,3 +328,13 @@ def test_ingest_wa_read_human(session):
     ingest(session, [nev(channel="whatsapp", kind="wa_read", phone="+919812345678")], make_deps(), NOW, SCANNERS)
     assert session.scalars(select(Event)).one().verdict == "human"
     assert session.get(Lead, lead.id).score == 1
+
+
+def test_ingest_unmatched_alert_failure_isolated(session):
+    deps = make_deps()
+    deps.alerter.fail.add("send")
+    ingest(session, [nev(kind="reply", email="nobody@nowhere.io", data={"text": "hi"})], deps, NOW, SCANNERS)
+    ev = session.scalars(select(Event)).one()
+    assert ev.processed and ev.lead_id is None
+    errs = session.scalars(select(AlertRow).where(AlertRow.kind == "integration_error")).all()
+    assert len(errs) == 1 and errs[0].lead_id is None and "nobody" not in errs[0].text

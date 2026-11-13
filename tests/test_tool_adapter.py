@@ -172,3 +172,15 @@ def test_mailbox_stats():
     respx.get(f"{BASE_URL}/campaigns/analytics").mock(return_value=httpx.Response(
         200, json=[{"emails_sent_count": 120, "bounced_count": 4}]))
     assert tool().mailbox_stats("camp-1", TS) == {"sent": 120, "bounced": 4}
+
+
+@respx.mock
+def test_add_lead_and_reply_not_retried_on_500():
+    leads = respx.post(f"{BASE_URL}/leads").mock(return_value=httpx.Response(500))
+    with pytest.raises(httpx.HTTPStatusError):
+        tool().add_lead("camp-1", _Lead(), {})
+    assert leads.call_count == 1
+    respx.get(f"{BASE_URL}/emails").mock(return_value=httpx.Response(200, json={"items": [{"id": "E-1"}]}))
+    reply = respx.post(f"{BASE_URL}/emails/reply").mock(side_effect=httpx.ReadTimeout("slow"))
+    assert tool().reply("L-1", "x") is False
+    assert reply.call_count == 1

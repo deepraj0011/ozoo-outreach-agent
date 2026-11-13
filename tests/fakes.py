@@ -92,11 +92,11 @@ class FakeOutreach(Recorder):
 class FakeAlerter(Recorder):
     """Mirrors SlackAlerter's contract: writes the Alert row, records instead of posting."""
 
-    def send(self, kind: str, text: str, lead=None, session=None) -> None:
+    def send(self, kind: str, text: str, lead, now, session=None) -> None:
         self._rec("send", kind, lead.id if lead is not None else None)
         if session is not None:
             session.add(AlertRow(lead_id=lead.id if lead is not None else None, kind=kind,
-                                 text=text, created_at=datetime(2026, 11, 12, tzinfo=timezone.utc)))
+                                 text=text, created_at=now))
             session.flush()
 
 

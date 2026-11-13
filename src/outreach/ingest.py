@@ -6,13 +6,13 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
-from typing import Iterable, Optional
+from typing import Iterable, Optional, Tuple
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .actions import Deps, execute
+from .actions import Deps, execute, record_integration_error
 from .botfilter import Scanners, classify_event
 from .emailtool.base import NormalizedEvent
 from .intake import FREE_MAIL_DOMAINS
@@ -31,35 +31,40 @@ UA_MAX = 512
 IP_MAX = 64
 
 
-def match_lead(session: Session, ev: NormalizedEvent) -> Optional[Lead]:
-    """lead_id -> tool_lead_id -> exact email -> exact phone -> (reply only) company domain."""
+def match_lead(session: Session, ev: NormalizedEvent) -> Tuple[Optional[Lead], Optional[str]]:
+    """lead_id -> tool_lead_id -> exact email -> exact phone -> (reply only) company domain.
+
+    Returns (lead, how) with how in lead_id|tool_lead_id|email|phone|domain, or (None, None).
+    """
     if ev.lead_id is not None:
         lead = session.get(Lead, ev.lead_id)
         if lead is not None:
-            return lead
+            return lead, "lead_id"
     if ev.tool_lead_id:
         lead = session.scalar(select(Lead).where(Lead.tool_lead_id == ev.tool_lead_id).limit(1))
         if lead is not None:
-            return lead
+            return lead, "tool_lead_id"
     email = ev.email.strip().lower() if ev.email else None
     if email:
         lead = session.scalar(select(Lead).where(Lead.email == email).limit(1))
         if lead is not None:
-            return lead
+            return lead, "email"
     if ev.phone:
         lead = session.scalar(select(Lead).where(Lead.phone == ev.phone).limit(1))
         if lead is not None:
-            return lead
+            return lead, "phone"
     if ev.kind == "reply" and email and "@" in email:
         domain = email.rsplit("@", 1)[1]
         if domain not in FREE_MAIL_DOMAINS:
-            return session.scalar(
+            lead = session.scalar(
                 select(Lead)
                 .where(Lead.domain == domain, Lead.state.not_in(_TERMINAL_VALUES))
                 .order_by(Lead.created_at.desc(), Lead.id.desc())
                 .limit(1)
             )
-    return None
+            if lead is not None:
+                return lead, "domain"
+    return None, None
 
 
 def _verdict(row: Event, lead: Optional[Lead], scanners: Scanners) -> Optional[str]:
@@ -87,7 +92,12 @@ def _insert(session: Session, row: Event) -> bool:
 
 
 def _ingest_one(session: Session, ev: NormalizedEvent, deps: Deps, now: datetime, scanners: Scanners) -> None:
-    lead = match_lead(session, ev)
+    lead, how = match_lead(session, ev)
+    data = dict(ev.data or {})
+    if how == "domain":
+        # a colleague replied: keep who actually wrote (DB only, never logged)
+        data["matched_by"] = "domain"
+        data["sender_email"] = ev.email.strip().lower() if ev.email else None
     row = Event(
         lead_id=lead.id if lead is not None else None,
         channel=ev.channel,
@@ -100,7 +110,7 @@ def _ingest_one(session: Session, ev: NormalizedEvent, deps: Deps, now: datetime
         ip=ev.ip[:IP_MAX] if ev.ip else None,
         user_agent=ev.user_agent[:UA_MAX] if ev.user_agent else None,
         processed=False,
-        data=dict(ev.data or {}),
+        data=data,
     )
     if not _insert(session, row):
         return
@@ -111,8 +121,14 @@ def _ingest_one(session: Session, ev: NormalizedEvent, deps: Deps, now: datetime
         if alert_kind:
             sender = ev.email or ev.phone or "unknown sender"
             # Sender address goes to the Alert row / Slack (humans must find it), never to logs.
-            deps.alerter.send(alert_kind, f"{ev.kind} event #{row.id} from {sender} matches no lead",
-                              None, session)
+            try:
+                with session.begin_nested():
+                    deps.alerter.send(alert_kind, f"{ev.kind} event #{row.id} from {sender} matches no lead",
+                                      None, now, session)
+            except Exception as exc:  # noqa: BLE001 - same isolation as executor port calls
+                logger.warning("event %s: alerter.send failed: %s", row.id, type(exc).__name__)
+                record_integration_error(session, None, f"event {row.id}: alerter.send failed: "
+                                         f"{type(exc).__name__}", now)
         logger.info("event %s (%s) matched no lead", row.id, ev.kind)
         row.processed = True
         return

@@ -152,7 +152,7 @@ def test_score_flag_step_sent(session):
     execute(session, lead, [AddScore(2), SetFlag("human_opens", 1), SetStepSent(1)], make_deps(), NOW, event=ev)
     assert lead.score == 5 and lead.last_human_event_at == NOW - timedelta(hours=1)
     assert lead.variant_flags["human_opens"] == 1
-    assert lead.step_sent == 2 and lead.last_sent_at == NOW - timedelta(hours=1)
+    assert lead.step_sent == 2 and lead.last_sent_at is None  # late step 1 ignored
     execute(session, lead, [SetStepSent(3), AddScore(1)], make_deps(), NOW)
     assert lead.step_sent == 3 and lead.last_sent_at == NOW and lead.last_human_event_at == NOW
 
@@ -247,3 +247,11 @@ def test_external_db_failure_rolled_back_to_savepoint(session):
 def test_deps_is_dataclass_with_optional_callables():
     d = make_deps()
     assert isinstance(d, Deps) and d.classify is None and d.bot_reply is None and d.handoff is None
+
+
+def test_late_sent_for_earlier_step_ignored(session):
+    lead = make_lead(session, step_sent=3, last_sent_at=NOW)
+    ev = Event(lead_id=lead.id, channel="email", kind="sent", occurred_at=NOW - timedelta(days=5),
+               received_at=NOW, data={})
+    execute(session, lead, [SetStepSent(2)], make_deps(), NOW, event=ev)
+    assert lead.step_sent == 3 and lead.last_sent_at == NOW

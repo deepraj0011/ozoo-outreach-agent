@@ -63,3 +63,35 @@ def test_request_with_retry_no_retry_on_4xx():
 def test_make_client_has_10s_timeout():
     c = make_client()
     assert c.timeout.read == 10.0 and c.timeout.connect == 10.0
+
+
+@respx.mock
+def test_non_idempotent_no_retry_on_read_timeout():
+    route = respx.post(URL).mock(side_effect=httpx.ReadTimeout("slow"))
+    with pytest.raises(httpx.ReadTimeout):
+        request_with_retry(_client(), "POST", URL, idempotent=False, sleep=lambda s: None)
+    assert route.call_count == 1
+
+
+@respx.mock
+def test_non_idempotent_no_retry_on_500():
+    for status in (500, 502, 504):
+        route = respx.post(URL).mock(return_value=httpx.Response(status))
+        resp = request_with_retry(_client(), "POST", URL, idempotent=False, sleep=lambda s: None)
+        assert resp.status_code == status and route.call_count == 1
+        respx.reset()
+
+
+@respx.mock
+def test_non_idempotent_retries_connect_error():
+    route = respx.post(URL).mock(side_effect=[httpx.ConnectError("x"), httpx.ConnectTimeout("x"),
+                                              httpx.Response(200)])
+    assert request_with_retry(_client(), "POST", URL, idempotent=False, sleep=lambda s: None).status_code == 200
+    assert route.call_count == 3
+
+
+@respx.mock
+def test_non_idempotent_retries_429_and_503():
+    route = respx.post(URL).mock(side_effect=[httpx.Response(429), httpx.Response(503), httpx.Response(201)])
+    assert request_with_retry(_client(), "POST", URL, idempotent=False, sleep=lambda s: None).status_code == 201
+    assert route.call_count == 3
