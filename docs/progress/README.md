@@ -17,15 +17,15 @@ Branch: `feat/outreach-agent-v1`. Plan: `docs/superpowers/plans/2026-11-12-outre
 | 7 | Email sequencer + templates | ✅ Done (review clean) | `69b8fcc` | 24 | [task-07](tasks/task-07-email-sequencer.md) |
 | R | Review update (plan v2.1): no email opt-in, opens ignored, no WhatsApp-later, colleague restart, EU hold | ✅ Done | see git log | 41 | [decisions](decisions.md#review-update-2026-11-13-plan-v21) |
 | 8 | WhatsApp client + webhook | ✅ Done (1 fix round, review clean) | `f0fd2e5`, `61cdaa3`, `66b0d48` | 49 | [task-08](tasks/task-08-whatsapp-client-webhook.md) |
-| 9 | Claude reply classifier | 🔨 Building | none | 0 | [task-09](tasks/task-09-reply-classifier.md) |
-| 10 | WhatsApp chatbot + human takeover | ⏳ To do | none | 0 | [task-10](tasks/task-10-chatbot-handoff.md) |
+| 9 | Claude reply classifier | ✅ Done (1 fix round, review clean) | `af4022a`, `721ea7b` | 70 | [task-09](tasks/task-09-reply-classifier.md) |
+| 10 | WhatsApp chatbot + human takeover | 🔨 Building | none | 0 | [task-10](tasks/task-10-chatbot-handoff.md) |
 | 11 | Cal.com booking + handoff | ⏳ To do | none | 0 | [task-11](tasks/task-11-calcom-booking.md) |
 | 12 | Outreach starter + worker + mailbox health | ⏳ To do | none | 0 | [task-12](tasks/task-12-worker-health.md) |
 | 13 | Deploy + end-to-end test | ⏳ To do | none | 0 | [task-13](tasks/task-13-deploy-e2e.md) |
 
-**Tests now:** 571 passing (`.venv/bin/pytest -q`).
+**Tests now:** 641 passing (`.venv/bin/pytest -q`).
 
-**What's next:** Task 9 (Claude reply classifier) is being built on top of the plan v2.1 review changes (`0362a60`: no email opt-in, opens logged only, EU email hold, colleague restart rules). Task 10 (WhatsApp chatbot + human takeover) is next. Cut line if time runs short: Task 10 (chatbot) is the one to drop; `ASK_QUESTION` then goes straight to human takeover.
+**What's next:** Task 10 (WhatsApp chatbot + Slack human takeover) is being built. Then Task 11 (Cal.com booking), **Task 12a (new: run Claude calls in the background, not inside webhook requests)**, Task 12 (starter + worker), Task 13 (deploy + end-to-end test). Cut line if time runs short: Task 10's chatbot part; `ASK_QUESTION` then goes straight to human takeover.
 
 ## Files in this folder
 

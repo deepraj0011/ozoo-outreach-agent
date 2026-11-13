@@ -32,3 +32,21 @@ Not started. The carry-forward above is the main open item.
 
 ## Review update (2026-11-13)
 State-change reasons matter now: `holds.py` reads them to decide when paused colleagues restart. Use `not_now` (and set `nurture_until` to the later date), `not_interested`, `wrong_person`.
+
+
+---
+## Update — built and reviewed (2026-11-13)
+**Status:** ✅ Done, review clean after 1 fix round. Commits `af4022a`, `721ea7b`. 70 tests (`tests/test_classifier.py`).
+
+**What was built:** `src/outreach/classifier.py`.
+- `classify_reply(text, channel, client, model, today)` asks Claude (forced tool call, 20 s timeout, 2 retries) to label a reply as one of 8 classes. It **never raises**: any error, timeout, truncated or malformed answer, empty text, or confidence below 0.7 becomes `unsure` → a human reviews it.
+- Quoted email history is stripped before sending; the reply is wrapped in `<reply>` tags and treated as untrusted data.
+- `actions_for_class()` turns the label into actions: interested → qualifying + booking link; question → Slack draft (email) or chatbot (WhatsApp); not_now → nurture until the date they gave (max 1 year); not_interested → closed; unsubscribe → suppressed on both channels; out-of-office → paused until the return date (max 60 days); wrong person → new referral lead; unsure → human.
+- Colleague replies (matched by company domain) never trigger an automatic send.
+- New actions: `SetNurtureUntil`, `IntakeReferral`.
+
+**Security:** a referral contact is only added if it literally appears in the reply **and** is at the lead's own company domain (never gmail etc.). Otherwise a human decides. This stops a reply from making the agent email an outside address.
+
+**Links:** uses Task 5 rules (a reply triggers `Classify`), Task 6 executor/ingest, Task 3 intake (referrals). Used by Task 10 (WhatsApp questions go to the chatbot; WhatsApp "unsure" starts a human takeover) and Task 12a (moves this Claude call off the webhook request).
+
+**Open items:** Claude call currently runs inside the webhook request — fixed by new Task 12a.
