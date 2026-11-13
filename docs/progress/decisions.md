@@ -99,3 +99,16 @@ The final plan was reviewed; five points came back. Owner chose: restart rule "d
 | Paused colleagues restart per `holds.colleague_resume_at`: blocker still Engaged → 14 quiet days; Qualifying / Booked / HandedOff → stay paused; `not_now` → `nurture_until` (else +90 d); `sales_rejected` / `wrong_person` → now; not interested / unsubscribed / other closed or nurture → +90 d; no longer active → now. Waits for the latest of all active colleagues. `paused_by` is stored on the paused lead. | Review: the plan never said when paused colleagues restart. | A colleague restarts too early (annoys the account) or never (lost lead). |
 | A colleague in HANDED_OFF now also holds new intake leads at the same company. | Consistent with "sales owns the account". | New leads at a sales-owned account wait for sales. |
 | `holds.py` is called by the Task 12 tick; it does not run on its own yet. | Worker not built. | Holds don't release until Task 12 ships. |
+
+## Task 10b: Microsoft Teams instead of Slack
+
+Decided on 2026-11-13: the office uses Microsoft Teams, not Slack. Slack is replaced everywhere.
+
+| Decision | Why | Cost if wrong |
+|---|---|---|
+| Alerts post to a Teams **Workflows** webhook as an Adaptive Card. 2xx counts as posted. The flow is unchanged: store the Alert row, post after commit, the worker retries unposted rows. | Office 365 connector webhooks are retired. | Alerts missing if the flow owner leaves the team (go-live item). |
+| Sales commands use a Teams **outgoing webhook**: `@OzooAgent wa <lead_id> <text>` and `@OzooAgent done <lead_id>`. It is verified with HMAC-SHA256 of the raw body using the base64 security token, compared in constant time. | The Teams equivalent of Slack slash commands. | n/a |
+| Extra checks beyond the HMAC: the signed activity `timestamp` must be within ±5 minutes, a replayed activity `id` is dropped, and tenant, sales channel and sender (`aadObjectId`) must be on allow-lists. | The outgoing webhook HMAC has no timestamp of its own and works in every channel of the team. | Without these checks, a replayed or wrong-channel command could message a lead. |
+| The command is answered immediately (the 5 s limit) and the WhatsApp send runs in the background. | Teams times out at 5 seconds. This pulls a Task 12a item forward. | n/a |
+| Lead text in Teams cards is neutralised: markdown characters are swapped for safe lookalikes, URLs are defanged, and the text goes in its own TextBlock. | Adaptive Card markdown has no reliable escaping, and Teams auto-links URLs. | Lead text reads slightly oddly. |
+| Config: `TEAMS_WEBHOOK_URL` (secret, https), `TEAMS_OUTGOING_SECRET` (base64, non-blank), `TEAMS_TENANT_ID`, `TEAMS_SALES_CHANNEL_ID`, `TEAMS_ALLOWED_AAD_IDS`. | n/a | n/a |
