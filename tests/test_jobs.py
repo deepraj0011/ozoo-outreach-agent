@@ -318,7 +318,7 @@ def test_concurrent_claim_exactly_one_wins(tmp_path):
         t.start()
     for t in threads:
         t.join()
-    assert sorted(results) == [False, False, False, True]
+    assert sorted(results, key=str) == [1, None, None, None]  # one winner, with attempt 1
     s = factory()
     assert s.get(Job, job_id).attempts == 1 and s.get(Job, job_id).status == "running"
     s.close()
@@ -520,7 +520,6 @@ def test_bot_job_runs_after_takeover_was_released(env):
     lead = wa_lead(s, variant_flags={"takeover_at": NOW.isoformat(), "takeover_released": NOW.isoformat()})
     ingest(s, [wa_ev("wa:1")], deps, NOW, SCANNERS)
     assert run_job(factory, only_job(s).id, deps, clock(NOW)) == "done" and len(c.calls) == 1
-    assert lead.id
 
 
 @pytest.mark.parametrize("state", [S.SUPPRESSED, S.CLOSED, S.HANDED_OFF])
@@ -560,3 +559,242 @@ def test_run_job_logs_no_message_text(env, caplog):
     _, job = _classify_job(s, deps)
     assert run_job(factory, job.id, deps, clock(NOW)) == "done"
     assert SECRET_TEXT not in caplog.text
+
+
+# ------------------------------------------------------------------ review round: claim ownership
+
+
+def _set_job(factory, job_id, **values):
+    """A direct DB update from another session, as a concurrent worker would make it."""
+    from sqlalchemy import update as sa_update
+
+    s2 = factory()
+    s2.execute(sa_update(Job).where(Job.id == job_id).values(**values))
+    s2.commit()
+    s2.close()
+
+
+def test_claim_returns_the_claimed_attempt(env):
+    from outreach.jobs import _claim
+
+    _, factory, s = env
+    _, job = _classify_job(s, jdeps(classify=Counter().classify))
+    assert _claim(factory, job.id, NOW) == 1
+    assert _claim(factory, job.id, NOW) is None
+
+
+def test_stale_reset_while_original_runs_discards_the_original_apply(env):
+    """Run #1 is slow; meanwhile it is reset as stale and run #2 claims and finishes it. Run #1's
+    result must be thrown away: exactly one apply."""
+    _, factory, s = env
+    applied = []
+    state = {"n": 0}
+
+    def classify(session, lead, event, now):
+        state["n"] += 1
+        if state["n"] == 1:
+            session.commit()  # test scaffolding: free the shared connection for the "other worker"
+            _set_job(factory, job_id, status="pending", run_after=NOW)  # stale reset
+            assert run_job(factory, job_id, deps, clock(NOW)) == "done"  # run #2
+        return [SetState(S.QUALIFYING, f"run{state['n']}"), Alert("hot_lead", f"run {state['n']}")]
+
+    deps = jdeps(classify=classify)
+    deps.alerter.send = (lambda orig: lambda kind, text, lead, now, session=None: (
+        applied.append(text), orig(kind, text, lead, now, session)))(deps.alerter.send)
+    lead, job = _classify_job(s, deps)
+    job_id = job.id
+    assert run_job(factory, job_id, deps, clock(NOW)) == "lost_claim"
+    assert applied == ["run 2"]
+    s.expire_all()
+    j = s.get(Job, job_id)
+    assert (j.status, j.attempts) == ("done", 2)
+    assert s.get(Lead, lead.id).state == S.QUALIFYING.value
+    assert count(s, Event, Event.kind == "state_change", Event.lead_id == lead.id) == 2  # engaged + 1 apply
+
+
+def test_stale_reset_racing_a_done_commit_leaves_it_done(env, monkeypatch):
+    import outreach.jobs as jobs_mod
+
+    _, factory, s = env
+    deps = jdeps(classify=Counter().classify)
+    _, job = _classify_job(s, deps)
+    job_id = job.id
+    assert run_job(factory, job_id, deps, clock(NOW)) == "done"
+    # the reset saw the job "running" with attempt 1 just before run #1 committed "done"
+    monkeypatch.setattr(jobs_mod, "_stale_jobs", lambda session, cutoff: [(job_id, 1)])
+    run_due(factory, deps, clock(NOW + timedelta(hours=1)))
+    s.expire_all()
+    assert s.get(Job, job_id).status == "done" and s.get(Job, job_id).attempts == 1
+
+
+def test_late_failure_of_original_after_run2_succeeded_leaves_done_no_takeover(env):
+    _, factory, s = env
+    state = {"n": 0}
+
+    def bot(session, lead, now):
+        state["n"] += 1
+        if state["n"] == 1:
+            session.commit()
+            _set_job(factory, job_id, status="pending", run_after=NOW)
+            assert run_job(factory, job_id, deps, clock(NOW)) == "done"
+            raise RuntimeError("late failure")
+        return [WaSendRaw("answer")]
+
+    deps = jdeps(bot=bot)
+    deps.takeover = lambda session, lead, reason, now: start_takeover(session, lead, reason, deps, now)
+    wa_lead(s)
+    ingest(s, [wa_ev("wa:1")], deps, NOW, SCANNERS)
+    job_id = only_job(s).id
+    _set_job(factory, job_id, attempts=MAX_ATTEMPTS - 1)  # run #1 is the last allowed attempt
+    assert run_job(factory, job_id, deps, clock(NOW)) == "lost_claim"
+    s.expire_all()
+    j = s.get(Job, job_id)
+    assert j.status == "done" and j.last_error is None
+    assert count(s, AlertRow, AlertRow.kind == "wa_human_needed") == 0
+    assert count(s, AlertRow, AlertRow.kind == "integration_error") == 0
+    assert deps.wa.calls == [("send_raw_text", j.lead_id, "answer", "bot")]
+
+
+def test_newer_message_during_the_llm_call_supersedes_the_answer(env):
+    _, factory, s = env
+    calls = []
+
+    def bot(session, lead, now):
+        calls.append(lead.id)
+        if len(calls) == 1:
+            session.commit()
+            s2 = factory()
+            ingest(s2, [wa_ev("wa:2", at=NOW + timedelta(seconds=5))], deps, NOW + timedelta(seconds=5),
+                   SCANNERS)
+            s2.close()
+        return [WaSendRaw(f"answer {len(calls)}")]
+
+    deps = jdeps(bot=bot)
+    wa_lead(s)
+    ingest(s, [wa_ev("wa:1")], deps, NOW, SCANNERS)
+    first_id = only_job(s).id
+    assert run_job(factory, first_id, deps, clock(NOW)) == "obsolete"
+    assert deps.wa.calls == []  # the stale answer was never sent
+    s.expire_all()
+    first = s.get(Job, first_id)
+    assert (first.status, first.last_error) == ("done", "superseded")
+    second = s.scalars(select(Job).where(Job.id != first_id)).one()
+    s.commit()
+    assert run_job(factory, second.id, deps, clock(NOW + timedelta(seconds=10))) == "done"
+    assert deps.wa.calls == [("send_raw_text", first.lead_id, "answer 2", "bot")]
+
+
+def test_failure_never_overwrites_a_reclaimed_job(env):
+    _, factory, s = env
+    state = {"n": 0}
+
+    def classify(session, lead, event, now):
+        state["n"] += 1
+        session.commit()
+        # another worker reset and re-claimed it (attempt 2) while run #1 was still going
+        _set_job(factory, job_id, status="running", attempts=2, started_at=NOW)
+        raise RuntimeError("boom")
+
+    deps = jdeps(classify=classify)
+    _, job = _classify_job(s, deps)
+    job_id = job.id
+    assert run_job(factory, job_id, deps, clock(NOW)) == "lost_claim"
+    s.expire_all()
+    j = s.get(Job, job_id)
+    assert (j.status, j.attempts, j.last_error) == ("running", 2, None)
+
+
+# ------------------------------------------------------------------ review round: never raises
+
+
+def test_run_job_never_raises_when_rollback_fails(env, caplog):
+    _, factory, s = env
+    caplog.set_level(logging.DEBUG)
+
+    class BadRollback(type(factory())):
+        def rollback(self):
+            raise RuntimeError(SECRET_TEXT)
+
+    bad_factory = sessionmaker(bind=factory.kw["bind"], class_=BadRollback, autoflush=False,
+                               expire_on_commit=False)
+    deps = jdeps(classify=Counter(exc=ValueError("x")).classify)
+    _, job = _classify_job(s, deps)
+    assert run_job(bad_factory, job.id, deps, clock(NOW)) == "error"
+    assert SECRET_TEXT not in caplog.text
+    s.rollback()
+
+
+def test_run_due_continues_after_a_job_errors(env, monkeypatch):
+    import outreach.jobs as jobs_mod
+
+    _, factory, s = env
+    _, ids = _make_jobs(s, 3, NOW - timedelta(minutes=5))
+    seen = []
+
+    def fake_run_job(f, job_id, d, n):
+        seen.append(job_id)
+        if job_id == ids[0]:
+            raise RuntimeError("boom")
+        return "error" if job_id == ids[1] else "done"
+
+    monkeypatch.setattr(jobs_mod, "run_job", fake_run_job)
+    assert run_due(factory, jdeps(), clock(NOW)) == 1
+    assert seen == ids
+
+
+# ------------------------------------------------------------------ review round: pre-LLM bot skips
+
+
+@pytest.mark.parametrize("case,reason", [
+    ("no_consent", "skipped:no_consent"),
+    ("suppressed", "skipped:phone_suppressed"),
+    ("window_closed", "skipped:window_closed"),
+    ("window_none", "skipped:window_closed"),
+])
+def test_bot_job_skipped_before_llm_when_whatsapp_not_allowed(env, case, reason):
+    from outreach.models import Suppression
+
+    _, factory, s = env
+    c = Counter([WaSendRaw("answer")])
+    deps = jdeps(bot=c.bot)
+    lead = wa_lead(s)
+    ingest(s, [wa_ev("wa:1")], deps, NOW, SCANNERS)
+    job_id = only_job(s).id
+    ld = s.get(Lead, lead.id)
+    run_at = NOW
+    if case == "no_consent":
+        ld.consent_whatsapp = False
+    elif case == "suppressed":
+        s.add(Suppression(value=PHONE, kind="phone", reason="test", created_at=NOW))
+    elif case == "window_closed":
+        run_at = NOW + timedelta(hours=24)
+    else:
+        ld.wa_window_until = None
+    s.commit()
+    assert run_job(factory, job_id, deps, clock(run_at)) == "obsolete"
+    assert c.calls == [] and deps.wa.calls == []
+    s.expire_all()
+    j = s.get(Job, job_id)
+    assert (j.status, j.last_error) == ("done", reason)
+
+
+# ------------------------------------------------------------------ review round: savepoint pruning
+
+
+def test_enqueued_ids_pruned_on_savepoint_rollback(env):
+    from outreach.jobs import take_enqueued
+
+    _, _, s = env
+    lead = make_lead(s)
+    ev = Event(lead_id=lead.id, channel="email", kind="reply", occurred_at=NOW, received_at=NOW, data={})
+    s.add(ev)
+    s.flush()
+    q = JobQueue()
+    kept = q.enqueue(s, lead, "bot_reply", None, NOW)
+    with pytest.raises(RuntimeError):
+        with s.begin_nested():
+            q.enqueue(s, lead, "classify", ev, NOW)
+            raise RuntimeError("roll this savepoint back")
+    s.commit()
+    assert take_enqueued(s) == [kept]
+    assert count(s, Job) == 1

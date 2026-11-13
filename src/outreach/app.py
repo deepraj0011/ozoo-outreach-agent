@@ -583,7 +583,7 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
 
     @app.post("/teams/commands")
     async def teams_commands(request: Request, background: BackgroundTasks,
-                        session: Session = Depends(get_session)) -> Response:
+                             session: Session = Depends(get_session)) -> Response:
         try:
             body = await _read_capped(request, TEAMS_MAX_BODY)
         except _BodyTooLarge:
