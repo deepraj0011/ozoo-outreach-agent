@@ -17,7 +17,7 @@ You see Email 1 to 4 exactly as a lead would, and the booking, reschedule and sl
 - `src/outreach/emailtool/mailpit.py`: `MailpitEmailTool`, which implements the `EmailTool` port, including `block` and `find_lead`.
 - `src/outreach/mailpit_sender.py`: `python -m outreach.mailpit_sender [--once]`.
 - Wiring: `config.py` (`EmailMode`, `smtp_host` loopback check, `smtp_port`, `mailpit_state_file`, mailpit refused in production, not counted as real sending), `app.py` `default_deps`, `scripts/run_local` (starts the sender, keeps `--no-access-log`), `.env.example`, `docs/LOCAL_TESTING.md` section 4b.
-- `tests/test_mailpit.py`: 19 tests. SMTP is a recording stub, so no network is used.
+- `tests/test_mailpit.py`: 24 tests. SMTP is a recording stub, so no network is used.
 
 ## How it works
 - **Shared state.** The state lives in a small SQLite file, `.mailpit_tool.db` (git-ignored), shared by the server and the sender process. It records each enrolled lead's variables, enrolment time, last step sent, last step reported, and status: active, paused, stopped or done. Blocked addresses are kept in a separate table.
@@ -29,7 +29,7 @@ You see Email 1 to 4 exactly as a lead would, and the booking, reschedule and sl
 
 ## Safety
 - The SMTP host must be loopback (`127.0.0.1`, `localhost` or `::1`). The tool refuses any other host, so this mode can never relay to a real mail server.
-- Settings must refuse `EMAIL_MODE=mailpit` outside `APP_ENV=local` (part of the pending wiring).
+- Settings refuse `EMAIL_MODE=mailpit` outside `APP_ENV=local` and any non-loopback `SMTP_HOST`.
 - Logs carry tool and lead ids only, never addresses, subjects or bodies (tested).
 
 ## Depends on
