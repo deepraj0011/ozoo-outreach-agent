@@ -10,10 +10,18 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Protocol, runtime_checkable
 
-# The SDKs log request options (prompts) and URLs at DEBUG/INFO; keep them at WARNING, like
-# httpx/httpcore in outreach.http.
-for _name in ("anthropic", "openai", "httpx2", "httpcore2"):
-    logging.getLogger(_name).setLevel(logging.WARNING)
+SDK_LOGGERS = ("anthropic", "openai", "httpx2", "httpcore2")
+
+
+def cap_sdk_loggers() -> None:
+    """The SDKs log request options (prompts) and URLs at DEBUG/INFO; keep them at WARNING, like
+    httpx/httpcore in outreach.http. Re-applied after each lazy SDK import (an SDK may set its own
+    level on import, e.g. from OPENAI_LOG / ANTHROPIC_LOG)."""
+    for name in SDK_LOGGERS:
+        logging.getLogger(name).setLevel(logging.WARNING)
+
+
+cap_sdk_loggers()
 
 
 class LLMError(Exception):

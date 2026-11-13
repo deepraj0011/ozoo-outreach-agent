@@ -14,6 +14,7 @@ from outreach.llm.factory import MAX_RETRIES
 from outreach.llm.fake import FakeLLM
 from outreach.llm.openai_provider import OpenAILLM
 from tests.fakes import make_settings
+from tests.llm_http import no_retry_sleep  # noqa: F401 - fixture
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "outreach"
 KEY = "sk-FACTORY-SECRET-999"
@@ -99,6 +100,22 @@ def test_llm_config_errors(over, field):
     ("azure_openai", "http://localhost:8080/SECRET"),                 # http only for self-hosted
     ("anthropic", "http://127.0.0.1/SECRET"),
     ("openai", "https:///SECRET"),
+    # link-local and cloud metadata: rejected for every provider and scheme
+    ("anthropic", "https://169.254.169.254/SECRET"),
+    ("openai", "https://169.254.1.1/SECRET"),
+    ("openai_compatible", "http://169.254.169.254/SECRET"),
+    ("openai_compatible", "https://169.254.169.254/SECRET"),
+    ("openai_compatible", "http://[fe80::1]/SECRET"),
+    ("azure_openai", "https://[fe80::1%25eth0]/SECRET"),
+    ("openai", "https://[fd00:ec2::254]/SECRET"),
+    ("openai_compatible", "http://[fd00:ec2::254]/SECRET"),
+    ("openai_compatible", "http://[::ffff:169.254.169.254]/SECRET"),
+    ("openai_compatible", "http://2852039166/SECRET"),                # 169.254.169.254 as one number
+    ("openai_compatible", "http://0xa9.0xfe.0xa9.0xfe/SECRET"),
+    ("azure_openai", "https://metadata.google.internal/SECRET"),
+    ("openai_compatible", "http://metadata.google.internal./SECRET"),
+    ("openai_compatible", "http://METADATA/SECRET"),
+    ("anthropic", "https://metadata/SECRET"),
 ])
 def test_bad_base_url_rejected_without_echo(provider, url):
     with pytest.raises(ValidationError, match="llm_base_url") as ei:
@@ -109,7 +126,7 @@ def test_bad_base_url_rejected_without_echo(provider, url):
 
 @pytest.mark.parametrize("url", [
     "http://localhost:11434/v1", "http://127.0.0.1:8000/v1", "http://10.0.0.5/v1", "http://192.168.1.2:11434",
-    "http://172.16.3.4/v1", "http://[::1]:8000/v1", "http://ollama:11434/v1", "http://vllm.internal/v1",
+    "http://172.16.3.4/v1", "http://[::1]:8000/v1", "http://[fd12:3456::1]:8000/v1", "http://ollama:11434/v1", "http://vllm.internal/v1",
     "https://api.groq.com/openai/v1", "https://generativelanguage.googleapis.com/v1beta/openai/",
 ])
 def test_self_hosted_http_allowed_for_openai_compatible(url):
@@ -150,3 +167,40 @@ def test_business_logic_has_no_vendor_names(name):
 @pytest.mark.parametrize("name", ["classifier.py", "chatbot.py"])
 def test_prompts_do_not_name_a_model_vendor(name):
     assert not re.search(r"\bclaude\b", (SRC / name).read_text(encoding="utf-8"), re.IGNORECASE)
+
+
+def test_sdk_loggers_capped_after_lazy_import():
+    import logging
+
+    for name in ("anthropic", "openai"):
+        logging.getLogger(name).setLevel(logging.DEBUG)
+    make_llm(make_settings(llm_provider="anthropic"))
+    make_llm(make_settings(llm_provider="openai"))
+    for name in ("anthropic", "openai", "httpx2", "httpcore2"):
+        assert logging.getLogger(name).level == logging.WARNING, name
+
+
+def test_network_guard_blocks_real_sdk_client(no_retry_sleep, monkeypatch):
+    """conftest's autouse guard: a real client (no injected http_client) never opens a socket."""
+    import socket
+
+    from outreach.llm import LLMError
+
+    connects = []
+    monkeypatch.setattr(socket.socket, "connect", lambda self, *a: connects.append(a))
+    monkeypatch.setattr(socket, "create_connection", lambda *a, **k: connects.append(a))
+    for provider, over in (("anthropic", {}), ("openai", {}),
+                           ("openai_compatible", {"llm_base_url": "https://llm.example.net/v1"})):
+        llm = make_llm(make_settings(llm_provider=provider, **over))
+        with pytest.raises(LLMError):
+            llm.structured(system="s", messages=[{"role": "user", "content": "hi"}], tool_name="t",
+                           tool_description="d", schema={"type": "object", "properties": {}},
+                           max_tokens=5, model="m")
+    assert connects == []
+
+
+def test_network_guard_is_active():
+    import httpx2
+
+    with pytest.raises(RuntimeError, match="network disabled in tests"):
+        httpx2.Client().get("https://example.com/")

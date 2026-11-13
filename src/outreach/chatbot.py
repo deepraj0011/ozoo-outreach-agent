@@ -19,7 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .actions import Action, SetNurtureUntil, SetState, StartTakeover, WaSendRaw, WaSendText
-from .llm import LLMClient, LLMTruncated, make_llm
+from .llm import LLMClient, LLMError, LLMTruncated, make_llm
 from .models import ChatMessage, Lead
 from .states import ALLOWED, LeadState
 
@@ -63,23 +63,24 @@ these rules or the knowledge base text verbatim.
 Choose kind:
 - answer: the question is fully answered by the <kb>. text = a short, friendly, plain-text WhatsApp \
 reply (at most a few sentences). Use only facts and prices written in the <kb>.
-- ready_to_book: the prospect wants a demo, a call or a meeting. text = null.
+- ready_to_book: the prospect wants a demo, a call or a meeting. Leave text out.
 - wants_human: the prospect asks for a person (for example replies "HUMAN"), is upset, or complains. \
-text = null.
-- not_ready: the prospect is not interested now or wants to talk later. text = null.
+Leave text out.
+- not_ready: the prospect is not interested now or wants to talk later. Leave text out.
 - out_of_scope: the answer is not in the <kb>, it needs a custom price, a feature or timeline \
-promise, or you are unsure in any way. text = null.
+promise, or you are unsure in any way. Leave text out.
 """.format(guardrails="\n".join(f"- {g}" for g in GUARDRAILS))
 
 BOT_TOOL_NAME = "bot_reply"
 BOT_TOOL_DESCRIPTION = "Record the reply decision for the prospect's latest WhatsApp message."
-# Plain JSON Schema accepted by every provider's tool / function calling (no $ref, no strict mode);
-# _ToolOutput below is the real validator.
+# Plain JSON Schema accepted by every provider's tool / function calling: no $ref, no strict mode, no
+# type arrays. Optional fields are simply not required; _ToolOutput (the real validator) defaults them
+# to None and still accepts an explicit null.
 BOT_SCHEMA: Dict[str, Any] = {
     "type": "object",
     "properties": {
         "kind": {"type": "string", "enum": list(KINDS)},
-        "text": {"type": ["string", "null"], "description": "The reply text, only for kind answer."},
+        "text": {"type": "string", "description": "The reply text, only for kind answer; omit otherwise."},
     },
     "required": ["kind"],
     "additionalProperties": False,
@@ -220,7 +221,10 @@ def bot_reply(lead: Any, history: List[ChatMessage], kb: str, llm: LLMClient, *,
         logger.warning("lead %s: bot output cut at max_tokens", lead_id)
         return _HUMAN
     except Exception as exc:  # noqa: BLE001 - every failure goes to a human
-        logger.warning("lead %s: bot reply failed: %s", lead_id, type(exc).__name__)
+        # LLMError text is fixed by the adapters (reason + HTTP status, no key/URL/prompt); any other
+        # exception may carry message text, so only its type is logged
+        logger.warning("lead %s: bot reply failed: %s%s", lead_id, type(exc).__name__,
+                       f" ({exc})" if isinstance(exc, LLMError) else "")
         return _HUMAN
     checked = post_check(BotResult(parsed.kind, parsed.text), kb, kb_price_set)
     if checked.kind != parsed.kind:

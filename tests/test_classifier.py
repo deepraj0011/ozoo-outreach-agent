@@ -11,8 +11,8 @@ from outreach.actions import (
     Suppress, SuppressAllChannels, ToolPause, WaSendText, execute,
 )
 from outreach.classifier import (
-    CLASSIFY_SCHEMA, CLASSIFY_TOOL_DESCRIPTION, CLASSIFY_TOOL_NAME, LABELS, SYSTEM_PROMPT, ReplyClass, actions_for_class, classify_reply, make_classifier,
-    strip_quoted,
+    CLASSIFY_SCHEMA, CLASSIFY_TOOL_DESCRIPTION, CLASSIFY_TOOL_NAME, LABELS, SYSTEM_PROMPT, ReplyClass,
+    actions_for_class, classify_reply, make_classifier, strip_quoted,
 )
 from outreach.intake import IntakeResult
 from outreach.llm import LLMBadOutput, LLMTruncated, LLMUnavailable
@@ -541,3 +541,41 @@ def test_make_classifier_defaults_to_configured_llm(monkeypatch):
     settings = make_settings()
     make_classifier(settings)
     assert built == [settings]
+
+
+def _types(node):
+    """Every "type" value anywhere in a JSON Schema."""
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if k == "type":
+                yield v
+            yield from _types(v)
+    elif isinstance(node, list):
+        for v in node:
+            yield from _types(v)
+
+
+def test_schema_has_no_type_arrays():
+    """Type arrays like ["string", "null"] are not portable (Gemini's OpenAI layer): optional fields
+    are simply not required, and pydantic defaults them to None."""
+    assert list(_types(CLASSIFY_SCHEMA)) and not [t for t in _types(CLASSIFY_SCHEMA) if isinstance(t, list)]
+    optional = set(CLASSIFY_SCHEMA["properties"]) - set(CLASSIFY_SCHEMA["required"])
+    assert optional == {"return_date", "later_date", "referral_email", "referral_phone", "referral_name",
+                        "draft_answer"}
+
+
+def test_explicit_nulls_and_omitted_optionals_validate():
+    nulls = dict(return_date=None, later_date=None, referral_email=None, referral_phone=None,
+                 referral_name=None, draft_answer=None)
+    assert classify(client=FakeClient(out("interested", **nulls))).label == "interested"
+    r = classify(client=FakeClient({"label": "ooo", "confidence": 0.9, "reason": "away"}))
+    assert (r.label, r.return_date, r.draft_answer) == ("ooo", None, None)
+
+
+def test_llm_error_text_logged_for_status(caplog):
+    caplog.set_level("WARNING")
+    classify(client=FakeClient(LLMUnavailable("llm unavailable: http 401")))
+    assert "LLMUnavailable" in caplog.text and "http 401" in caplog.text
+    caplog.clear()
+    classify("secret body", client=FakeClient(RuntimeError("secret body")))
+    assert "secret body" not in caplog.text  # only LLMError text (safe by construction) is logged

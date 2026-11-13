@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import binascii
 import ipaddress
+import socket
 from functools import lru_cache
 from typing import Dict, FrozenSet, Literal, Optional
 from urllib.parse import urlsplit
@@ -29,16 +30,44 @@ def _split_ids(raw: str) -> FrozenSet[str]:
     return frozenset(x.strip() for x in raw.split(",") if x.strip())
 
 
+# Cloud instance-metadata endpoints (AWS IPv6 is a ULA, not link-local, so it is listed).
+METADATA_HOSTS = frozenset({"metadata", "metadata.google.internal", "169.254.169.254", "fd00:ec2::254"})
+
+
+def _host_ip(host: str) -> Optional[ipaddress._BaseAddress]:
+    """The IP a host literal means, including inet_aton forms ("2852039166", "0xa9.0xfe.0xa9.0xfe")
+    and IPv4-mapped IPv6; None for a name."""
+    try:
+        ip = ipaddress.ip_address(host.split("%", 1)[0])
+    except ValueError:
+        try:
+            ip = ipaddress.IPv4Address(socket.inet_aton(host))
+        except (OSError, ValueError):
+            return None
+    mapped = getattr(ip, "ipv4_mapped", None)
+    return mapped or ip
+
+
+def _forbidden_host(host: str) -> bool:
+    """Metadata endpoints and link-local addresses (169.254.0.0/16, fe80::/10): never, for any
+    provider or scheme."""
+    host = host.lower().rstrip(".")
+    ip = _host_ip(host)
+    if host in METADATA_HOSTS or (ip is not None and str(ip) in METADATA_HOSTS):
+        return True
+    return ip is not None and ip.is_link_local
+
+
 def _private_host(host: str) -> bool:
-    """localhost, a loopback / private / link-local IP, a dot-less name or a private suffix."""
+    """localhost, a loopback / private IP, a dot-less name or a private suffix. Link-local and
+    metadata hosts are rejected before this is asked."""
     host = host.lower().rstrip(".")
     if host == "localhost" or host.endswith(PRIVATE_HOST_SUFFIXES):
         return True
-    try:
-        ip = ipaddress.ip_address(host)
-    except ValueError:
+    ip = _host_ip(host)
+    if ip is None:
         return "." not in host
-    return ip.is_loopback or ip.is_private or ip.is_link_local
+    return ip.is_loopback or ip.is_private
 
 
 class Settings(BaseSettings):
@@ -66,7 +95,8 @@ class Settings(BaseSettings):
     # llm_base_url: required for azure_openai (the resource endpoint) and openai_compatible; optional
     # for anthropic / openai (a gateway). Must be https; plain http is accepted only for
     # openai_compatible on a self-hosted host (localhost, 127.0.0.1, private IP, dot-less name such
-    # as a Docker service, *.local / *.internal). Never logged.
+    # as a Docker service, *.local / *.internal). Link-local (169.254.0.0/16, fe80::/10) and cloud
+    # metadata hosts are always rejected. Never logged.
     llm_provider: LLMProvider
     llm_api_key: str = ""  # secret; may be empty only for openai_compatible (e.g. local Ollama)
     llm_base_url: Optional[str] = None
@@ -204,11 +234,13 @@ class Settings(BaseSettings):
             except ValueError:
                 parts, host = None, None
             ok = parts is not None and bool(host) and not any(c.isspace() for c in url) and (
+                not _forbidden_host(host)) and (
                 parts.scheme == "https"
                 or (parts.scheme == "http" and provider == "openai_compatible" and _private_host(host)))
             if not ok:
-                raise ValueError("llm_base_url must be an https URL (plain http only for a self-hosted "
-                                 "openai_compatible host: localhost, private IP or internal name)")
+                raise ValueError("llm_base_url must be an https URL, not link-local or a metadata endpoint "
+                                 "(plain http only for a self-hosted openai_compatible host: localhost, "
+                                 "private IP or internal name)")
         return self
 
     @model_validator(mode="after")

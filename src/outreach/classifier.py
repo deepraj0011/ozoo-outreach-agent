@@ -20,7 +20,7 @@ from .actions import (
     Suppress, SuppressAllChannels, ToolPause, WaSendText,
 )
 from .intake import FREE_MAIL_DOMAINS
-from .llm import LLMClient, LLMTruncated, make_llm
+from .llm import LLMClient, LLMError, LLMTruncated, make_llm
 from .models import Event, Lead
 from .states import ALLOWED, LeadState
 
@@ -61,31 +61,32 @@ referral_name, referral_email, referral_phone; only contacts written in the repl
 - unsure: anything else, mixed signals, or you cannot tell.
 
 Resolve relative dates ("next Monday", "in two weeks", "after Q1") against the Today date given \
-in the message, and write them as YYYY-MM-DD. Use null when no date is stated.
+in the message, and write them as YYYY-MM-DD. Leave a date field out when no date is stated.
 
 confidence is your probability (0 to 1) that the label is right. reason is one short sentence.
 
 draft_answer only for "question": a short, factual answer a human will review before sending. \
 Never quote prices, never promise features or timelines; if you do not know, say a team member \
-will follow up. Use null for every other label.
+will follow up. Leave it out for every other label.
 """
 
 CLASSIFY_TOOL_NAME = "classify_reply"
 CLASSIFY_TOOL_DESCRIPTION = "Record the classification of the prospect's reply."
-# Plain JSON Schema accepted by every provider's tool / function calling (no $ref, no strict mode);
-# _ToolOutput below is the real validator.
+# Plain JSON Schema accepted by every provider's tool / function calling: no $ref, no strict mode, no
+# type arrays. Optional fields are simply not required; _ToolOutput (the real validator) defaults them
+# to None and still accepts an explicit null.
 CLASSIFY_SCHEMA: Dict[str, Any] = {
     "type": "object",
     "properties": {
         "label": {"type": "string", "enum": list(LABELS)},
         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
-        "return_date": {"type": ["string", "null"], "description": "YYYY-MM-DD (ooo) or null"},
-        "later_date": {"type": ["string", "null"], "description": "YYYY-MM-DD (not_now) or null"},
-        "referral_email": {"type": ["string", "null"]},
-        "referral_phone": {"type": ["string", "null"]},
-        "referral_name": {"type": ["string", "null"]},
+        "return_date": {"type": "string", "description": "YYYY-MM-DD (ooo); omit if none"},
+        "later_date": {"type": "string", "description": "YYYY-MM-DD (not_now); omit if none"},
+        "referral_email": {"type": "string", "description": "Omit if none."},
+        "referral_phone": {"type": "string", "description": "Omit if none."},
+        "referral_name": {"type": "string", "description": "Omit if none."},
         "reason": {"type": "string", "description": "One short sentence."},
-        "draft_answer": {"type": ["string", "null"], "description": "Only for question."},
+        "draft_answer": {"type": "string", "description": "Only for question; omit otherwise."},
     },
     "required": ["label", "confidence", "reason"],
     "additionalProperties": False,
@@ -223,7 +224,10 @@ def classify_reply(text: str, channel: str, llm: LLMClient, *, model: str, today
         logger.warning("reply classifier output cut at max_tokens")
         return _unsure("classifier_error:max_tokens")
     except Exception as exc:  # noqa: BLE001 - every failure goes to a human
-        logger.warning("reply classifier failed: %s", type(exc).__name__)
+        # LLMError text is fixed by the adapters (reason + HTTP status, no key/URL/prompt); any other
+        # exception may carry reply text, so only its type is logged
+        logger.warning("reply classifier failed: %s%s", type(exc).__name__,
+                       f" ({exc})" if isinstance(exc, LLMError) else "")
         return _unsure(f"classifier_error:{type(exc).__name__}")
 
     label = parsed.label if parsed.confidence >= MIN_CONFIDENCE else "unsure"

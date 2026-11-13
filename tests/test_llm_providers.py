@@ -158,7 +158,10 @@ def test_openai_family_happy_path_and_request_shape(family):
     assert body["tools"] == [{"type": "function", "function": {
         "name": "classify_reply", "description": "Record it.", "parameters": SCHEMA}}]
     assert body["tool_choice"] == {"type": "function", "function": {"name": "classify_reply"}}
-    assert body["max_tokens"] == 321
+    if name == "openai_compatible":
+        assert body["max_tokens"] == 321 and "max_completion_tokens" not in body
+    else:  # OpenAI / Azure: max_tokens is deprecated and rejected by reasoning models
+        assert body["max_completion_tokens"] == 321 and "max_tokens" not in body
     assert body["model"] == "dep-classifier"
     assert "strict" not in json.dumps(body["tools"])
 

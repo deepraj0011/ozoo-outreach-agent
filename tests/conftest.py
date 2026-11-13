@@ -15,6 +15,22 @@ NOW = datetime(2026, 11, 12, 10, 0, tzinfo=timezone.utc)
 _counter = itertools.count(1)
 
 
+@pytest.fixture(autouse=True)
+def _no_network(monkeypatch):
+    """Fail closed: a real HTTP transport (httpx2, used by the LLM SDKs) never opens a socket in
+    tests. MockTransport and respx-injected clients do not go through HTTPTransport."""
+    import httpx2
+
+    def _blocked(*_a, **_k):
+        raise RuntimeError("network disabled in tests")
+
+    async def _ablocked(*_a, **_k):
+        raise RuntimeError("network disabled in tests")
+
+    monkeypatch.setattr(httpx2.HTTPTransport, "handle_request", _blocked)
+    monkeypatch.setattr(httpx2.AsyncHTTPTransport, "handle_async_request", _ablocked)
+
+
 @pytest.fixture
 def session():
     engine = make_engine("sqlite://", poolclass=StaticPool)

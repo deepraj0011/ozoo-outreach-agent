@@ -15,6 +15,9 @@ class AnthropicLLM:
     def structured(self, *, system: str, messages: List[Dict[str, str]], tool_name: str,
                    tool_description: str, schema: Dict[str, Any], max_tokens: int,
                    model: str) -> Dict[str, Any]:
+        # `raise ... from None` sets __suppress_context__: tracebacks do not print the SDK exception
+        # (its message can echo part of the key or the prompt). __context__ still references it in
+        # memory, so never log exc.__context__ / exc_info of these errors.
         try:
             resp = self._client.messages.create(
                 model=model,
@@ -31,6 +34,8 @@ class AnthropicLLM:
         except anthropic.APIStatusError as exc:
             raise status_error(exc.status_code) from None
         except anthropic.AnthropicError as exc:
+            raise LLMError(f"llm error: {type(exc).__name__}") from None
+        except Exception as exc:  # noqa: BLE001 - e.g. a transport error the SDK does not wrap
             raise LLMError(f"llm error: {type(exc).__name__}") from None
 
         stop = getattr(resp, "stop_reason", None)

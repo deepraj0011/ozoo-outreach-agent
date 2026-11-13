@@ -15,7 +15,8 @@ from outreach.actions import (
     SetNurtureUntil, SetState, StartTakeover, WaSendRaw, WaSendText, execute,
 )
 from outreach.chatbot import (
-    BOT_SCHEMA, BOT_TOOL_DESCRIPTION, BOT_TOOL_NAME, DEFAULT_KB, GUARDRAILS, KINDS, BotResult, bot_reply, build_messages, build_system, make_bot,
+    BOT_SCHEMA, BOT_TOOL_DESCRIPTION, BOT_TOOL_NAME, DEFAULT_KB, GUARDRAILS, KINDS, BotResult, bot_reply,
+    build_messages, build_system, make_bot,
 )
 from outreach.handoff import start_takeover
 from outreach.llm import LLMBadOutput, LLMTruncated, LLMUnavailable
@@ -484,3 +485,21 @@ def test_make_bot_uses_chat_model(session, tmp_path):
     client = FakeClient(out("answer", "ok"))
     make_bot(make_settings(llm_chat_model="chat-test"), client, kb_path=kb_file(tmp_path))(session, lead, NOW)
     assert client.calls[0]["model"] == "chat-test"
+
+
+def test_schema_has_no_type_arrays():
+    from tests.test_classifier import _types
+
+    assert list(_types(BOT_SCHEMA)) and not [t for t in _types(BOT_SCHEMA) if isinstance(t, list)]
+    assert BOT_SCHEMA["required"] == ["kind"]  # text is optional, pydantic defaults it to None
+
+
+def test_explicit_null_and_omitted_text_validate():
+    assert ask(FakeClient({"kind": "ready_to_book", "text": None})) == BotResult("ready_to_book", None)
+    assert ask(FakeClient({"kind": "not_ready"})) == BotResult("not_ready", None)
+
+
+def test_llm_error_text_logged_for_status(caplog):
+    caplog.set_level("WARNING")
+    ask(FakeClient(LLMUnavailable("llm unavailable: http 503")))
+    assert "LLMUnavailable" in caplog.text and "http 503" in caplog.text

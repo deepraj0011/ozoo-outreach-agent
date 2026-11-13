@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from .base import LLMClient
+from .base import LLMClient, cap_sdk_loggers
 
 MAX_RETRIES = 2
 ANTHROPIC_DEFAULT_BASE_URL = "https://api.anthropic.com"
@@ -27,6 +27,8 @@ def make_llm(settings: Any, *, http_client: Optional[Any] = None) -> LLMClient:
     if provider == "anthropic":
         import anthropic
 
+        cap_sdk_loggers()
+
         from .anthropic_provider import AnthropicLLM
 
         return AnthropicLLM(anthropic.Anthropic(
@@ -35,6 +37,8 @@ def make_llm(settings: Any, *, http_client: Optional[Any] = None) -> LLMClient:
     if provider == "openai":
         import openai
 
+        cap_sdk_loggers()
+
         from .openai_provider import OpenAILLM
 
         return OpenAILLM(openai.OpenAI(
@@ -42,6 +46,8 @@ def make_llm(settings: Any, *, http_client: Optional[Any] = None) -> LLMClient:
 
     if provider == "azure_openai":
         import openai
+
+        cap_sdk_loggers()
 
         from .openai_provider import OpenAILLM
 
@@ -54,11 +60,14 @@ def make_llm(settings: Any, *, http_client: Optional[Any] = None) -> LLMClient:
     if provider == "openai_compatible":
         import openai
 
+        cap_sdk_loggers()
+
         from .openai_provider import OpenAILLM
 
         if not settings.llm_base_url:
             raise ValueError("openai_compatible needs llm_base_url")
         return OpenAILLM(openai.OpenAI(
-            api_key=settings.llm_api_key or NO_KEY_PLACEHOLDER, base_url=settings.llm_base_url, **common))
+            api_key=settings.llm_api_key or NO_KEY_PLACEHOLDER, base_url=settings.llm_base_url, **common),
+            token_param="max_tokens")  # most compatible servers do not know max_completion_tokens
 
     raise ValueError("unknown llm_provider")
