@@ -142,8 +142,9 @@ def default_deps(settings: Settings) -> Deps:
     if settings.email_mode == "fake":
         tool: Any = FakeEmailTool(webhook_secret=settings.tool_webhook_secret, log_calls=True,
                                   id_prefix=f"fake-{run_id}-")
-    elif settings.email_mode == "mailpit":
-        tool = make_mailpit_tool(settings)  # local SMTP to Mailpit; the mailpit_sender sends the steps
+    elif settings.email_mode in ("mailpit", "gmail"):
+        # mailpit: local SMTP to Mailpit; gmail: a real Gmail mailbox. The mailpit_sender sends the steps.
+        tool = make_mailpit_tool(settings)
     elif settings.tool_name != "instantly":
         raise ValueError(f"no adapter for tool {settings.tool_name!r} yet")
     else:
@@ -364,6 +365,11 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
     def _schedule(background: BackgroundTasks, job_ids: List[int]) -> None:
         if job_ids:
             background.add_task(_run_jobs, list(job_ids))
+
+    if settings.app_env == "local":  # live demo console at /demo; never in production
+        from . import demo_console
+
+        demo_console.register(app, session_factory, clock, settings)
 
     @app.exception_handler(Exception)
     async def _unhandled(request: Request, exc: Exception) -> JSONResponse:

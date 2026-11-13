@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# One command for the demo: starts the agent (and Mailpit if the settings use it) and opens the
+# console in the browser. Everything else is done from the web page. Stop with Ctrl+C.
+#   scripts/start_demo                 # uses .env.local (simulated / Mailpit)
+#   scripts/start_demo .env.demo       # real Gmail + WhatsApp (docs/REAL_DEMO.md)
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export ENV_FILE="${1:-$ROOT/.env.local}"
+[ -f "$ENV_FILE" ] || { echo "No $ENV_FILE. Run scripts/local_setup first." >&2; exit 1; }
+PORT="${PORT:-8000}"
+if lsof -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+  echo "Port $PORT is already in use: is the agent already running? Open http://127.0.0.1:$PORT/" >&2
+  exit 1
+fi
+MODE="$(grep -E '^[[:space:]]*EMAIL_MODE=' "$ENV_FILE" | tail -n1 | cut -d= -f2- | tr -d '"'"'"' [:space:]')"
+if [ "$MODE" = "mailpit" ] && ! (echo > /dev/tcp/127.0.0.1/1025) 2>/dev/null; then
+  if command -v mailpit >/dev/null 2>&1; then
+    mailpit --listen 127.0.0.1:8025 --smtp 127.0.0.1:1025 >/dev/null 2>&1 &
+    echo "Mailpit started: http://localhost:8025"
+  else
+    echo "Warning: EMAIL_MODE=mailpit but mailpit is not installed (see docs/LOCAL_TESTING.md 4b)." >&2
+  fi
+fi
+( sleep 3; URL="http://127.0.0.1:$PORT/"; command -v xdg-open >/dev/null && xdg-open "$URL" >/dev/null 2>&1 \
+  || echo "Open $URL in your browser" ) &
+echo "Starting the agent with $(basename "$ENV_FILE"). Console: http://127.0.0.1:$PORT/  (Ctrl+C to stop)"
+exec "$ROOT/scripts/run_local"

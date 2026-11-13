@@ -17,6 +17,7 @@ dependencies = [
   "pydantic-settings~=2.15",
   "pyyaml~=6.0",
   "phonenumbers~=9.0",
+  "openpyxl",
 ]
 
 [project.optional-dependencies]

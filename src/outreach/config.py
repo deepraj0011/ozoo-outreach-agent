@@ -24,8 +24,10 @@ NON_BLANK_IDS = ("teams_tenant_id", "teams_sales_channel_id")
 LLMProvider = Literal["anthropic", "openai", "azure_openai", "openai_compatible"]
 Mode = Literal["fake", "real"]
 # email only: "mailpit" = local SMTP to Mailpit (emailtool/mailpit.py); local-only like "fake"
-EmailMode = Literal["fake", "real", "mailpit"]
-LOCAL_ONLY_MODES = frozenset({"fake", "mailpit"})
+# "gmail" = a real Gmail mailbox over SMTP + IMAP (emailtool/gmail.py): free demo / pilot sending to
+# real inboxes, run from this machine; local-only too (production uses the cold-email tool).
+EmailMode = Literal["fake", "real", "mailpit", "gmail"]
+LOCAL_ONLY_MODES = frozenset({"fake", "mailpit", "gmail"})
 MODE_FIELDS = ("email_mode", "whatsapp_mode", "llm_mode", "alerts_mode", "verify_mode")
 # Credentials each service needs only when its mode is "real" (blank is fine in fake mode).
 REAL_MODE_REQUIRES: Dict[str, tuple] = {
@@ -129,6 +131,11 @@ class Settings(BaseSettings):
     smtp_host: str = "127.0.0.1"
     smtp_port: int = Field(1025, ge=1, le=65535)
     mailpit_state_file: Optional[str] = None
+    # EMAIL_MODE=gmail only: the Gmail address and its 16-character app password (Google account ->
+    # Security -> 2-Step Verification -> App passwords). Sender name shown in the From line.
+    gmail_address: str = ""
+    gmail_app_password: str = ""
+    gmail_from_name: str = "Ozoo.ai"
     tool_webhook_secret: str
     campaign_ids: Dict[str, str]
     default_tz_group: str
@@ -223,8 +230,9 @@ class Settings(BaseSettings):
             short = [f"{n}_s" for n, default in DELAY_DEFAULTS_S.items() if getattr(self, f"{n}_s") < default]
             if short:
                 raise ValueError(f"shorter-than-spec delays are not allowed in production: {', '.join(short)}")
-        if (self.app_env == "local" and "real" in (self.email_mode, self.whatsapp_mode)
-                and not self.allow_real_local):
+        if self.email_mode == "gmail" and (not self.gmail_address.strip() or not self.gmail_app_password.strip()):
+            raise ValueError("must not be blank: gmail_address, gmail_app_password (because email_mode is gmail)")
+        if (self.app_env == "local" and self.real_sending and not self.allow_real_local):
             bad = []
             if self.time_scale != 1.0:
                 bad.append("time_scale")
@@ -245,7 +253,7 @@ class Settings(BaseSettings):
     @property
     def real_sending(self) -> bool:
         """Email or WhatsApp goes to real people (a real provider)."""
-        return "real" in (self.email_mode, self.whatsapp_mode)
+        return "real" in (self.email_mode, self.whatsapp_mode) or self.email_mode == "gmail"
 
     @field_validator("smtp_host")
     @classmethod

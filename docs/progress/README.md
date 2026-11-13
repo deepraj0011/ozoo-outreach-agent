@@ -27,8 +27,11 @@ Branch: `feat/outreach-agent-v1`. Plan: `docs/superpowers/plans/2026-11-12-outre
 | 13 | Run locally + local end-to-end test (deploy deferred) | ✅ Done (controller smoke-tested) | `43716f9`, `0ae48e1` | 116 | [task-13](tasks/task-13-deploy-e2e.md) · **[LOCAL_TESTING.md](../LOCAL_TESTING.md)** |
 | F | Final whole-branch review + fix round | ✅ Done | `2b384b5`, `a47ca78` | 103 | [decisions](decisions.md#final-review-2026-11-13) |
 | 14 | Mailpit local email mode (`EMAIL_MODE=mailpit`) | ✅ Done (live smoke test with real Mailpit) | see git log | 24 | [task-14](tasks/task-14-mailpit.md) |
+| D | Demo console at `/demo` (local only): live leads, journey, timeline, WhatsApp chat, alerts; buttons act as the lead | ✅ Done (smoke-tested in isolation) | uncommitted | 0 (spike) | [DEMO_SCRIPT.md](../DEMO_SCRIPT.md) |
+| D2 | Real free demo: `EMAIL_MODE=gmail` (Gmail SMTP + IMAP replies), WhatsApp test number, Groq AI, `.env.demo`; fix: intro template now sends quick-reply payloads (real taps arrive as BOOK_DEMO / ASK_QUESTION, not button text) | ✅ Built, startup verified with dummy keys; not yet run with real accounts | uncommitted | 6 | [REAL_DEMO.md](../REAL_DEMO.md) |
+| D3 | Web app at `/` (local only): Overview funnel, Leads with CSV / Excel import (column matching, preview, intake results), lead panel with step tracker + simulate buttons, WhatsApp Conversations with salesperson takeover, Sales alerts, How it works, Settings; `scripts/start_demo` | ✅ Done, smoke-tested in isolation | uncommitted | 9 | [DEMO_SCRIPT.md](../DEMO_SCRIPT.md) |
 
-**Tests now:** 1515 passing (`.venv/bin/pytest -q`).
+**Tests now:** 1530 passing (`.venv/bin/pytest -q`).
 
 **What's next:** test locally with [docs/LOCAL_TESTING.md](../LOCAL_TESTING.md). Before any real sending: verify Instantly on a trial account (sent-event step, stop/block/find endpoints, bounce type, pause), Cal.com and Teams payloads, pick the AI provider, fill `kb/ozoo_kb.md`, add DB migrations. See [go-live-checklist.md](go-live-checklist.md).
 

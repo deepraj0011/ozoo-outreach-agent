@@ -87,11 +87,15 @@ def _parse(raw: str) -> datetime:
 
 
 class MailpitEmailTool:
+    # the Gmail subclass (emailtool/gmail.py) sends to Gmail's SMTP instead of a loopback one
+    LOOPBACK_ONLY = True
+    LABEL = "mailpit"
+
     def __init__(self, webhook_secret: str, *, state_file: Optional[Path] = None,
                  smtp_host: str = DEFAULT_SMTP_HOST, smtp_port: int = DEFAULT_SMTP_PORT,
                  now: Callable[[], datetime] = _utcnow,
                  smtp_factory: Callable[[str, int], Any] = smtplib.SMTP) -> None:
-        if not is_loopback_host(smtp_host):
+        if self.LOOPBACK_ONLY and not is_loopback_host(smtp_host):
             raise MailpitError("mailpit mode only sends to a loopback SMTP host (127.0.0.1 / localhost)")
         self.webhook_secret = webhook_secret
         self.state_file = Path(state_file) if state_file else DEFAULT_STATE_FILE
@@ -197,7 +201,7 @@ class MailpitEmailTool:
             subject = subject if subject.lower().startswith("re:") else f"Re: {subject}"
             msg_id = self._smtp_send(row["email"], subject, body, in_reply_to=row["last_message_id"])
             db.execute("UPDATE mp_lead SET last_message_id = ? WHERE tool_lead_id = ?", (msg_id, tool_lead_id))
-        logger.info("mailpit tool: reply sent for %s", tool_lead_id)
+        logger.info("%s tool: reply sent for %s", self.LABEL, tool_lead_id)
         return True
 
     def parse_webhook(self, headers: Mapping[str, str], body: bytes,

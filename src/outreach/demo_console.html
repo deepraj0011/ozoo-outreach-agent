@@ -1,0 +1,581 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ozoo Outreach Agent</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com/3.4.16"></script>
+<script>
+tailwind.config = { theme: { extend: {
+  fontFamily: { sans: ['Inter','ui-sans-serif','system-ui'] },
+  colors: { ink: { 950:'#0c1222', 900:'#121a2e', 800:'#1b2540', 700:'#2a3557' },
+            brand: { 50:'#eef3ff', 100:'#dce6ff', 200:'#bccdff', 500:'#4c6fff', 600:'#3a5af0', 700:'#2c46cc' } } } } }
+</script>
+<style>
+  body { font-feature-settings: "cv02","cv03","cv04","cv11"; }
+  .thin::-webkit-scrollbar { width: 6px; height: 6px; } .thin::-webkit-scrollbar-thumb { background:#cbd5e1; border-radius:6px; }
+  .btn { display:inline-flex; align-items:center; justify-content:center; gap:.4rem; border-radius:.55rem; padding:.5rem .8rem; font-size:.8125rem; font-weight:500;
+         border:1px solid #e2e8f0; background:#fff; color:#1e293b; transition:all .15s; white-space:nowrap; }
+  .btn:hover { border-color:#4c6fff; color:#2c46cc; }
+  .btn:disabled { opacity:.45; cursor:not-allowed; }
+  .btn-primary { background:#4c6fff; border-color:#4c6fff; color:#fff; } .btn-primary:hover { background:#3a5af0; color:#fff; }
+  .btn-sm { padding:.35rem .6rem; font-size:.75rem; }
+  .card { background:#fff; border:1px solid #e5e9f0; border-radius:.9rem; }
+  .nav-a { display:flex; align-items:center; gap:.7rem; padding:.55rem .75rem; border-radius:.55rem; color:#a9b3cc; font-size:.875rem; font-weight:500; }
+  .nav-a:hover { background:#1b2540; color:#fff; } .nav-a.on { background:#4c6fff; color:#fff; }
+  .pulse { animation: pulse 1.6s ease-in-out infinite; } @keyframes pulse { 50% { opacity:.35 } }
+  .fade { animation: fade .25s ease-out; } @keyframes fade { from { opacity:0; transform: translateY(4px) } }
+  .slide { animation: slide .22s ease-out; } @keyframes slide { from { transform: translateX(24px); opacity:0 } }
+  input, textarea, select { outline: none; } input:focus, textarea:focus, select:focus { border-color:#4c6fff !important; box-shadow: 0 0 0 3px #dce6ff; }
+</style>
+</head>
+<body class="bg-[#f5f7fb] text-slate-800 font-sans antialiased">
+<div class="flex min-h-screen">
+
+  <!-- Sidebar -->
+  <aside class="hidden md:flex w-60 shrink-0 bg-ink-950 text-white flex-col fixed inset-y-0">
+    <div class="px-5 h-16 flex items-center gap-2.5 border-b border-white/5">
+      <div class="h-8 w-8 rounded-lg bg-gradient-to-br from-brand-500 to-violet-500 grid place-items-center font-bold">O</div>
+      <div class="leading-tight"><div class="font-semibold text-sm">Ozoo.ai</div><div class="text-[11px] text-slate-400">Outreach Agent</div></div>
+    </div>
+    <nav class="p-3 space-y-1" id="nav"></nav>
+    <div class="mt-auto p-4 space-y-3 border-t border-white/5">
+      <div class="flex items-center gap-2 text-xs text-emerald-300"><span class="h-2 w-2 rounded-full bg-emerald-400 pulse"></span>Agent running</div>
+      <div class="text-[11px] text-slate-400">Agent time<div id="clock" class="text-slate-200 text-xs mt-0.5">—</div></div>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main class="flex-1 md:ml-60 min-w-0">
+    <header class="h-16 bg-white border-b border-slate-200 px-4 sm:px-8 flex items-center gap-4 sticky top-0 z-20">
+      <div class="min-w-0"><h1 id="pageTitle" class="font-semibold text-[15px] truncate"></h1><p id="pageSub" class="text-xs text-slate-500 truncate"></p></div>
+      <div class="ml-auto flex items-center gap-2" id="pageActions"></div>
+    </header>
+    <div id="page" class="p-4 sm:p-8 max-w-[1400px]"></div>
+  </main>
+</div>
+
+<!-- Lead drawer -->
+<div id="drawerWrap" class="hidden fixed inset-0 z-40">
+  <div class="absolute inset-0 bg-ink-950/30" onclick="closeLead()"></div>
+  <aside id="drawer" class="slide absolute right-0 inset-y-0 w-full max-w-[640px] bg-white shadow-2xl flex flex-col"></aside>
+</div>
+
+<!-- Modal -->
+<div id="modalWrap" class="hidden fixed inset-0 z-50 bg-ink-950/40 backdrop-blur-sm grid place-items-center p-4">
+  <div id="modal" class="fade bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col"></div>
+</div>
+
+<!-- Toast -->
+<div id="toast" class="hidden fixed bottom-5 right-5 z-[60] bg-ink-950 text-white text-sm rounded-xl px-4 py-3 shadow-xl max-w-sm"></div>
+
+<script>
+// ------------------------------------------------------------------ vocabulary (plan-aligned)
+const STATE = {
+  intake:{label:'New',group:'Intake',c:'bg-slate-100 text-slate-700',d:'bg-slate-400'},
+  in_sequence:{label:'In outreach',group:'Outreach',c:'bg-blue-50 text-blue-700',d:'bg-blue-500'},
+  paused:{label:'On hold',group:'Outreach',c:'bg-amber-50 text-amber-700',d:'bg-amber-500'},
+  engaged:{label:'Replied',group:'Responding',c:'bg-cyan-50 text-cyan-700',d:'bg-cyan-500'},
+  qualifying:{label:'Interested',group:'Responding',c:'bg-violet-50 text-violet-700',d:'bg-violet-500'},
+  booked:{label:'Meeting booked',group:'Booked',c:'bg-emerald-50 text-emerald-700',d:'bg-emerald-500'},
+  handed_off:{label:'Handed to sales',group:'Handed off',c:'bg-green-100 text-green-800',d:'bg-green-600'},
+  nurture:{label:'Nurture',group:'Nurture',c:'bg-orange-50 text-orange-700',d:'bg-orange-400'},
+  closed:{label:'Closed',group:'Stopped',c:'bg-slate-100 text-slate-600',d:'bg-slate-500'},
+  suppressed:{label:'Do not contact',group:'Stopped',c:'bg-rose-50 text-rose-700',d:'bg-rose-500'},
+  rejected:{label:'Rejected at intake',group:'Stopped',c:'bg-rose-50 text-rose-700',d:'bg-rose-400'},
+  archived:{label:'Archived',group:'Stopped',c:'bg-slate-100 text-slate-500',d:'bg-slate-300'},
+};
+const GROUPS = ['All','Outreach','Responding','Booked','Handed off','Nurture','Stopped'];
+const KIND = {
+  state_change:'Status changed', sent:'Email sent', reply:'Email reply', click:'Link clicked', open:'Email opened',
+  bounce_hard:'Email bounced', bounce_soft:'Soft bounce', unsubscribe:'Unsubscribed', wa_text:'WhatsApp message', wa_button:'WhatsApp button tapped',
+  wa_sent:'WhatsApp sent', wa_delivered:'WhatsApp delivered', wa_read:'WhatsApp read', wa_failed:'WhatsApp failed', booking_created:'Meeting booked',
+  booking_cancelled:'Meeting cancelled', booking_rescheduled:'Meeting rescheduled', meeting_ended:'Meeting held', no_show:'No-show', form_submitted:'Booking form answered',
+  teams_command:'Sales action', integration_error:'Integration issue',
+};
+const ALERT = {
+  hot_lead:['Hot lead','bg-rose-50 text-rose-700'], booked:['Meeting booked','bg-emerald-50 text-emerald-700'], handoff:['Handed to sales','bg-green-100 text-green-800'],
+  wa_human_needed:['Chat needs a person','bg-violet-50 text-violet-700'], engaged:['Lead engaged','bg-cyan-50 text-cyan-700'], stuck_lead:['Stuck lead','bg-amber-50 text-amber-700'],
+  unsure:['Reply needs a look','bg-amber-50 text-amber-700'], integration_error:['Integration issue','bg-rose-50 text-rose-700'], tool_stop_failed:['Stop failed','bg-rose-50 text-rose-700'],
+};
+const AI = {interested:'Interested', question:'Has a question', not_now:'Not now', not_interested:'Not interested', unsubscribe:'Unsubscribe', ooo:'Out of office', wrong_person:'Wrong person', unsure:'Unsure'};
+const ICON = {
+  overview:'<path d="M3 13h8V3H3zM13 21h8V11h-8zM3 21h8v-6H3zM13 3v6h8V3z"/>',
+  leads:'<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>',
+  chat:'<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+  bell:'<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0"/>',
+  flow:'<circle cx="5" cy="6" r="2"/><circle cx="19" cy="6" r="2"/><circle cx="12" cy="18" r="2"/><path d="M7 6h10M6 8l5 8M18 8l-5 8"/>',
+  gear:'<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/>',
+};
+const PAGES = [
+  {id:'overview', label:'Overview', icon:'overview', title:'Overview', sub:'How the agent is doing, at a glance'},
+  {id:'leads', label:'Leads', icon:'leads', title:'Leads', sub:'Everyone the agent is following up with'},
+  {id:'conversations', label:'Conversations', icon:'chat', title:'WhatsApp conversations', sub:'Chatbot and salesperson chats with leads'},
+  {id:'alerts', label:'Sales alerts', icon:'bell', title:'Sales alerts', sub:'What the sales team is told (Microsoft Teams in production)'},
+  {id:'how', label:'How it works', icon:'flow', title:'How the agent works', sub:'The outreach plan, step by step'},
+  {id:'settings', label:'Settings', icon:'gear', title:'Settings', sub:'Connections, time controls and sample data'},
+];
+
+// ------------------------------------------------------------------ helpers
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const svg = (k, cls='h-[18px] w-[18px]') => `<svg class="${cls}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">${ICON[k]}</svg>`;
+const badge = st => { const m = STATE[st] || {label:st,c:'bg-slate-100'}; return `<span class="inline-flex items-center gap-1.5 text-[11px] font-medium px-2 py-0.5 rounded-full whitespace-nowrap ${m.c}"><span class="h-1.5 w-1.5 rounded-full ${m.d||''}"></span>${esc(m.label)}</span>`; };
+const when = iso => { if (!iso) return '—'; const d = new Date(iso), now = data ? new Date(data.clock) : new Date(), s = (now - d)/1000;
+  if (s < 60) return 'just now'; if (s < 3600) return Math.floor(s/60) + ' min ago'; if (s < 86400) return Math.floor(s/3600) + ' h ago';
+  return d.toLocaleString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'}); };
+const chan = (c, sw) => (c === 'whatsapp' ? '<span class="text-emerald-700">WhatsApp</span>' : c === 'email' ? '<span class="text-blue-700">Email</span>' : '<span class="text-slate-400">—</span>') + (sw ? ' <span class="text-[10px] text-slate-400">switched</span>' : '');
+const bandC = b => ({hot:'text-rose-600', warm:'text-amber-600'}[b] || 'text-slate-400');
+const initials = n => esc((n||'?').split(/\s+/).map(x => x[0]).join('').slice(0,2).toUpperCase());
+const avatar = (n, size='h-9 w-9 text-xs') => `<div class="${size} shrink-0 rounded-full bg-gradient-to-br from-brand-100 to-violet-100 text-brand-700 grid place-items-center font-semibold">${initials(n)}</div>`;
+const empty = (msg, action='') => `<div class="py-16 px-6 text-center"><div class="text-sm text-slate-500">${msg}</div>${action}</div>`;
+function toast(msg, ok=true) { const t = $('toast'); t.textContent = msg; t.className = `fixed bottom-5 right-5 z-[60] text-white text-sm rounded-xl px-4 py-3 shadow-xl max-w-sm ${ok ? 'bg-ink-950' : 'bg-rose-600'}`;
+  clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.add('hidden'), 3500); }
+
+// ------------------------------------------------------------------ state + routing
+let data = null, detail = null, openId = null, page = 'overview', leadFilter = 'All', leadSearch = '', convId = null, convDetail = null, drawerTab = 'activity';
+
+function route() {
+  const h = location.hash.replace(/^#\/?/, '');
+  const [p, id] = h.split('/');
+  page = PAGES.some(x => x.id === p) ? p : 'overview';
+  if (p === 'leads' && id) openLead(+id);
+  if (p === 'import') { page = 'leads'; setTimeout(() => openImport(), 50); }
+  lastRendered = ''; renderPage();
+}
+window.addEventListener('hashchange', route);
+
+async function refresh() {
+  try {
+    const r = await fetch('/demo/api/state'); data = await r.json();
+    if (openId != null) { const d = await fetch('/demo/api/lead/' + openId); detail = d.ok ? await d.json() : null; }
+    if (page === 'conversations' && convId != null) { const d = await fetch('/demo/api/lead/' + convId); convDetail = d.ok ? await d.json() : null; }
+    $('clock').textContent = new Date(data.clock).toLocaleString([], {weekday:'short', month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'});
+    renderPage(true); if (openId != null) renderDrawer();
+  } catch (e) { /* server restarting */ }
+}
+
+async function run(body, quiet) {
+  try {
+    const r = await fetch('/demo/api/run', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    const j = await r.json();
+    if (!quiet) toast(j.ok ? 'Done. The agent is reacting…' : (j.output || 'Failed').trim().split('\n').pop(), j.ok);
+    if (['advance','reset_clock','seed'].includes(body.action)) await fetch('/demo/api/run', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({action:'tick'})});
+  } catch (e) { toast('Could not reach the agent', false); }
+  await refresh(); setTimeout(refresh, 1200); setTimeout(refresh, 3000);
+}
+
+function renderShell() {
+  $('nav').innerHTML = PAGES.map(p => {
+    const n = !data ? 0 : p.id === 'alerts' ? data.alerts.length : p.id === 'conversations' ? data.leads.filter(l => l.last_msg).length : p.id === 'leads' ? data.leads.length : 0;
+    return `<a href="#/${p.id}" class="nav-a ${p.id === page ? 'on' : ''}">${svg(p.icon)}<span class="flex-1">${p.label}</span>${n ? `<span class="text-[10px] font-semibold ${p.id === page ? 'bg-white/20' : 'bg-white/10'} rounded-full px-1.5 py-0.5">${n}</span>` : ''}</a>`; }).join('');
+  const P = PAGES.find(x => x.id === page);
+  $('pageTitle').textContent = P.title; $('pageSub').textContent = P.sub;
+  const acts = {
+    overview: `<button class="btn" onclick="location.hash='#/how'">How it works</button><button class="btn btn-primary" onclick="openImport()">⇪ Import leads</button>`,
+    leads: `<button class="btn" onclick="openAdd()">+ Add lead</button><button class="btn btn-primary" onclick="openImport()">⇪ Import CSV / Excel</button>`,
+  };
+  $('pageActions').innerHTML = acts[page] || '';
+}
+
+let lastRendered = '';
+function renderPage(fromPoll) {
+  renderShell();
+  if (!data) { $('page').innerHTML = '<div class="text-sm text-slate-400">Loading…</div>'; return; }
+  const html = ({overview: pOverview, leads: pLeads, conversations: pConversations, alerts: pAlerts, how: pHow, settings: pSettings}[page])();
+  if (fromPoll && html === lastRendered) return;
+  // keep typed text and focus across re-renders
+  const focused = document.activeElement && document.activeElement.id;
+  const keep = {}; document.querySelectorAll('#page input, #page textarea').forEach(e => { if (e.id) keep[e.id] = e.value; });
+  lastRendered = html;
+  $('page').innerHTML = html;
+  Object.entries(keep).forEach(([id, v]) => { const e = $(id); if (e) e.value = v; });
+  if (focused && $(focused) && $('page').contains($(focused))) { const e = $(focused); e.focus(); try { e.setSelectionRange(e.value.length, e.value.length); } catch (_) {} }
+  if (page === 'conversations') { const t = $('thread'); if (t) t.scrollTop = t.scrollHeight; }
+}
+
+// ------------------------------------------------------------------ Overview
+function pOverview() {
+  const f = data.funnel, max = Math.max(1, f[0].count);
+  const kpi = (label, v, sub, accent='') => `<div class="card px-5 py-4"><div class="text-xs font-medium text-slate-500">${label}</div><div class="text-3xl font-semibold tabular-nums mt-1 ${accent}">${v}</div><div class="text-xs text-slate-400 mt-0.5">${sub}</div></div>`;
+  const get = l => (f.find(x => x.label === l) || {count:0}).count;
+  const pct = (a, b) => b ? Math.round(a / b * 100) + '%' : '—';
+  if (!data.leads.length) return `<div class="card fade p-10 text-center max-w-2xl mx-auto mt-6">
+      <div class="mx-auto h-14 w-14 rounded-full bg-brand-50 text-brand-600 grid place-items-center text-2xl">⇪</div><h2 class="text-lg font-semibold mt-4">Start by adding your leads</h2>
+      <p class="text-sm text-slate-500 mt-1 max-w-md mx-auto">Upload a CSV or Excel file. The agent checks each lead, picks email or WhatsApp, and starts following up on its own.</p>
+      <div class="flex justify-center gap-2 mt-5"><button class="btn btn-primary" onclick="openImport()">⇪ Import CSV / Excel</button>
+      <button class="btn" onclick="run({action:'seed'})">Load 5 sample leads</button></div></div>`;
+  return `<div class="space-y-6 fade">
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      ${kpi('Leads', get('Leads in'), get('Passed intake') + ' passed the intake checks')}
+      ${kpi('Contacted', get('Contacted'), 'by email or WhatsApp')}
+      ${kpi('Replied', get('Replied'), pct(get('Replied'), get('Contacted')) + ' reply rate · target 5–10%')}
+      ${kpi('Meetings booked', get('Meeting booked'), get('Handed to sales') + ' handed to sales', 'text-emerald-600')}
+    </div>
+    <div class="grid grid-cols-1 xl:grid-cols-5 gap-6">
+      <section class="card p-5 xl:col-span-3">
+        <div class="flex items-baseline justify-between"><h2 class="font-semibold text-sm">Lead funnel</h2><span class="text-xs text-slate-400">from intake to sales · % = of the step before</span></div>
+        <div class="mt-4 space-y-2.5">${f.map((x, i) => `<div class="flex items-center gap-3">
+          <div class="w-32 text-xs text-slate-600 shrink-0">${x.label}</div>
+          <div class="flex-1 h-7 bg-slate-50 rounded-md overflow-hidden"><div class="h-full rounded-md bg-gradient-to-r from-brand-500 to-violet-500 flex items-center justify-end pr-2 text-[11px] text-white font-semibold" style="width:${Math.max(x.count/max*100, x.count ? 6 : 0)}%">${x.count || ''}</div></div>
+          <div class="w-12 text-right text-xs text-slate-400 tabular-nums">${i ? pct(x.count, f[i-1].count) : ''}</div></div>`).join('')}</div>
+      </section>
+      <section class="card p-5 xl:col-span-2">
+        <div class="flex items-baseline justify-between"><h2 class="font-semibold text-sm">Where leads are now</h2><a href="#/leads" class="text-xs text-brand-600 hover:underline">All leads →</a></div>
+        <div class="mt-4 grid grid-cols-2 gap-2">${GROUPS.slice(1).map(g => { const n = data.leads.filter(l => (STATE[l.state]||{}).group === g).length;
+          return `<button onclick="leadFilter='${g}';location.hash='#/leads'" class="text-left rounded-lg border border-slate-200 hover:border-brand-500 px-3 py-2.5"><div class="text-xs text-slate-500">${g}</div><div class="text-xl font-semibold tabular-nums">${n}</div></button>`; }).join('')}</div>
+      </section>
+    </div>
+    <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+      <section class="card">
+        <div class="px-5 py-4 border-b border-slate-100 flex items-center gap-2"><span class="h-2 w-2 rounded-full bg-emerald-500 pulse"></span><h2 class="font-semibold text-sm">Live activity</h2></div>
+        <div class="divide-y divide-slate-100 max-h-[420px] overflow-y-auto thin">${data.feed.slice(0, 25).map(e => `
+          <button onclick="openLead(${e.lead_id})" class="w-full text-left px-5 py-3 hover:bg-slate-50 flex gap-3">
+            <div class="min-w-0 flex-1"><div class="text-sm"><span class="font-medium">${esc(KIND[e.kind] || e.kind)}</span> <span class="text-slate-400">·</span> <span class="text-brand-700">${esc(e.lead||'')}</span>${e.verdict === 'bot' ? ' <span class="text-[10px] bg-slate-100 text-slate-500 rounded px-1.5">bot, ignored</span>' : ''}</div>
+            <div class="text-xs text-slate-500 truncate">${esc(prettySummary(e))}</div></div><div class="text-[11px] text-slate-400 whitespace-nowrap">${when(e.at)}</div></button>`).join('') || empty('No activity yet.')}</div>
+      </section>
+      <section class="card">
+        <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between"><h2 class="font-semibold text-sm">Sales alerts</h2><a href="#/alerts" class="text-xs text-brand-600 hover:underline">All alerts →</a></div>
+        <div class="divide-y divide-slate-100 max-h-[420px] overflow-y-auto thin">${data.alerts.slice(0, 8).map(alertRow).join('') || empty('No alerts yet. Sales is told about hot leads, bookings and chats that need a person.')}</div>
+      </section>
+    </div></div>`;
+}
+function prettySummary(e) {
+  let s = e.summary || '';
+  Object.entries(AI).forEach(([k, v]) => { s = s.replace('AI: ' + k, 'AI read it as: ' + v); });
+  if (e.kind === 'state_change') s = s.replace(/^(\w+) → (\w+)/, (m, a, b) => `${(STATE[a]||{label:a}).label} → ${(STATE[b]||{label:b}).label}`);
+  return s.replace(/_/g, ' ');
+}
+const alertRow = a => { const k = ALERT[a.kind] || [a.kind.replace(/_/g,' '), 'bg-slate-100 text-slate-600'];
+  return `<button onclick="${a.lead_id ? `openLead(${a.lead_id})` : ''}" class="w-full text-left px-5 py-3 hover:bg-slate-50 flex gap-3 items-start">
+    <span class="text-[10px] uppercase tracking-wide font-semibold rounded px-1.5 py-0.5 whitespace-nowrap mt-0.5 ${k[1]}">${esc(k[0])}</span>
+    <div class="min-w-0 flex-1"><div class="text-sm font-medium">${esc(a.lead || '')}</div><div class="text-xs text-slate-500 line-clamp-2">${esc(a.text)}</div></div>
+    <div class="text-[11px] text-slate-400 whitespace-nowrap">${when(a.at)}</div></button>`; };
+
+// ------------------------------------------------------------------ Leads
+function pLeads() {
+  const q = leadSearch.toLowerCase();
+  const rows = data.leads.filter(l => (leadFilter === 'All' || (STATE[l.state]||{}).group === leadFilter)
+    && (!q || [l.name, l.company, l.email, l.phone, l.role].some(x => (x||'').toLowerCase().includes(q))));
+  const chips = GROUPS.map(g => { const n = g === 'All' ? data.leads.length : data.leads.filter(l => (STATE[l.state]||{}).group === g).length;
+    return `<button onclick="leadFilter='${g}';renderPage()" class="text-xs font-medium rounded-full px-3 py-1.5 border ${leadFilter === g ? 'bg-ink-950 text-white border-ink-950' : 'bg-white border-slate-200 text-slate-600 hover:border-slate-400'}">${g} <span class="${leadFilter === g ? 'text-slate-300' : 'text-slate-400'}">${n}</span></button>`; }).join('');
+  return `<div class="space-y-4 fade">
+    <div class="flex flex-wrap items-center gap-2">${chips}
+      <input id="leadSearch" oninput="leadSearch=this.value;renderPage()" placeholder="Search name, company, email…" class="ml-auto w-64 border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white"></div>
+    <div class="card overflow-hidden">${rows.length ? `<div class="overflow-x-auto thin"><table class="w-full text-sm">
+      <thead class="bg-slate-50 text-xs text-slate-500"><tr>
+        <th class="text-left font-medium px-5 py-3">Lead</th><th class="text-left font-medium px-3 py-3">Channel</th><th class="text-left font-medium px-3 py-3">Status</th>
+        <th class="text-left font-medium px-3 py-3">Emails sent</th><th class="text-left font-medium px-3 py-3">Engagement</th><th class="text-left font-medium px-3 py-3">Last activity</th></tr></thead>
+      <tbody class="divide-y divide-slate-100">${rows.map(l => `<tr onclick="openLead(${l.id})" class="hover:bg-brand-50/40 cursor-pointer">
+        <td class="px-5 py-3"><div class="flex items-center gap-3">${avatar(l.name)}<div class="min-w-0"><div class="font-medium truncate">${esc(l.name)}</div><div class="text-xs text-slate-500 truncate">${esc(l.role && l.role !== 'Not given' ? l.role + ' · ' : '')}${esc(l.company)}</div></div></div></td>
+        <td class="px-3 py-3 text-xs">${chan(l.channel, l.switched)}</td>
+        <td class="px-3 py-3">${badge(l.state)}${l.email_hold ? '<div class="text-[10px] text-amber-700 mt-1">EU: waiting for approval</div>' : ''}</td>
+        <td class="px-3 py-3 text-xs text-slate-600">${l.channel === 'email' || l.step_sent ? `<div class="flex gap-1">${[1,2,3,4].map(i => `<span class="h-1.5 w-5 rounded-full ${i <= l.step_sent ? 'bg-blue-500' : 'bg-slate-200'}"></span>`).join('')}</div><div class="mt-1 text-slate-400">${l.step_sent} of 4</div>` : '<span class="text-slate-300">—</span>'}</td>
+        <td class="px-3 py-3 text-xs"><span class="font-semibold tabular-nums ${bandC(l.band)}">${l.score}</span> <span class="${bandC(l.band)}">${esc(l.band)}</span></td>
+        <td class="px-3 py-3 text-xs text-slate-500 whitespace-nowrap">${when(l.last_at)}</td></tr>`).join('')}</tbody></table></div>`
+      : data.leads.length ? empty('No leads match this filter.') : empty('No leads yet.', `<div class="flex justify-center gap-2 mt-4"><button class="btn btn-primary" onclick="openImport()">⇪ Import CSV / Excel</button><button class="btn" onclick="run({action:'seed'})">Load 5 sample leads</button></div>`)}</div></div>`;
+}
+
+// ------------------------------------------------------------------ Lead drawer
+async function openLead(id) {
+  if (id == null) return;
+  openId = id; drawerTab = 'activity'; $('drawerWrap').classList.remove('hidden');
+  $('drawer').innerHTML = '<div class="p-8 text-sm text-slate-400">Loading…</div>';
+  const d = await fetch('/demo/api/lead/' + id); detail = d.ok ? await d.json() : null; renderDrawer(true);
+}
+function closeLead() { openId = null; detail = null; $('drawerWrap').classList.add('hidden'); if (location.hash.startsWith('#/leads/')) history.replaceState(null, '', '#/leads'); }
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeLead(); closeModal(); } });
+
+const STEPS = [['intake','Intake'],['in_sequence','Outreach'],['engaged','Replied'],['qualifying','Interested'],['booked','Booked'],['handed_off','Handed off']];
+const stepIndex = st => ({intake:0, in_sequence:1, paused:1, engaged:2, qualifying:3, booked:4, handed_off:5}[st]);
+
+function renderDrawer(first) {
+  const box = $('drawer');
+  if (!detail) { box.innerHTML = '<div class="p-8 text-sm text-slate-400">Lead not found.</div>'; return; }
+  const focused = document.activeElement && box.contains(document.activeElement) ? document.activeElement.id : null;
+  const keep = {}; box.querySelectorAll('input, textarea').forEach(e => { if (e.id) keep[e.id] = e.value; });
+  const scroll = $('drawerBody') ? $('drawerBody').scrollTop : 0;
+  const l = detail.lead, si = stepIndex(l.state);
+  const side = si === undefined ? `<div class="mt-3 text-xs rounded-lg px-3 py-2 ${STATE[l.state].c}">Left the main path: <b>${esc(STATE[l.state].label)}</b>${l.nurture_track ? ` · nurture track “${esc(l.nurture_track.replace(/_/g,' '))}”${l.nurture_until ? ' until ' + new Date(l.nurture_until).toLocaleDateString() : ''}` : ''}${l.pause_reason ? ' · ' + esc(l.pause_reason.replace(/_/g,' ')) : ''}</div>` : '';
+  const notes = [];
+  if (l.email_hold) notes.push('Email is on hold: EU lead, waiting for legal approval. Nothing is sent until then.');
+  if (l.pause_reason && si !== undefined) notes.push('On hold: ' + l.pause_reason.replace(/_/g,' '));
+  if (l.human_owner) notes.push(`${l.human_owner} (sales) has taken over the WhatsApp chat. The bot is quiet.`);
+  box.innerHTML = `
+    <div class="px-6 py-5 border-b border-slate-100">
+      <div class="flex items-start gap-3">${avatar(l.name, 'h-11 w-11 text-sm')}
+        <div class="min-w-0 flex-1"><div class="flex items-center gap-2 flex-wrap"><h2 class="font-semibold text-lg leading-tight">${esc(l.name)}</h2>${badge(l.state)}</div>
+        <div class="text-sm text-slate-500">${esc(l.role && l.role !== 'Not given' ? l.role + ' at ' : '')}${esc(l.company)}</div>
+        <div class="text-xs text-slate-400 mt-0.5">${[l.email, l.phone].filter(Boolean).map(esc).join(' · ')}</div></div>
+        <button onclick="closeLead()" class="text-slate-400 hover:text-slate-700 text-2xl leading-none">×</button></div>
+      <div class="mt-5 flex items-start">${STEPS.map(([k, label], i) => { const done = si !== undefined && i <= si, cur = si === i;
+        return `<div class="flex items-start ${i < STEPS.length - 1 ? 'flex-1' : ''}"><div class="flex flex-col items-center gap-1 w-14">
+          <div class="h-6 w-6 rounded-full grid place-items-center text-[10px] font-semibold ${cur ? 'bg-brand-500 text-white ring-4 ring-brand-100' : done ? 'bg-brand-500 text-white' : 'bg-slate-100 text-slate-400'}">${done && !cur ? '✓' : i + 1}</div>
+          <div class="text-[10px] text-center ${cur ? 'text-brand-700 font-semibold' : 'text-slate-400'}">${label}</div></div>
+          ${i < STEPS.length - 1 ? `<div class="flex-1 h-0.5 mt-3 ${si !== undefined && i < si ? 'bg-brand-500' : 'bg-slate-200'}"></div>` : ''}</div>`; }).join('')}</div>
+      ${side}
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-4">${[['Channel', chan(l.channel, l.switched)], ['Emails sent', l.step_sent + ' of 4'],
+        ['Engagement', `<span class="${bandC(l.band)}">${l.score} · ${esc(l.band)}</span>`], ['Chat handled by', l.human_owner ? 'Sales' : l.channel === 'whatsapp' ? 'Bot' : '—']]
+        .map(([k, v]) => `<div class="bg-slate-50 rounded-lg px-3 py-2"><div class="text-[10px] uppercase tracking-wide text-slate-400">${k}</div><div class="text-xs font-medium mt-0.5">${v}</div></div>`).join('')}</div>
+      ${notes.map(n => `<div class="mt-2 text-xs bg-amber-50 text-amber-800 rounded-lg px-3 py-2">${esc(n)}</div>`).join('')}
+    </div>
+    <div class="px-6 border-b border-slate-100 flex gap-6 text-sm overflow-x-auto">${[['activity','Activity'],['chat','WhatsApp chat'],['alerts','Alerts'],['demo','▶ Simulate the lead']].map(([k, t]) =>
+      `<button onclick="drawerTab='${k}';renderDrawer()" class="py-3 border-b-2 font-medium whitespace-nowrap ${drawerTab === k ? 'border-brand-500 text-brand-700' : 'border-transparent text-slate-500 hover:text-slate-800'}">${t}</button>`).join('')}</div>
+    <div id="drawerBody" class="flex-1 overflow-y-auto thin p-6">${drawerTab === 'activity' ? dActivity() : drawerTab === 'chat' ? dChat(detail) : drawerTab === 'alerts' ? dAlerts() : dDemo(l)}</div>`;
+  Object.entries(keep).forEach(([id, v]) => { const e = $(id); if (e) e.value = v; });
+  if (focused && $(focused)) $(focused).focus();
+  if (!first && $('drawerBody')) $('drawerBody').scrollTop = scroll;
+}
+function dActivity() {
+  const ev = [...detail.events].reverse();
+  if (!ev.length) return empty('Nothing yet. The agent picks up new leads within about 10 seconds.');
+  return `<ol class="relative border-l border-slate-200 ml-2 space-y-5">${ev.map(e => { const st = e.kind === 'state_change';
+    return `<li class="ml-5"><span class="absolute -left-[6px] mt-1.5 h-3 w-3 rounded-full border-2 border-white ${st ? 'bg-brand-500' : e.channel === 'whatsapp' ? 'bg-emerald-500' : e.channel === 'email' ? 'bg-blue-500' : 'bg-slate-300'}"></span>
+      <div class="flex items-baseline justify-between gap-3"><div class="text-sm font-medium">${esc(KIND[e.kind] || e.kind)} ${e.verdict === 'bot' ? '<span class="text-[10px] bg-slate-100 text-slate-500 rounded px-1.5 font-normal">bot, ignored</span>' : ''}</div>
+      <div class="text-[11px] text-slate-400 whitespace-nowrap">${when(e.at)}</div></div>
+      ${e.summary ? `<div class="text-xs text-slate-500 mt-0.5">${esc(prettySummary(e))}</div>` : ''}</li>`; }).join('')}</ol>`;
+}
+function bubbles(d) {
+  return d.chat.map(m => { const out = m.direction === 'out';
+    const who = m.author === 'bot' ? '🤖 Ozoo bot' : m.author === 'human' ? '👤 Sales' : esc(d.lead.name);
+    const TAP = {BOOK_DEMO:'👆 Tapped “Book a demo”', ASK_QUESTION:'👆 Tapped “Ask a question”'};
+    const text = m.text.startsWith('[template:') ? `📨 Approved intro message (${esc(m.text.slice(10, -1))})` : TAP[m.text] || esc(m.text);
+    return `<div class="flex ${out ? 'justify-end' : 'justify-start'}"><div class="max-w-[80%] rounded-lg px-3 py-2 shadow-sm ${out ? 'bg-[#d9fdd3]' : 'bg-white'}">
+      <div class="text-[10px] font-semibold ${out ? 'text-emerald-700' : 'text-slate-500'}">${who}</div><div class="text-sm whitespace-pre-wrap">${text}</div>
+      <div class="text-[10px] text-slate-400 text-right">${when(m.at)}</div></div></div>`; }).join('');
+}
+function dChat(d) {
+  if (!d.chat.length) return empty('No WhatsApp messages with this lead.');
+  return `<div class="bg-[#efeae2] rounded-xl p-4 space-y-2">${bubbles(d)}</div>`;
+}
+function dAlerts() {
+  if (!detail.alerts.length) return empty('No alerts for this lead.');
+  return detail.alerts.map(a => { const k = ALERT[a.kind] || [a.kind.replace(/_/g,' '), 'bg-slate-100 text-slate-600'];
+    return `<div class="border border-slate-200 rounded-lg p-3 mb-2"><div class="flex items-center gap-2"><span class="text-[10px] uppercase tracking-wide font-semibold rounded px-1.5 py-0.5 ${k[1]}">${esc(k[0])}</span><span class="text-[11px] text-slate-400">${when(a.at)}</span></div>
+      <div class="text-sm mt-1.5 text-slate-700">${esc(a.text)}</div></div>`; }).join('');
+}
+function dDemo(l) {
+  const id = l.id, hasEmail = !!l.email, hasWa = !!l.phone && l.consent_whatsapp;
+  const sec = (title, color, body) => `<div class="border border-slate-200 rounded-xl p-4 space-y-3"><div class="text-xs font-semibold ${color}">${title}</div>${body}</div>`;
+  let h = `<div class="text-xs text-slate-500 mb-4 bg-slate-50 rounded-lg px-3 py-2">For the demo: act as <b>${esc(l.name)}</b>. Each button sends the same signal the real service would (email, WhatsApp, Cal.com) and the agent reacts on its own. With real accounts connected, the lead can simply reply from their own phone instead.</div><div class="space-y-3">`;
+  if (hasEmail) h += sec('✉ Email', 'text-blue-700', `
+    <textarea id="replyText" rows="2" class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm">Sounds interesting. Can we talk next week?</textarea>
+    <div class="flex flex-wrap gap-1.5"><button class="btn btn-primary btn-sm" onclick="run({action:'email_reply',lead:${id},text:$('replyText').value})">Lead replies</button>
+      <button class="btn btn-sm" onclick="$('replyText').value='Not now, maybe in March.'">“Not now”</button>
+      <button class="btn btn-sm" onclick="$('replyText').value='I am out of office until 2026-12-01.'">“Out of office”</button>
+      <button class="btn btn-sm" onclick="$('replyText').value='Please remove me from your list.'">“Remove me”</button></div>
+    <div class="flex flex-wrap gap-1.5 pt-2 border-t border-slate-100"><button class="btn btn-sm" onclick="run({action:'click',lead:${id},tag:'pricing'})">Clicks pricing link</button>
+      <button class="btn btn-sm" onclick="run({action:'click',lead:${id},tag:'case_study'})">Clicks case study</button>
+      <button class="btn btn-sm" onclick="run({action:'scanner_click',lead:${id}})">Security scanner click</button>
+      <button class="btn btn-sm" onclick="run({action:'unsubscribe',lead:${id}})">Unsubscribes</button>
+      <button class="btn btn-sm" onclick="run({action:'email_bounce',lead:${id}})">Email bounces</button></div>`);
+  if (hasWa) h += sec('💬 WhatsApp', 'text-emerald-700', `
+    <div class="flex flex-wrap gap-1.5"><button class="btn btn-sm" onclick="run({action:'wa_button',lead:${id},button:'book_demo'})">Taps “Book a demo”</button>
+      <button class="btn btn-sm" onclick="run({action:'wa_button',lead:${id},button:'ask_question'})">Taps “Ask a question”</button>
+      <button class="btn btn-sm" onclick="run({action:'wa_not_on_whatsapp',lead:${id}})">Number not on WhatsApp</button></div>
+    <div class="flex gap-2"><input id="waText" class="flex-1 border border-slate-200 rounded-lg px-3 py-2 text-sm" value="What would a custom price be for us?">
+      <button class="btn btn-primary btn-sm" onclick="run({action:'wa_text',lead:${id},text:$('waText').value})">Lead sends</button></div>`);
+  h += sec('📅 Booking (Cal.com)', 'text-slate-700', `<div class="flex flex-wrap gap-1.5"><button class="btn btn-sm" onclick="run({action:'cal_booked',lead:${id}})">Books a meeting</button>
+      <button class="btn btn-sm" onclick="run({action:'cal_meeting_ended',lead:${id}})">Meeting held</button></div>`);
+  if (hasWa) h += sec('👤 Salesperson (from Teams)', 'text-violet-700', `<div class="flex gap-2"><input id="salesText" class="flex-1 border border-slate-200 rounded-lg px-3 py-2 text-sm" value="Hi, Raj from Ozoo here. Happy to share a quote.">
+      <button class="btn btn-sm" onclick="run({action:'teams_wa',lead:${id},text:$('salesText').value})">Take over & send</button></div>
+      <button class="btn btn-sm" onclick="run({action:'teams_done',lead:${id}})">Hand chat back to the bot</button>`);
+  return h + '</div>';
+}
+
+// ------------------------------------------------------------------ Conversations
+function pConversations() {
+  const list = data.leads.filter(l => l.last_msg || (l.channel === 'whatsapp' && l.phone))
+    .sort((a, b) => ((b.last_msg||{}).at || '').localeCompare((a.last_msg||{}).at || ''));
+  if (!list.length) return `<div class="card">${empty('No WhatsApp conversations yet. Leads who opted in to WhatsApp get the approved intro message first.')}</div>`;
+  if (convId == null || !list.some(l => l.id === convId)) { convId = list[0].id; convDetail = null; setTimeout(() => selectConv(convId), 0); }
+  const cur = convDetail && convDetail.lead.id === convId ? convDetail : null;
+  const l = cur ? cur.lead : list.find(x => x.id === convId);
+  return `<div class="card overflow-hidden grid grid-cols-1 lg:grid-cols-[320px_1fr] h-[calc(100vh-10rem)] min-h-[520px] fade">
+    <div class="border-r border-slate-100 overflow-y-auto thin">${list.map(x => `<button onclick="selectConv(${x.id})" class="w-full text-left px-4 py-3 flex gap-3 border-b border-slate-50 ${x.id === convId ? 'bg-brand-50' : 'hover:bg-slate-50'}">
+      ${avatar(x.name)}<div class="min-w-0 flex-1"><div class="flex items-baseline justify-between gap-2"><span class="font-medium text-sm truncate">${esc(x.name)}</span><span class="text-[10px] text-slate-400 whitespace-nowrap">${x.last_msg ? when(x.last_msg.at) : ''}</span></div>
+      <div class="text-xs text-slate-500 truncate">${x.last_msg ? (x.last_msg.author === 'bot' ? '🤖 ' : x.last_msg.author === 'human' ? '👤 ' : '') + esc(x.last_msg.text.startsWith('[template:') ? 'Intro message sent' : x.last_msg.text) : 'Waiting for the intro message…'}</div>
+      ${x.human_owner ? '<div class="text-[10px] text-violet-700 mt-0.5">Sales has the chat</div>' : ''}</div></button>`).join('')}</div>
+    <div class="flex flex-col min-h-0">
+      <div class="px-5 py-3 border-b border-slate-100 flex items-center gap-3">${avatar(l.name)}<div class="min-w-0 flex-1"><div class="font-medium text-sm">${esc(l.name)} <span class="text-slate-400 font-normal">· ${esc(l.company)}</span></div>
+        <div class="text-xs text-slate-500">${esc(l.phone || '')} · ${l.human_owner ? '👤 Handled by sales (' + esc(l.human_owner) + ')' : '🤖 Handled by the bot'}</div></div>${badge(l.state)}
+        <button class="btn btn-sm" onclick="openLead(${l.id})">Lead details</button></div>
+      <div id="thread" class="flex-1 overflow-y-auto thin bg-[#efeae2] p-5 space-y-2">${cur ? (cur.chat.length ? bubbles(cur) : empty('No messages yet.')) : '<div class="text-sm text-slate-500">Loading…</div>'}</div>
+      <div class="border-t border-slate-100 p-3 space-y-2 bg-white">
+        <div class="flex gap-2"><input id="convSales" class="flex-1 border border-slate-200 rounded-lg px-3 py-2 text-sm" placeholder="Reply as a salesperson (this takes the chat over from the bot)…" onkeydown="if(event.key==='Enter')$('convSend').click()">
+          <button id="convSend" class="btn btn-primary" onclick="if($('convSales').value.trim()){run({action:'teams_wa',lead:${l.id},text:$('convSales').value});$('convSales').value=''}">Send</button>
+          ${l.human_owner ? `<button class="btn" onclick="run({action:'teams_done',lead:${l.id}})">Hand back to bot</button>` : ''}</div>
+        <div class="flex gap-2 items-center"><span class="text-[10px] uppercase tracking-wide text-slate-400 w-12 shrink-0">Demo</span><input id="convLead" class="flex-1 border border-dashed border-slate-300 rounded-lg px-3 py-1.5 text-xs" placeholder="Type a message as the lead, to show the bot answering…" onkeydown="if(event.key==='Enter')$('convLeadSend').click()">
+          <button id="convLeadSend" class="btn btn-sm" onclick="if($('convLead').value.trim()){run({action:'wa_text',lead:${l.id},text:$('convLead').value});$('convLead').value=''}">Send as lead</button></div>
+      </div></div></div>`;
+}
+async function selectConv(id) { convId = id; const d = await fetch('/demo/api/lead/' + id); convDetail = d.ok ? await d.json() : null; lastRendered = ''; renderPage(); }
+
+// ------------------------------------------------------------------ Alerts
+function pAlerts() {
+  return `<div class="card overflow-hidden fade"><div class="divide-y divide-slate-100">${data.alerts.map(alertRow).join('') || empty('No alerts yet. Sales hears about hot leads, booked meetings, handoffs and chats that need a person.')}</div></div>`;
+}
+
+// ------------------------------------------------------------------ How it works (the plan)
+function pHow() {
+  const n = g => data.leads.filter(l => (STATE[l.state]||{}).group === g).length;
+  const stage = (num, title, live, items, color) => `<div class="card p-5"><div class="flex items-center gap-2"><span class="h-7 w-7 rounded-full grid place-items-center text-xs font-bold text-white ${color}">${num}</span><h3 class="font-semibold text-sm">${title}</h3></div>
+    <ul class="mt-3 space-y-1.5 text-xs text-slate-600">${items.map(i => `<li class="flex gap-2"><span class="text-slate-300">•</span><span>${i}</span></li>`).join('')}</ul>
+    <div class="mt-3 text-[11px] text-slate-400">Now: <b class="text-slate-700">${live}</b> lead${live === 1 ? '' : 's'}</div></div>`;
+  const arrow = '<div class="hidden xl:flex items-center justify-center text-slate-300 text-xl">→</div>';
+  return `<div class="space-y-8 fade">
+    <p class="text-sm text-slate-600 max-w-3xl">The agent follows up on every lead by email or WhatsApp, reads the replies with AI, books qualified meetings and hands them to sales with the full history. <b>Its job ends when a qualified meeting is handed to sales.</b> Finding leads is not part of it: it starts at intake.</p>
+    <section class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr_auto_1fr] gap-3 items-stretch">
+      ${stage(1, 'Intake check', n('Intake'), ['Consent and do-not-contact list checked', 'Email address verified', 'EU leads held until legal approval', 'Picks email or WhatsApp'], 'bg-slate-500')}${arrow}
+      ${stage(2, 'Outreach', n('Outreach'), ['Email: 4 personalised emails', 'WhatsApp: approved intro with 2 buttons', 'Bots and scanners filtered out', 'Clicks raise an engagement score'], 'bg-blue-500')}${arrow}
+      ${stage(3, 'Reply handling', n('Responding'), ['AI reads every reply', 'Interested → booking link', 'Not now → nurture until then', 'Stop → never contacted again'], 'bg-violet-500')}${arrow}
+      ${stage(4, 'Book a meeting', n('Booked'), ['Booking link (Cal.com)', 'Reminders before the call', 'No-show → reschedule message'], 'bg-emerald-500')}${arrow}
+      ${stage(5, 'Hand to sales', n('Handed off'), ['Alert in Microsoft Teams', 'Full summary: emails, chat, score', 'Agent stops outreach'], 'bg-green-600')}
+    </section>
+    <section class="card p-5 flex flex-wrap items-center gap-4"><span class="h-7 w-7 rounded-full grid place-items-center text-xs font-bold text-white bg-orange-400">↻</span>
+      <div class="flex-1 min-w-[240px]"><h3 class="font-semibold text-sm">Nurture loop</h3><p class="text-xs text-slate-600 mt-0.5">“Not now”, no reply or low fit → one useful message every few weeks. A reply, a pricing visit or a booking brings the lead straight back. 6 months with no activity → archived.</p></div>
+      <div class="text-[11px] text-slate-400">Now: <b class="text-slate-700">${n('Nurture')}</b></div></section>
+    <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+      <section class="card p-5"><h3 class="font-semibold text-sm">Email sequence</h3><p class="text-xs text-slate-500 mt-0.5">Sent automatically. Any reply, unsubscribe, bounce or booking stops it at once.</p>
+        <div class="mt-5 relative"><div class="absolute left-[10%] right-[10%] top-3 h-0.5 bg-slate-200"></div><div class="relative grid grid-cols-5">
+          ${[['Day 0','Email 1','Intro'],['Day 4','Email 2','Tailored to clicks'],['Day 9','Email 3','Proof / case study'],['Day 15','Email 4','Last note'],['+5 days','Nurture','If still silent']].map(([d, t, s], i) =>
+            `<div class="flex flex-col items-center text-center px-1"><div class="h-6 w-6 rounded-full ${i < 4 ? 'bg-blue-500' : 'bg-orange-400'} text-white text-[10px] font-semibold grid place-items-center ring-4 ring-white">${i < 4 ? i + 1 : '↻'}</div>
+            <div class="text-[11px] text-slate-400 mt-2">${d}</div><div class="text-xs font-medium">${t}</div><div class="text-[11px] text-slate-500">${s}</div></div>`).join('')}</div></div></section>
+      <section class="card p-5"><h3 class="font-semibold text-sm">WhatsApp (opted-in leads only)</h3><p class="text-xs text-slate-500 mt-0.5">The first message must be a template Meta has approved. Free chat is allowed for 24 h after the lead writes.</p>
+        <div class="mt-4 grid grid-cols-2 gap-2 text-xs">
+          <div class="rounded-lg bg-emerald-50 px-3 py-2"><b class="text-emerald-800">Taps “Book a demo”</b><div class="text-emerald-900/70">Gets the booking link</div></div>
+          <div class="rounded-lg bg-emerald-50 px-3 py-2"><b class="text-emerald-800">Taps “Ask a question”</b><div class="text-emerald-900/70">Chatbot answers from the knowledge base</div></div>
+          <div class="rounded-lg bg-violet-50 px-3 py-2"><b class="text-violet-800">Price or tricky question</b><div class="text-violet-900/70">Bot stops, a salesperson takes over</div></div>
+          <div class="rounded-lg bg-amber-50 px-3 py-2"><b class="text-amber-800">No reply</b><div class="text-amber-900/70">1 reminder after 48 h, then nurture or email</div></div></div>
+        <div class="mt-3 text-[11px] text-slate-500"><b>Bot rules:</b> never quotes custom prices · never promises features or dates · hands to a person when unsure · every chat logged.</div></section>
+      <section class="card p-5"><h3 class="font-semibold text-sm">How the AI reads replies</h3>
+        <div class="mt-3 flex flex-wrap gap-1.5">${[['Interested','→ booking link','bg-emerald-50 text-emerald-800'],['Has a question','→ answer + link','bg-cyan-50 text-cyan-800'],['Not now','→ nurture until then','bg-orange-50 text-orange-800'],['Out of office','→ pause, resume after','bg-amber-50 text-amber-800'],['Wrong person','→ ask for the right one','bg-slate-100 text-slate-700'],['Not interested','→ close politely','bg-slate-100 text-slate-700'],['Unsubscribe','→ never contact again','bg-rose-50 text-rose-800'],['Unsure','→ a person checks','bg-violet-50 text-violet-800']]
+          .map(([a, b, c]) => `<span class="text-xs rounded-lg px-2.5 py-1.5 ${c}"><b>${a}</b> ${b}</span>`).join('')}</div></section>
+      <section class="card p-5"><h3 class="font-semibold text-sm">Engagement score</h3><p class="text-xs text-slate-500 mt-0.5">Only real clicks count. Opens are ignored (Apple Mail fakes them) and bot clicks are filtered out.</p>
+        <div class="mt-3 grid grid-cols-3 gap-2 text-xs">${[['Homepage','+2'],['Product / case study','+5'],['Pricing or booking','+10']].map(([a, b]) => `<div class="rounded-lg bg-slate-50 px-3 py-2"><div class="text-slate-500">${a}</div><div class="font-semibold">${b}</div></div>`).join('')}</div>
+        <div class="mt-3 flex flex-wrap gap-2 text-xs"><span class="rounded-full bg-slate-100 text-slate-600 px-2.5 py-1">Cold 0–4</span><span class="rounded-full bg-amber-50 text-amber-700 px-2.5 py-1">Warm 5–14</span><span class="rounded-full bg-rose-50 text-rose-700 px-2.5 py-1">Hot 15+</span></div></section>
+    </div></div>`;
+}
+
+// ------------------------------------------------------------------ Settings
+function pSettings() {
+  const m = data.modes;
+  const conn = (title, desc, mode, realLabel, simLabel) => { const real = mode === 'real' || mode === 'gmail';
+    return `<div class="card p-5 flex gap-4 items-start"><div class="flex-1"><div class="font-semibold text-sm">${title}</div><div class="text-xs text-slate-500 mt-0.5">${desc}</div></div>
+      <span class="text-[11px] font-medium rounded-full px-2.5 py-1 whitespace-nowrap ${real ? 'bg-emerald-50 text-emerald-700' : mode === 'mailpit' ? 'bg-blue-50 text-blue-700' : 'bg-slate-100 text-slate-600'}">${real ? '● ' + realLabel : mode === 'mailpit' ? '● Local test inbox' : '○ ' + simLabel}</span></div>`; };
+  return `<div class="space-y-8 fade max-w-4xl">
+    <section><h2 class="font-semibold text-sm mb-3">Connections</h2><div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+      ${conn('Email', m.email === 'gmail' ? 'Sending from a real Gmail mailbox; replies are read automatically.' : m.email === 'real' ? 'Sending through Instantly.' : m.email === 'mailpit' ? 'Real emails to a test inbox on this computer (localhost:8025).' : 'Emails are recorded but not sent.', m.email, m.email === 'gmail' ? 'Gmail (real)' : 'Instantly (real)', 'Simulated')}
+      ${conn('WhatsApp', m.whatsapp === 'real' ? 'Real messages through the WhatsApp Cloud API.' : 'Messages are recorded but not sent.', m.whatsapp, 'WhatsApp (real)', 'Simulated')}
+      ${conn('AI model', m.ai === 'real' ? 'A real AI model reads replies and runs the chatbot.' : 'A simple rule-based stand-in reads replies.', m.ai, 'Connected', 'Rule-based')}
+      ${conn('Sales alerts', m.alerts === 'real' ? 'Posted to the Microsoft Teams sales channel.' : 'Shown on the Sales alerts page.', m.alerts, 'Microsoft Teams', 'In this app')}
+    </div><p class="text-xs text-slate-400 mt-2">Connections are set in the settings file. docs/REAL_DEMO.md explains how to connect free Gmail, WhatsApp and AI accounts.</p></section>
+    <section class="card p-5"><h2 class="font-semibold text-sm">Time machine</h2><p class="text-xs text-slate-500 mt-0.5">Follow-ups happen over days. Skip ahead to see them go out now. Agent time: <b>${new Date(data.clock).toLocaleString()}</b></p>
+      <div class="flex flex-wrap gap-2 mt-3"><button class="btn" onclick="run({action:'advance',hours:24})">+1 day</button><button class="btn" onclick="run({action:'advance',hours:48})">+2 days</button>
+        <button class="btn" onclick="run({action:'advance',hours:96})">+4 days</button><button class="btn" onclick="run({action:'tick'})">Run the agent now</button><button class="btn" onclick="run({action:'reset_clock'})">Back to today</button></div></section>
+    <section class="card p-5"><h2 class="font-semibold text-sm">Sample data</h2><p class="text-xs text-slate-500 mt-0.5">Five example leads: email only, WhatsApp only, both channels, an EU lead (held) and an address that bounces.</p>
+      <div class="flex flex-wrap gap-2 mt-3"><button class="btn" onclick="run({action:'seed'})">Load sample leads</button><a class="btn" href="/demo/api/sample.csv">⤓ Download import template</a></div></section>
+  </div>`;
+}
+
+// ------------------------------------------------------------------ modals: import + add lead
+function openModal(html) { $('modal').innerHTML = html; $('modalWrap').classList.remove('hidden'); }
+function closeModal() { $('modalWrap').classList.add('hidden'); }
+$('modalWrap').addEventListener('click', e => { if (e.target === $('modalWrap')) closeModal(); });
+
+let impFile = null;
+const OUT = {accepted:['Accepted, outreach started','bg-emerald-50 text-emerald-700'], held_eu:['Held: EU, waiting for approval','bg-amber-50 text-amber-700'],
+  held_account:['Held: a colleague is already talking to us','bg-amber-50 text-amber-700'], held_verify:['Held: email check pending','bg-amber-50 text-amber-700'],
+  duplicate:['Already in the system','bg-slate-100 text-slate-600'], skipped_duplicate:['Already in the system','bg-slate-100 text-slate-600'],
+  suppressed:['On the do-not-contact list','bg-rose-50 text-rose-700'], skipped_suppressed:['On the do-not-contact list','bg-rose-50 text-rose-700'],
+  rejected:['Rejected','bg-rose-50 text-rose-700'], skipped:['Skipped: missing data','bg-slate-100 text-slate-500'], error:['Error','bg-rose-50 text-rose-700']};
+const FIELD_L = {name:'Name', first_name:'First name', last_name:'Last name', company:'Company', role:'Role', email:'Email', phone:'Phone / WhatsApp', country:'Country', consent_whatsapp:'WhatsApp opt-in', industry:'Industry', size:'Company size'};
+const modalHead = (t, s) => `<div class="px-6 py-4 border-b border-slate-100 flex items-start justify-between gap-4"><div><h3 class="font-semibold">${t}</h3><p class="text-xs text-slate-500 mt-0.5">${s}</p></div><button onclick="closeModal()" class="text-slate-400 hover:text-slate-700 text-2xl leading-none">×</button></div>`;
+
+function openImport(err) {
+  impFile = null;
+  openModal(`${modalHead('Import leads', 'Upload a CSV or Excel file. Each lead goes through the intake checks, then the agent starts outreach on its own.')}
+    <div class="p-6 space-y-4 overflow-y-auto thin">
+      <label id="drop" class="block border-2 border-dashed border-slate-300 hover:border-brand-500 rounded-xl p-12 text-center cursor-pointer transition">
+        <input type="file" id="impInput" accept=".csv,.xlsx,.xlsm,.txt" class="hidden">
+        <div class="mx-auto h-12 w-12 rounded-full bg-brand-50 text-brand-600 grid place-items-center text-xl">⇪</div>
+        <div class="font-medium mt-3">Drop your file here, or click to choose</div>
+        <div class="text-xs text-slate-500 mt-1">.csv or .xlsx · up to 2,000 leads</div></label>
+      ${err ? `<div class="text-sm text-rose-700 bg-rose-50 rounded-lg px-3 py-2">${esc(err)}</div>` : ''}
+      <div class="text-xs text-slate-500 bg-slate-50 rounded-lg px-4 py-3"><b class="text-slate-700">Columns we recognise:</b> Name (or First name + Last name), Company, Role / Title, Email, Phone / WhatsApp, Country, WhatsApp opt-in (yes/no).
+        Each lead needs a name, a company and an email or a phone. Leads with only a phone need WhatsApp opt-in.</div></div>
+    <div class="px-6 py-4 border-t border-slate-100 flex justify-between"><a href="/demo/api/sample.csv" class="btn">⤓ Download template</a><button class="btn" onclick="closeModal()">Cancel</button></div>`);
+  const input = $('impInput'), drop = $('drop');
+  input.onchange = () => input.files[0] && impPreview(input.files[0]);
+  drop.ondragover = e => { e.preventDefault(); drop.classList.add('border-brand-500', 'bg-brand-50'); };
+  drop.ondragleave = () => drop.classList.remove('border-brand-500', 'bg-brand-50');
+  drop.ondrop = e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) impPreview(f); };
+}
+async function impPreview(file) {
+  impFile = file;
+  openModal(`${modalHead('Import leads', 'Reading ' + esc(file.name) + '…')}<div class="p-10 text-center text-sm text-slate-400">Reading the file…</div>`);
+  const r = await fetch('/demo/api/import', {method:'POST', headers:{'X-Filename': file.name}, body: file});
+  const j = await r.json();
+  if (!r.ok) return openImport(j.error || ('HTTP ' + r.status));
+  const bad = j.total - j.ready;
+  openModal(`${modalHead('Check before importing', `${esc(file.name)} · ${j.total} rows · ${j.ready} ready${bad ? ` · ${bad} will be skipped` : ''}`)}
+    <div class="p-6 space-y-4 overflow-y-auto thin">
+      <div><div class="text-xs font-medium text-slate-500 mb-1.5">We matched these columns</div><div class="flex flex-wrap gap-1.5">${Object.entries(j.columns).map(([f, c]) =>
+        `<span class="text-[11px] bg-brand-50 text-brand-700 rounded-full px-2.5 py-1">“${esc(c)}” → ${esc(FIELD_L[f] || f)}</span>`).join('')}</div></div>
+      <div class="border border-slate-200 rounded-lg overflow-x-auto thin"><table class="w-full text-xs">
+        <thead class="bg-slate-50 text-slate-500"><tr>${['Row','Name','Company','Role','Email','Phone','WhatsApp opt-in',''].map(h => `<th class="text-left font-medium px-3 py-2 whitespace-nowrap">${h}</th>`).join('')}</tr></thead>
+        <tbody class="divide-y divide-slate-100">${j.rows.map(x => { const p = x.payload; return `<tr class="${x.problems.length ? 'bg-amber-50/60' : ''}">
+          <td class="px-3 py-2 text-slate-400">${x.row}</td><td class="px-3 py-2 font-medium">${esc(p.name)}</td><td class="px-3 py-2">${esc(p.company)}</td><td class="px-3 py-2">${esc(p.role === 'Not given' ? '' : p.role)}</td>
+          <td class="px-3 py-2">${esc(p.email || '')}</td><td class="px-3 py-2">${esc(p.phone || '')}</td><td class="px-3 py-2">${p.consent_whatsapp ? '✓' : ''}</td>
+          <td class="px-3 py-2 whitespace-nowrap">${x.problems.length ? `<span class="text-amber-700">⚠ ${esc(x.problems.join(', '))}</span>` : '<span class="text-emerald-700">✓ Ready</span>'}</td></tr>`; }).join('')}</tbody></table></div>
+      ${j.total > j.rows.length ? `<div class="text-xs text-slate-400">Showing the first ${j.rows.length} of ${j.total} rows.</div>` : ''}</div>
+    <div class="px-6 py-4 border-t border-slate-100 flex justify-between gap-2"><button class="btn" onclick="openImport()">← Choose another file</button>
+      <button class="btn btn-primary" id="impGo" ${j.ready ? '' : 'disabled'} onclick="impCommit()">Import ${j.ready} lead${j.ready === 1 ? '' : 's'} and start outreach</button></div>`);
+}
+async function impCommit() {
+  $('impGo').disabled = true; $('impGo').textContent = 'Importing… the agent checks each lead';
+  const r = await fetch('/demo/api/import?commit=1', {method:'POST', headers:{'X-Filename': impFile.name}, body: impFile});
+  const j = await r.json();
+  if (!r.ok) return openImport(j.error || ('HTTP ' + r.status));
+  const keys = Object.keys(OUT).filter(k => j.summary[k]);
+  openModal(`${modalHead('Import finished', `${j.summary.accepted || 0} of ${j.results.length} leads accepted. The agent has started on them.`)}
+    <div class="p-6 space-y-4 overflow-y-auto thin">
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">${keys.map(k => `<div class="rounded-xl px-4 py-3 ${OUT[k][1]}"><div class="text-2xl font-semibold">${j.summary[k]}</div><div class="text-xs">${OUT[k][0]}</div></div>`).join('')}</div>
+      <div class="border border-slate-200 rounded-lg overflow-x-auto thin"><table class="w-full text-xs"><thead class="bg-slate-50 text-slate-500"><tr>${['Row','Name','Result','Channel'].map(h => `<th class="text-left font-medium px-3 py-2">${h}</th>`).join('')}</tr></thead>
+        <tbody class="divide-y divide-slate-100">${j.results.map(x => `<tr><td class="px-3 py-2 text-slate-400">${x.row}</td><td class="px-3 py-2 font-medium">${esc(x.name)}</td>
+          <td class="px-3 py-2"><span class="rounded-full px-2 py-0.5 ${(OUT[x.outcome] || OUT.error)[1]}">${esc((OUT[x.outcome] || [x.outcome])[0])}</span>${x.reason && x.outcome === 'skipped' ? ` <span class="text-slate-500">${esc(x.reason)}</span>` : ''}</td>
+          <td class="px-3 py-2">${chan(x.channel)}</td></tr>`).join('')}</tbody></table></div></div>
+    <div class="px-6 py-4 border-t border-slate-100 flex justify-end"><button class="btn btn-primary" onclick="closeModal();location.hash='#/leads'">See the leads</button></div>`);
+  refresh();
+}
+
+function openAdd() {
+  openModal(`${modalHead('Add a lead', 'Goes through the same intake checks as an import.')}
+    <form id="addForm" class="p-6 grid grid-cols-2 gap-3 overflow-y-auto thin">
+      ${[['name','Name *',''],['company','Company *',''],['role','Role',''],['country','Country','US']].map(([n, l, v]) =>
+        `<label class="text-xs font-medium text-slate-600">${l}<input name="${n}" ${l.includes('*') ? 'required' : ''} value="${v}" class="mt-1 w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-normal"></label>`).join('')}
+      <label class="text-xs font-medium text-slate-600 col-span-2">Email<input name="email" type="email" class="mt-1 w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-normal" placeholder="name@company.com"></label>
+      <label class="text-xs font-medium text-slate-600 col-span-2">WhatsApp number (with country code)<input name="phone" class="mt-1 w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-normal" placeholder="+91 98…"></label>
+      <label class="text-xs col-span-2 flex items-center gap-2 text-slate-600"><input type="checkbox" name="consent_whatsapp"> The lead opted in to WhatsApp messages</label>
+      <div id="addErr" class="col-span-2 text-xs text-rose-600"></div>
+      <div class="col-span-2 flex justify-end gap-2 pt-1"><button type="button" class="btn" onclick="closeModal()">Cancel</button><button class="btn btn-primary">Add lead</button></div></form>`);
+  $('addForm').onsubmit = async ev => { ev.preventDefault();
+    const f = new FormData(ev.target), body = {};
+    for (const [k, v] of f.entries()) if (v !== '' && k !== 'consent_whatsapp') body[k] = v;
+    body.consent_whatsapp = f.get('consent_whatsapp') === 'on';
+    if (!body.email && !body.phone) { $('addErr').textContent = 'Add an email or a WhatsApp number.'; return; }
+    if (!body.role) body.role = 'Not given';
+    const r = await fetch('/demo/api/intake', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    const j = await r.json();
+    if (!j.lead_id) { $('addErr').textContent = 'Not added: ' + ((OUT[j.outcome] || [j.reason || j.outcome || j.error || r.status])[0]); return; }
+    closeModal(); toast(`${body.name} added: ${(OUT[j.outcome] || [j.outcome])[0]}`);
+    await run({action:'tick'}, true); openLead(j.lead_id); };
+}
+
+// ------------------------------------------------------------------ start
+route(); refresh(); setInterval(refresh, 2500);
+</script>
+</body>
+</html>

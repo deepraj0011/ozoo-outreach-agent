@@ -1,4 +1,7 @@
-"""Local sender for EMAIL_MODE=mailpit: `python -m outreach.mailpit_sender [--once]`.
+"""Local sender for EMAIL_MODE=mailpit or gmail: `python -m outreach.mailpit_sender [--once]`.
+
+gmail: the same, but over Gmail's SMTP to real inboxes, and each pass also reads the lead's replies
+(and bounce notices) over IMAP and reports them as signed `reply_received` / `email_bounced` webhooks.
 
 Every few seconds it sends the sequence steps that are due (Email 1 right after enrolment, then
 days 4 / 9 / 15 on the local clock, divided by TIME_SCALE) to Mailpit, then tells the running app
@@ -7,6 +10,8 @@ with the same signed `email_sent` webhook Instantly would send. Local only (APP_
 from __future__ import annotations
 
 import argparse
+import imaplib
+import smtplib
 import logging
 import os
 import sys
@@ -25,6 +30,14 @@ DEFAULT_INTERVAL_S = 5.0
 
 
 def make_tool(settings: Any, now: Optional[Callable[[], Any]] = None, **kw: Any) -> MailpitEmailTool:
+    if getattr(settings, "email_mode", None) == "gmail":
+        from .emailtool.gmail import GmailEmailTool
+
+        return GmailEmailTool(
+            settings.tool_webhook_secret, address=settings.gmail_address,
+            app_password=settings.gmail_app_password, from_name=settings.gmail_from_name,
+            state_file=getattr(settings, "mailpit_state_file", None) or None,
+            now=now or LocalClock(clock_file(settings)), **kw)
     return MailpitEmailTool(
         settings.tool_webhook_secret,
         state_file=getattr(settings, "mailpit_state_file", None) or None,
@@ -66,16 +79,49 @@ def notify(tool: MailpitEmailTool, settings: Any, base_url: str, client: Any = N
     return n
 
 
+def notify_inbound(tool: Any, settings: Any, base_url: str, client: Any = None) -> int:
+    """gmail: report recorded replies / bounces to the app. Returns how many were accepted."""
+    n = 0
+    for row in tool.pending_inbound():
+        lead = devsim.SimLead(id=row["lead_id"] or 0, email=row["lead_email"],
+                              step_sent=tool.last_step(row["lead_email"]))
+        if row["kind"] == "bounce":
+            req = devsim.email_bounce(settings, lead, tool._now(), hard=True)
+        else:
+            req = devsim.email_reply(settings, lead, tool._now(), text=row["text"] or "")
+        try:
+            status = _post(req, base_url, client)
+        except Exception as exc:  # noqa: BLE001 - app not up yet: retried on the next pass
+            logger.warning("could not reach the app (%s); will retry", type(exc).__name__)
+            return n
+        if status >= 300:
+            logger.warning("app answered HTTP %s for an inbound %s; will retry", status, row["kind"])
+            return n
+        tool.mark_inbound_notified(row["message_id"])
+        print(f"[GMAIL] lead {row['lead_id']}: {row['kind']} received and passed to the agent", flush=True)
+        n += 1
+    return n
+
+
 def run_once(tool: MailpitEmailTool, settings: Any, base_url: str, client: Any = None) -> List[dict]:
+    label = tool.LABEL
     try:
         sent = tool.send_due(SCHEDULE_DAYS, float(getattr(settings, "time_scale", 1.0) or 1.0))
-    except (OSError, ConnectionError) as exc:
-        logger.warning("Mailpit not reachable on %s:%s (%s). Is it running?",
-                       tool.smtp_host, tool.smtp_port, type(exc).__name__)
+    except (OSError, ConnectionError, smtplib.SMTPException) as exc:
+        logger.warning("%s SMTP not reachable on %s:%s (%s). %s", label, tool.smtp_host, tool.smtp_port,
+                       type(exc).__name__, "Check GMAIL_ADDRESS / GMAIL_APP_PASSWORD." if label == "gmail"
+                       else "Is Mailpit running?")
         sent = []
     for s in sent:
-        print(f"[MAILPIT] lead {s['lead_id']}: Email {s['step']} sent -> open http://localhost:8025", flush=True)
+        where = "check the lead's real inbox" if label == "gmail" else "open http://localhost:8025"
+        print(f"[{label.upper()}] lead {s['lead_id']}: Email {s['step']} sent -> {where}", flush=True)
     notify(tool, settings, base_url, client)
+    if hasattr(tool, "fetch_inbound"):
+        try:
+            tool.fetch_inbound()
+        except (OSError, imaplib.IMAP4.error) as exc:
+            logger.warning("gmail IMAP read failed (%s); is IMAP allowed for this account?", type(exc).__name__)
+        notify_inbound(tool, settings, base_url, client)
     return sent
 
 
@@ -95,11 +141,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     except CliError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
-    if getattr(settings, "email_mode", None) != "mailpit":
-        print("error: EMAIL_MODE is not mailpit in your settings; nothing to send", file=sys.stderr)
+    if getattr(settings, "email_mode", None) not in ("mailpit", "gmail"):
+        print("error: EMAIL_MODE is not mailpit or gmail in your settings; nothing to send", file=sys.stderr)
         return 2
     tool = make_tool(settings)
-    print(f"mailpit sender: SMTP {tool.smtp_host}:{tool.smtp_port}, app {args.base_url}. Ctrl+C to stop.", flush=True)
+    print(f"{tool.LABEL} sender: SMTP {tool.smtp_host}:{tool.smtp_port}, app {args.base_url}. Ctrl+C to stop.", flush=True)
     if args.once:
         run_once(tool, settings, args.base_url)
         return 0
