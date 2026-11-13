@@ -210,6 +210,9 @@ def _pre_guard(lead: LeadSnapshot, event: EventSnapshot) -> Optional[List[Action
         return _soft_bounce(lead)
     if event.kind == "booking_created" and lead.state in TERMINAL:
         return [_alert(lead, "booked", "booking from lead in terminal state")]
+    if event.kind == "no_show" and lead.state == S.HANDED_OFF:
+        # sales hosted the meeting and own the lead now: tell them, change nothing
+        return [_alert(lead, "handoff", "Cal.com reported a no-show after handoff — follow up")]
     return None
 
 

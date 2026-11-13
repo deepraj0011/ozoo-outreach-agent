@@ -706,3 +706,56 @@ def test_rule_stale_booking_uid_ignored(kind):
     assert decide(lead, cal_ev(kind, uid="old"), NOW) == []
     assert decide(lead, cal_ev(kind, uid="new"), NOW) != []
     assert decide(snap(state=S.BOOKED), cal_ev(kind, uid="any"), NOW) != []
+
+
+# ------------------------------------------------------------------ controller follow-up rulings
+
+def test_rule_no_show_after_handoff_alerts_only():
+    out = decide(snap(state=S.HANDED_OFF), cal_ev("no_show", uid="u"), NOW)
+    assert out == [Alert("handoff")]
+    assert out[0].text.endswith("Cal.com reported a no-show after handoff — follow up")
+
+
+def test_no_show_after_handoff_route(env):
+    client, s, _ = env
+    lead = add_lead(s, state=S.HANDED_OFF)
+    assert post(client, no_show()).status_code == 200
+    assert fresh(s, lead.id).state == S.HANDED_OFF.value
+    [a] = alerts(s)
+    assert a.kind == "handoff" and a.lead_id == lead.id and "no-show after handoff" in a.text
+
+
+@pytest.mark.parametrize("size,timeline", [("51-200", "now"), ("11-50", "exploring")])
+def test_unmatched_good_fit_form_alerts(env, size, timeline):
+    client, s, _ = env
+    assert post(client, form(size, timeline, email="stranger@nowhere.com")).status_code == 200
+    [a] = alerts(s)
+    assert a.kind == "unmatched_form" and a.lead_id is None and "stranger@nowhere.com" in a.text
+
+
+def test_unmatched_low_fit_form_no_alert(env):
+    client, s, _ = env
+    assert post(client, form("1-10", "exploring", email="stranger@nowhere.com")).status_code == 200
+    assert alerts(s) == []
+    assert s.scalars(select(Event)).one().lead_id is None
+
+
+@pytest.mark.parametrize("fmt", [str.lower, str.upper, lambda h: "sha256=" + h, lambda h: "sha256=" + h.upper()])
+def test_signature_formats_accepted(fmt):
+    body = dumps(booking())
+    hexsig = hmac.new(SECRET.encode(), body, hashlib.sha256).hexdigest()
+    [ev] = parse_cal_webhook({"X-Cal-Signature-256": fmt(hexsig)}, body, SECRET, received_at=NOW, settings=SETTINGS)
+    assert ev.kind == "booking_created"
+
+
+@pytest.mark.parametrize("bad", ["sha256=", "sha256=sha256=", "sha1={sig}", "sha256:{sig}", "{sig}00",
+                                 "sha256= {sig}", "md5={sig}", "Ｓ{sig}", "x" * 64])
+def test_signature_other_formats_rejected(env, bad):
+    body = dumps(booking())
+    hexsig = hmac.new(SECRET.encode(), body, hashlib.sha256).hexdigest()
+    with pytest.raises(BadSignature):
+        parse_cal_webhook({"X-Cal-Signature-256": bad.format(sig=hexsig)}, body, SECRET,
+                          received_at=NOW, settings=SETTINGS)
+    if bad.isascii():  # the HTTP client cannot send non-ASCII header values
+        client, _, _ = env
+        assert post(client, body, headers={"X-Cal-Signature-256": bad.format(sig=hexsig)}).status_code == 401

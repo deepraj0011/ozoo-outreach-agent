@@ -21,7 +21,7 @@ if TYPE_CHECKING:  # pragma: no cover
 
 ALERT_KINDS = frozenset({
     "hot_lead", "hot_no_reply", "question", "unsure", "unmatched_reply", "unmatched_inbound",
-    "unmatched_booking", "mailbox_paused", "booked", "no_show", "wa_human_needed",
+    "unmatched_booking", "unmatched_form", "mailbox_paused", "booked", "no_show", "wa_human_needed",
     "wa_sla_missed", "wa_send_failed", "handoff", "integration_error",
 })
 

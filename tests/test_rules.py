@@ -504,7 +504,8 @@ def test_wa_tap_stops_email():
     ev("no_show"), ev("meeting_ended"), failed(131026), ev("sent", step=2),
 ], ids=lambda e: e.kind)
 def test_terminal_state_no_actions(st, event):
-    assert run(both(state=st, wa_window_open=True), event) == []
+    want = [Alert("handoff")] if (st == S.HANDED_OFF and event.kind == "no_show") else []  # Task 11 ruling
+    assert run(both(state=st, wa_window_open=True), event) == want
 
 
 @pytest.mark.parametrize("st", sorted(TERMINAL, key=lambda s: s.value))

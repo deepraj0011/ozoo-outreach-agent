@@ -37,6 +37,7 @@ if TYPE_CHECKING:  # pragma: no cover
 logger = logging.getLogger(__name__)
 
 SIGNATURE_HEADER = "X-Cal-Signature-256"
+SIGNATURE_PREFIX = "sha256="
 TRIGGERS = {
     "BOOKING_CREATED": "booking_created",
     "BOOKING_RESCHEDULED": "booking_rescheduled",
@@ -86,8 +87,11 @@ ANSWER_MAX = 200
 # ====================================================================== signature + parsing
 
 def verify_signature(headers: Mapping[str, str], raw: bytes, secret: str) -> None:
-    """X-Cal-Signature-256 = hex HMAC-SHA256(secret, raw body). Constant-time; before any parsing."""
+    """X-Cal-Signature-256 = hex HMAC-SHA256(secret, raw body), bare or with a "sha256=" prefix,
+    hex in either case. Constant-time; before any parsing."""
     got = (header(headers, SIGNATURE_HEADER) or "").strip().lower()
+    if got.startswith(SIGNATURE_PREFIX):
+        got = got[len(SIGNATURE_PREFIX):]
     if not secret or not got:
         raise BadSignature(SIGNATURE_HEADER)
     want = hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()

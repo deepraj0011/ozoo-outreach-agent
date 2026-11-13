@@ -26,7 +26,9 @@ WA_WINDOW = timedelta(hours=24)
 WA_INBOUND_KINDS = frozenset({"wa_text", "wa_button"})
 HUMAN_KINDS = frozenset({"reply", "wa_read"}) | WA_INBOUND_KINDS
 UNMATCHED_ALERTS = {"reply": "unmatched_reply", "wa_text": "unmatched_inbound", "wa_button": "unmatched_inbound",
-                    "booking_created": "unmatched_booking"}
+                    "booking_created": "unmatched_booking", "form_submitted": "unmatched_form"}
+# only a promising stranger is worth a person's time: low-fit forms are stored, never alerted
+UNMATCHED_FORM_FITS = frozenset({"high", "medium"})
 _TERMINAL_VALUES = tuple(s.value for s in TERMINAL)
 UA_MAX = 512
 IP_MAX = 64
@@ -119,6 +121,8 @@ def _ingest_one(session: Session, ev: NormalizedEvent, deps: Deps, now: datetime
 
     if lead is None:
         alert_kind = UNMATCHED_ALERTS.get(ev.kind)
+        if ev.kind == "form_submitted" and data.get("fit") not in UNMATCHED_FORM_FITS:
+            alert_kind = None
         if alert_kind:
             sender = ev.email or ev.phone or "unknown sender"
             # Sender address goes to the Alert row / Teams (humans must find it), never to logs.
