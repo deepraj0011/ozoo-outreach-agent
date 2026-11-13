@@ -48,7 +48,7 @@ def test_bounce_rate_over_2pct_without_pause_support_alerts(session):
     add_events(session, "bounce_hard", 5)
     tool, alerter = FakeEmailTool(), FakeAlerter()
     assert check_mailboxes(session, tool, alerter, NOW) == ["c1"]
-    assert alerter.calls == [("send", "mailbox_paused", None)]
+    assert alerter.calls == [("send", "mailbox_unhealthy", None)]
     assert "manually" in session.scalars(select(AlertRow.text)).one()
 
 
@@ -85,3 +85,19 @@ def test_events_older_than_7_days_ignored(session):
     add_events(session, "bounce_hard", 10, at=NOW - timedelta(days=8))
     add_events(session, "sent", 10)
     assert check_mailboxes(session, PausingTool(), FakeAlerter(), NOW) == []
+
+
+def test_unknown_campaign_alerts_at_most_weekly(session):
+    add_events(session, "sent", 60, campaign=None)
+    add_events(session, "bounce_hard", 5, campaign=None)
+    alerter = FakeAlerter()
+    tool = PausingTool()
+    assert check_mailboxes(session, tool, alerter, NOW) == ["unknown"]
+    assert check_mailboxes(session, tool, alerter, NOW + timedelta(days=6)) == ["unknown"]
+    assert alerter.calls == [("send", "mailbox_unhealthy", None)]  # never paused: no campaign id
+    assert ("pause_campaign", "unknown") not in tool.calls
+    later = NOW + timedelta(days=7)
+    add_events(session, "sent", 60, campaign=None, at=later - timedelta(hours=1))
+    add_events(session, "bounce_hard", 5, campaign=None, at=later - timedelta(hours=1))
+    check_mailboxes(session, tool, alerter, later)
+    assert len(alerter.calls) == 2

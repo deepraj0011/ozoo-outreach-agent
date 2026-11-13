@@ -13,7 +13,8 @@ from .test_worker import (  # noqa: F401 - env is a fixture
     S, add, click, env, get, new_lead, run, templates_sent, tool_names, wa_started,
 )
 
-FAST = make_settings(click_settle_s=5, booking_nudge_after_s=60, wa_reminder_after_s=120,
+# short delays are refused in production (Task 12 review): these runs are local
+FAST = make_settings(app_env="local", click_settle_s=5, booking_nudge_after_s=60, wa_reminder_after_s=120,
                      wa_no_response_after_s=120, end_of_sequence_wait_s=300)
 
 

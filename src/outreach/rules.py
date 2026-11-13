@@ -218,10 +218,28 @@ def _pre_guard(lead: LeadSnapshot, event: EventSnapshot) -> Optional[List[Action
 
 # ------------------------------------------------------------------ per-kind handlers
 
+LAST_EMAIL_STEP = 4
+
+
 def _on_sent(lead: LeadSnapshot, event: EventSnapshot) -> List[Action]:
+    """The tool reports its campaign step; after a mid-sequence re-enrolment (flags["step_offset"],
+    see sequencer.enroll) our step is campaign step + offset, and the tool lead is stopped once our
+    last step is out (the campaign's later steps only repeat it)."""
     if event.channel != "email" or event.step is None:
         return []
-    return [SetStepSent(event.step), RefreshNextStep()]
+    try:
+        offset = int(lead.flags.get("step_offset", 0))
+    except (TypeError, ValueError):
+        offset = 0
+    step = event.step + offset
+    if offset <= 0:
+        return [SetStepSent(step), RefreshNextStep()]
+    if step > LAST_EMAIL_STEP:
+        return [ToolStop()]
+    out: List[Action] = [SetStepSent(step), RefreshNextStep()]
+    if step == LAST_EMAIL_STEP:
+        out.append(ToolStop())
+    return out
 
 
 def _on_open(lead: LeadSnapshot, event: EventSnapshot) -> List[Action]:

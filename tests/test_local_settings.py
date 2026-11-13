@@ -130,3 +130,20 @@ def test_time_scale_and_overrides_locally():
 def test_time_scale_must_be_positive():
     with pytest.raises(ValidationError):
         local(time_scale=0)
+
+
+DELAYS = ("click_settle_s", "booking_nudge_after_s", "wa_reminder_after_s", "wa_no_response_after_s",
+          "end_of_sequence_wait_s")
+
+
+@pytest.mark.parametrize("field", DELAYS)
+def test_production_refuses_a_delay_shorter_than_the_default(field):
+    with pytest.raises(ValidationError, match=field):
+        make_settings(**{field: 1})
+
+
+@pytest.mark.parametrize("field", DELAYS)
+def test_production_allows_a_longer_delay_and_local_allows_shorter(field):
+    longer = make_settings(**{field: 10 * 86400})
+    assert getattr(longer, field) == 10 * 86400
+    assert getattr(local(**{field: 1}), field) == 1

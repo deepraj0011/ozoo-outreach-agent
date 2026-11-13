@@ -208,6 +208,9 @@ class Settings(BaseSettings):
                 raise ValueError(f"fake mode is not allowed in production: {', '.join(fakes)}")
             if self.time_scale != 1.0:
                 raise ValueError("time_scale is not allowed in production")
+            short = [f"{n}_s" for n, default in DELAY_DEFAULTS_S.items() if getattr(self, f"{n}_s") < default]
+            if short:
+                raise ValueError(f"shorter-than-spec delays are not allowed in production: {', '.join(short)}")
         missing = [f"{f} (because {mode} is real)" for mode, fields in REAL_MODE_REQUIRES.items()
                    if getattr(self, mode) == "real" for f in fields
                    if getattr(self, f) is None or (isinstance(getattr(self, f), str) and not getattr(self, f).strip())]

@@ -11,6 +11,7 @@ import html
 import json
 import logging
 import re
+import threading
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -286,14 +287,15 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
     teams_tenant = settings.teams_tenant_id.strip().lower()  # GUID: case-insensitive
     teams_channel = settings.teams_sales_channel_id.strip()
 
-    async def _worker_loop(stop: asyncio.Event) -> None:
+    async def _worker_loop(stop: asyncio.Event, tick_stop: threading.Event) -> None:
         from . import worker  # looked up per tick (tests replace worker.tick)
 
         logger.info("worker loop started (every %ss)", settings.worker_interval_s)
         while not stop.is_set():
             try:
                 # in a thread: the tick does blocking DB and HTTP work
-                await asyncio.to_thread(worker.tick, session_factory, deps, clock, settings)
+                # tick_stop: on shutdown a running tick ends after its current job
+                await asyncio.to_thread(worker.tick, session_factory, deps, clock, settings, stop=tick_stop)
             except Exception as exc:  # noqa: BLE001 - the loop must survive any tick failure
                 logger.error("worker tick crashed: %s", type(exc).__name__)
             try:
@@ -305,15 +307,17 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         stop = asyncio.Event()
+        tick_stop = threading.Event()
         task: Optional[asyncio.Task] = None
         if settings.run_worker:
-            task = asyncio.create_task(_worker_loop(stop))
+            task = asyncio.create_task(_worker_loop(stop, tick_stop))
             app.state.worker_task = task
         try:
             yield
         finally:
             if task is not None:
                 stop.set()
+                tick_stop.set()
                 try:
                     await asyncio.wait_for(task, timeout=WORKER_STOP_TIMEOUT_S)
                 except asyncio.TimeoutError:

@@ -162,6 +162,19 @@ def test_intro_attempt_is_committed_before_the_send(env):
     assert seen["flag"] == NOW.isoformat()
 
 
+def test_unconfirmed_intro_matched_by_message_id(env):
+    lid = new_lead(env, **wa_kw(variant_flags={"wa_intro_attempted_at": NOW.isoformat()}))
+    add(env, ChatMessage(lead_id=lid, direction="out", author="bot", text="[template:ozoo_intro]",
+                         wa_message_id="wamid.MINE", created_at=NOW),
+        # a status for some other message to this lead comes first: not ours
+        Event(lead_id=lid, channel="whatsapp", kind="wa_delivered", occurred_at=NOW + timedelta(seconds=1),
+              received_at=NOW, verdict="n/a", processed=True, data={"wamid": "wamid.OTHER"}),
+        Event(lead_id=lid, channel="whatsapp", kind="wa_sent", occurred_at=NOW + timedelta(seconds=9),
+              received_at=NOW, verdict="n/a", processed=True, data={"wamid": "wamid.MINE"}))
+    run(env, NOW + timedelta(minutes=5))
+    assert get(env, lid).wa_template_sent_at == NOW + timedelta(seconds=9)
+
+
 def test_unconfirmed_intro_reconciled_from_status_webhook(env):
     flags = {"wa_intro_attempted_at": NOW.isoformat()}
     a = new_lead(env, **wa_kw(variant_flags=dict(flags)))
@@ -279,10 +292,43 @@ def test_wa_reminder_send_error_goes_through_decide(env):
 
 
 def test_wa_reminder_error_without_fallback_alerts(env):
-    wa_started(env, NOW)
+    lid = wa_started(env, NOW)
     env.wa.client.fail_code = 999
     run(env, NOW + timedelta(hours=48))
     assert len(alerts(env, "wa_send_failed")) == 1
+    assert get(env, lid).state == S.NURTURE.value  # switch_channel at once: no fallback -> nurture
+
+
+def test_wa_reminder_unhandled_error_switches_to_email_at_once(env):
+    lid = wa_started(env, NOW, with_email=True)
+    env.wa.client.fail_code = 999  # decide only alerts for this code
+    run(env, NOW + timedelta(hours=48))
+    lead = get(env, lid)
+    assert lead.active_channel == "email" and lead.channel_switched
+    assert tool_names(env) == ["add_lead"]
+
+
+def test_wa_reminder_not_allowed_switches_to_email_at_once(env):
+    lid = wa_started(env, NOW, with_email=True)
+    with env.factory() as s:
+        s.get(Lead, lid).consent_whatsapp = False
+        s.commit()
+    run(env, NOW + timedelta(hours=48))
+    lead = get(env, lid)
+    assert lead.active_channel == "email" and tool_names(env) == ["add_lead"]
+    assert templates_sent(env) == []
+
+
+def test_switched_lead_with_failed_enrolment_retried_next_tick(env):
+    lid = wa_started(env, NOW - timedelta(hours=96), with_email=True, wa_reminder_sent_at=NOW - timedelta(hours=48))
+    env.tool.fail.add("add_lead")
+    run(env, NOW)
+    lead = get(env, lid)
+    assert lead.active_channel == "email" and lead.tool_lead_id is None
+    env.tool.fail.clear()
+    run(env, NOW + timedelta(minutes=1))
+    assert tool_names(env) == ["add_lead", "add_lead"]
+    assert get(env, lid).tool_lead_id is not None
 
 
 def test_reply_before_reminder_cancels_it(env):
@@ -324,7 +370,45 @@ def test_ooo_resumes_on_date(env):
     run(env, NOW + timedelta(days=3))
     lead = get(env, lid)
     assert lead.state == S.IN_SEQUENCE.value and lead.pause_reason is None and lead.pause_until is None
-    assert "resume" in tool_names(env)
+
+
+def test_ooo_resume_re_enrols_at_the_next_step(env):
+    """The reply that carried the out-of-office stopped (deleted) the tool lead: re-enrol it, with the
+    campaign's step 1 carrying our step 3 (step_sent was 2)."""
+    from outreach.sequencer import render_step
+
+    lid = new_lead(env, verify_status="valid", active_channel="email", tool_lead_id="t-old", step_sent=2,
+                   state=S.PAUSED, pause_reason="ooo", pause_until=NOW)
+    run(env, NOW + timedelta(minutes=1))
+    lead = get(env, lid)
+    assert lead.state == S.IN_SEQUENCE.value
+    assert "resume" not in tool_names(env)
+    (call,) = [c for c in env.tool.calls if c[0] == "add_lead"]
+    variables = call[3]
+    real3 = render_step(lead, 3, settings=env.settings)
+    real4 = render_step(lead, 4, settings=env.settings)
+    assert variables["subject_1"] == real3["subject_3"] and variables["body_1"] == real3["body_3"]
+    assert variables["subject_2"] == real4["subject_4"]
+    assert lead.tool_lead_id not in (None, "t-old")
+    assert lead.variant_flags["step_offset"] == 2
+    assert lead.variant_flags["previous_tool_lead_id"] == "t-old"
+    run(env, NOW + timedelta(minutes=2))
+    assert tool_names(env).count("add_lead") == 1
+
+
+def test_ooo_resume_after_last_step_does_not_re_enrol(env):
+    lid = new_lead(env, verify_status="valid", active_channel="email", tool_lead_id="t-old", step_sent=4,
+                   last_sent_at=NOW, state=S.PAUSED, pause_reason="ooo", pause_until=NOW)
+    run(env, NOW + timedelta(minutes=1))
+    assert get(env, lid).state == S.IN_SEQUENCE.value
+    assert "add_lead" not in tool_names(env)
+
+
+def test_ooo_resume_whatsapp_lead_does_not_touch_the_email_tool(env):
+    lid = wa_started(env, NOW - timedelta(hours=1), state=S.PAUSED, pause_reason="ooo", pause_until=NOW)
+    run(env, NOW + timedelta(minutes=1))
+    assert get(env, lid).state == S.IN_SEQUENCE.value
+    assert env.tool.calls == []
 
 
 def test_tick_resumes_account_holds(env):
@@ -477,6 +561,40 @@ def test_decay_scores(env):
     assert get(env, lid).score == 10 and get(env, fresh).score == 20
 
 
+def test_lock_renewed_inside_run_due(env, monkeypatch):
+    clock = {"now": NOW}
+    seen = {}
+
+    def fake_run_due(factory, deps, now_fn, **kw):
+        clock["now"] = NOW + timedelta(minutes=14)
+        kw["after_each"]()
+        with env.factory() as s:
+            seen["expires"] = s.get(WorkerLock, worker.LOCK_NAME).expires_at
+        return 1
+
+    monkeypatch.setattr(worker.jobs, "run_due", fake_run_due)
+    worker.tick(env.factory, env.deps, lambda: clock["now"], env.settings)
+    assert seen["expires"] == NOW + timedelta(minutes=14) + worker.LOCK_LEASE
+
+
+def test_lock_renewed_per_lead_within_a_job(env, monkeypatch):
+    for _ in range(3):
+        new_lead(env, verify_status="valid", active_channel="email")
+    renewals = []
+    real_acquire = worker._acquire
+
+    def spy_acquire(factory, now_fn):
+        lock = real_acquire(factory, now_fn)
+        real_renew = lock.renew
+        lock.renew = lambda: (renewals.append(1), real_renew())
+        return lock
+
+    monkeypatch.setattr(worker, "_acquire", spy_acquire)
+    monkeypatch.setattr(worker, "JOBS", (("start_new", worker._start_new),))
+    run(env, NOW)
+    assert len(renewals) >= 3
+
+
 def test_run_due_jobs_called(env, monkeypatch):
     seen = []
     monkeypatch.setattr(worker.jobs, "run_due", lambda f, d, n, **kw: seen.append(n()) or 3)
@@ -533,6 +651,64 @@ def test_check_mailboxes_runs_daily(env, monkeypatch):
 
 
 # ---------------------------------------------------------------- tick robustness
+
+def test_settled_click_failing_three_times_is_closed_as_error(env, monkeypatch):
+    lid = new_lead(env, verify_status="valid", active_channel="email", step_sent=1,
+                   last_sent_at=NOW - timedelta(days=1))
+    add(env, click(lid, "case_study", NOW))
+
+    def boom(*a, **k):
+        raise RuntimeError("decide broke")
+
+    monkeypatch.setattr(worker, "decide", boom)
+    for i in range(1, 4):
+        run(env, NOW + timedelta(minutes=i))
+        with env.factory() as s:
+            ev = s.scalars(select(Event).where(Event.kind == "click")).one()
+        if i < 3:
+            assert ev.processed is False and ev.data["settle_failures"] == i
+    assert ev.processed is True and ev.verdict == "error"
+    run(env, NOW + timedelta(minutes=5))
+    assert len(alerts(env, "integration_error")) == 3
+
+
+def test_tick_stops_between_jobs(env, monkeypatch):
+    stop = threading.Event()
+    ran = []
+
+    def first(ctx, session):
+        ran.append("first")
+        stop.set()
+        return 0
+
+    def second(ctx, session):
+        ran.append("second")
+        return 0
+
+    monkeypatch.setattr(worker, "JOBS", (("first", first), ("second", second)))
+    out = worker.tick(env.factory, env.deps, lambda: NOW, env.settings, stop=stop)
+    assert ran == ["first"] and out["stopped"] == 1
+    with env.factory() as s:
+        assert s.scalars(select(WorkerLock)).all() == []
+
+
+def test_pg_unlock_failure_invalidates_the_connection():
+    class Conn:
+        invalidated = closed = False
+
+        def execute(self, *a, **k):
+            raise RuntimeError("connection lost")
+
+        def invalidate(self):
+            self.invalidated = True
+
+        def close(self):
+            self.closed = True
+
+    conn = Conn()
+    worker._pg_release(conn)
+    assert conn.invalidated and conn.closed
+
 
 def test_failing_job_does_not_block_later_jobs(env, monkeypatch):
     def boom(ctx, session):
@@ -613,7 +789,10 @@ def test_lifespan_loop_only_with_run_worker(env, monkeypatch):
 
     ticked = threading.Event()
 
+    stops = []
+
     def fake_tick(factory, deps, now_fn, settings, **kw):
+        stops.append(kw.get("stop"))
         ticked.set()
         return {}
 
@@ -629,6 +808,7 @@ def test_lifespan_loop_only_with_run_worker(env, monkeypatch):
         assert ticked.wait(2)
         task = app.state.worker_task
     assert task.done()  # stopped cleanly on shutdown
+    assert stops and all(isinstance(st, threading.Event) and st.is_set() for st in stops)
 
 
 def test_lifespan_loop_survives_tick_errors(env, monkeypatch):

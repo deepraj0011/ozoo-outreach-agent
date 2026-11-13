@@ -245,3 +245,38 @@ def test_end_route_no_clicks_monthly_whatever_the_opens(session):
     lead = make_lead(session, score=2, variant_flags={"human_opens": 5})
     track, acts = end_of_sequence_route(lead, 0)
     assert track == "monthly" and acts == [SetState(LeadState.NURTURE, "end_silent")]
+
+
+# ---------------------------------------------------------------- Task 12 review: resume mid-sequence
+
+def test_enroll_from_step_shifts_the_campaign_steps(session, st, tpl):
+    tool = FakeEmailTool()
+    lead = make_lead(session, step_sent=2)
+    enroll(session, lead, tool, NOW, settings=st, templates=tpl, from_step=3)
+    _, _, _, variables = tool.calls[0]
+    real3, real4 = render_step(lead, 3, templates=tpl, settings=st), render_step(lead, 4, templates=tpl, settings=st)
+    assert (variables["subject_1"], variables["body_1"]) == (real3["subject_3"], real3["body_3"])
+    assert (variables["subject_2"], variables["body_2"]) == (real4["subject_4"], real4["body_4"])
+    # campaign steps past our last step repeat it (never blank); the tool lead is stopped first
+    assert variables["subject_3"] == real4["subject_4"] and variables["subject_4"] == real4["subject_4"]
+    assert lead.variant_flags["step_offset"] == 2
+
+
+def test_enroll_from_step_one_has_no_offset(session, st, tpl):
+    tool = FakeEmailTool()
+    lead = make_lead(session, variant_flags={"step_offset": 2})
+    enroll(session, lead, tool, NOW, settings=st, templates=tpl)
+    assert "step_offset" not in lead.variant_flags
+
+
+def test_enroll_from_step_out_of_range(session, st, tpl):
+    with pytest.raises(ValueError):
+        enroll(session, make_lead(session), FakeEmailTool(), NOW, settings=st, templates=tpl, from_step=5)
+
+
+def test_refresh_after_resume_targets_the_campaign_step(session, st, tpl):
+    tool = FakeEmailTool()
+    lead = make_lead(session, tool_lead_id="t1", step_sent=3, variant_flags={"step_offset": 2})
+    refresh_next_step(session, lead, tool, settings=st, templates=tpl)
+    real4 = render_step(lead, 4, templates=tpl, settings=st)
+    assert tool.calls[0][2] == {"subject_2": real4["subject_4"], "body_2": real4["body_4"]}

@@ -3,8 +3,9 @@
 Our events do not record the sending mailbox (Instantly's webhook payload is mapped without its
 `eaccount`), so the rate is judged per campaign (Event.data["campaign_id"]); events without a
 campaign id are judged together as "unknown". A campaign with more than 2 % bounces (hard + soft)
-on at least 50 sends is paused when the tool can (`pause_campaign`), else sales is alerted to pause
-it by hand. Fewer than 50 sends: not judged. Called daily by the worker.
+on at least 50 sends is paused when the tool can (`pause_campaign`, alert kind "mailbox_paused"),
+else sales is alerted to pause it by hand ("mailbox_unhealthy"). The "unknown" bucket cannot be
+paused and alerts at most once a week. Fewer than 50 sends: not judged. Called daily by the worker.
 """
 from __future__ import annotations
 
@@ -16,7 +17,7 @@ from typing import Any, List
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .models import Event
+from .models import Event, WorkerMark
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,8 @@ MIN_SENDS = 50
 MAX_BOUNCE_RATE = 0.02
 BOUNCE_KINDS = ("bounce_hard", "bounce_soft")
 UNKNOWN = "unknown"
+UNKNOWN_ALERT_EVERY = timedelta(days=7)
+UNKNOWN_MARK = "mailbox_unknown_alert"
 
 
 def _campaign(data: Any) -> str:
@@ -58,6 +61,19 @@ def _pause(tool: Any, campaign_id: str) -> bool:
         return False
 
 
+def _unknown_alert_due(session: Session, now: datetime) -> bool:
+    """At most one alert a week for sends without a campaign id (nothing can be paused for them)."""
+    mark = session.get(WorkerMark, UNKNOWN_MARK)
+    if mark is not None and now - mark.at < UNKNOWN_ALERT_EVERY:
+        return False
+    if mark is None:
+        session.add(WorkerMark(name=UNKNOWN_MARK, at=now))
+    else:
+        mark.at = now
+    session.flush()
+    return True
+
+
 def check_mailboxes(session: Session, tool: Any, alerter: Any, now: datetime) -> List[str]:
     """Flag campaigns over the bounce limit; returns their ids (sorted)."""
     flagged: List[str] = []
@@ -68,11 +84,13 @@ def check_mailboxes(session: Session, tool: Any, alerter: Any, now: datetime) ->
         if rate <= MAX_BOUNCE_RATE:
             continue
         flagged.append(cid)
+        if cid == UNKNOWN and not _unknown_alert_due(session, now):
+            continue
         paused = _pause(tool, cid)
         what = ("paused automatically" if paused
                 else "NOT paused (the tool cannot do it) — please pause it manually in the email tool")
         text = (f"campaign {cid}: bounce rate {rate * 100:.1f}% ({bounced} of {sent} sends, last 7 days) "
                 f"is over {MAX_BOUNCE_RATE * 100:.0f}%; {what}")
         logger.warning("campaign %s bounce rate %.1f%% over %s sends; paused=%s", cid, rate * 100, sent, paused)
-        alerter.send("mailbox_paused", text, None, now, session)
+        alerter.send("mailbox_paused" if paused else "mailbox_unhealthy", text, None, now, session)
     return flagged

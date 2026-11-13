@@ -1,4 +1,7 @@
-"""Business hours (BUSINESS_TZ / BUSINESS_HOURS) for the WhatsApp human SLA. Pure functions."""
+"""Business hours (BUSINESS_TZ / BUSINESS_HOURS) for the WhatsApp human SLA. Pure functions.
+
+Public holidays are ignored: a weekday holiday counts as a business day, so an SLA can fire on a day
+nobody is in. Add a holiday calendar here if that becomes noise."""
 from __future__ import annotations
 
 import re

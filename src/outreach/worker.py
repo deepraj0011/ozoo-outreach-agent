@@ -43,7 +43,7 @@ from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
-from sqlalchemy import Select, delete, func, or_, select, text, update
+from sqlalchemy import Select, and_, delete, func, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -63,7 +63,7 @@ from .outreach import (
 )
 from .rules import EventSnapshot, LeadSnapshot, decide
 from .score import DECAY_AFTER, decay
-from .sequencer import END_WAIT_DAYS, SCHEDULE_DAYS, end_of_sequence_route
+from .sequencer import END_WAIT_DAYS, SCHEDULE_DAYS, end_of_sequence_route, enroll
 from .states import TERMINAL, LeadState
 
 __all__ = ["tick", "main", "parse_business_hours", "business_zone", "business_deadline"]
@@ -77,6 +77,7 @@ NowFn = Callable[[], datetime]
 DEFAULT_BATCH = 50
 SCAN_CHUNK = 200
 CLICK_SETTLE = timedelta(seconds=30)
+CLICK_MAX_FAILURES = 3
 SIBLING_WINDOW = timedelta(seconds=10)
 BOOKING_NUDGE_AFTER = timedelta(minutes=30)
 BOOKING_NUDGE_LOOKBACK = timedelta(days=7)
@@ -113,6 +114,7 @@ class Ctx:
     now_fn: NowFn
     batch: int
     scanners: Scanners
+    renew: Callable[[], None] = lambda: None  # extends the worker lock lease
 
 
 # ====================================================================== helpers
@@ -188,6 +190,7 @@ def _each(ctx: Ctx, session: Session, name: str, rows: Iterable[Any], fn: Callab
             session.rollback()
             logger.error("worker %s: lead %s failed: %s", name, rid, type(exc).__name__)
             _record(session, rid, f"lead {rid}: worker {name} failed: {type(exc).__name__}", ctx.now)
+        ctx.renew()  # a long batch never outlives the lock lease
     return n
 
 
@@ -233,10 +236,12 @@ def _start_failed(ctx: Ctx, session: Session, lead: Lead) -> None:
 
 
 def _start_new(ctx: Ctx, session: Session) -> int:
+    # per active channel: a lead switched WhatsApp -> email has wa_template_sent_at set and must still
+    # be picked up when its email enrolment failed
     stmt = (select(Lead).where(
-        Lead.state == S.IN_SEQUENCE.value, Lead.active_channel.is_not(None), Lead.tool_lead_id.is_(None),
-        Lead.wa_template_sent_at.is_(None),
-        or_(Lead.active_channel != "email", Lead.email_hold.is_(None)))
+        Lead.state == S.IN_SEQUENCE.value,
+        or_(and_(Lead.active_channel == "email", Lead.tool_lead_id.is_(None), Lead.email_hold.is_(None)),
+            and_(Lead.active_channel == "whatsapp", Lead.wa_template_sent_at.is_(None))))
         .order_by(Lead.created_at, Lead.id))
 
     def keep(lead: Lead) -> bool:
@@ -287,14 +292,31 @@ def _process_settled_clicks(ctx: Ctx, session: Session) -> int:
         Event.kind == "click", Event.processed.is_(False), Event.received_at <= ctx.now - _delay(ctx, "click_settle"))
         .order_by(Event.received_at, Event.id).limit(ctx.batch)))
 
-    def one(ev: Event) -> bool:
+    def settle(ev: Event) -> None:
         lead = session.get(Lead, ev.lead_id) if ev.lead_id is not None else None
         ev.verdict = classify_event(ev, _sent_at(session, ev, lead), _siblings(session, ev), ctx.scanners)
         if lead is not None and ev.tag != "unsubscribe":
             actions = decide(LeadSnapshot.from_lead(lead, ctx.now), EventSnapshot.from_event(ev), ctx.now)
             execute(session, lead, actions, ctx.deps, ctx.now, event=ev)
         ev.processed = True
-        logger.info("click event %s (lead %s, %s): %s", ev.id, ev.lead_id, ev.tag, ev.verdict)
+
+    def one(ev: Event) -> bool:
+        ev_id, lead_id = ev.id, ev.lead_id
+        try:
+            with session.begin_nested():
+                settle(ev)
+        except Exception as exc:  # noqa: BLE001 - counted; closed as "error" after CLICK_MAX_FAILURES
+            ev = session.get(Event, ev_id)
+            failures = int((ev.data or {}).get("settle_failures", 0)) + 1
+            ev.data = {**(ev.data or {}), "settle_failures": failures}
+            if failures >= CLICK_MAX_FAILURES:
+                ev.verdict, ev.processed = "error", True
+            logger.error("click event %s (lead %s): settle failed (%s of %s): %s", ev_id, lead_id, failures,
+                         CLICK_MAX_FAILURES, type(exc).__name__)
+            record_integration_error(session, lead_id, f"click event {ev_id}: settle failed ({failures} of "
+                                                       f"{CLICK_MAX_FAILURES}): {type(exc).__name__}", ctx.now)
+            return False
+        logger.info("click event %s (lead %s, %s): %s", ev_id, lead_id, ev.tag, ev.verdict)
         return True
 
     return _each(ctx, session, "process_settled_clicks", rows, one, lambda ev: ev.lead_id)
@@ -342,6 +364,22 @@ _TEMPLATE_SENDS = ((INTRO_ATTEMPT, "wa_template_sent_at", INTRO_TEMPLATE),
                    (REMINDER_ATTEMPT, "wa_reminder_sent_at", REMINDER_TEMPLATE))
 
 
+def _status_time(session: Session, lead: Lead, template: str, attempted: datetime) -> Optional[datetime]:
+    """When Meta first reported the template sent / delivered / read. By message id when the sender
+    logged one for this template (exact); otherwise the first status for the lead after the attempt."""
+    wamid = session.scalar(select(ChatMessage.wa_message_id).where(
+        ChatMessage.lead_id == lead.id, ChatMessage.direction == "out", ChatMessage.text == f"[template:{template}]",
+        ChatMessage.wa_message_id.is_not(None), ChatMessage.created_at >= attempted - WA_STATUS_SKEW)
+        .order_by(ChatMessage.created_at.desc()).limit(1))
+    rows = session.execute(select(Event.occurred_at, Event.data).where(
+        Event.lead_id == lead.id, Event.kind.in_(WA_STATUS_KINDS), Event.occurred_at >= attempted - WA_STATUS_SKEW)
+        .order_by(Event.occurred_at, Event.id)).all()
+    for occurred, data in rows:
+        if wamid is None or (isinstance(data, dict) and data.get("wamid") == wamid):
+            return occurred
+    return None
+
+
 def _wa_unconfirmed(ctx: Ctx, session: Session) -> int:
     """A template send that ended in an unknown error was never resent. Confirm it from Meta's status
     webhooks; with no status after 1 h, ask a person (once)."""
@@ -363,8 +401,7 @@ def _wa_unconfirmed(ctx: Ctx, session: Session) -> int:
     def one(lead: Lead) -> bool:
         done = False
         for key, attr, name, at in pending(lead):
-            status = session.scalar(select(func.min(Event.occurred_at)).where(
-                Event.lead_id == lead.id, Event.kind.in_(WA_STATUS_KINDS), Event.occurred_at >= at - WA_STATUS_SKEW))
+            status = _status_time(session, lead, name, at)
             if status is not None:
                 setattr(lead, attr, status)
                 logger.info("lead %s: WhatsApp %s confirmed by status webhook", lead.id, name)
@@ -397,6 +434,12 @@ def _wa_reminder(ctx: Ctx, session: Session) -> int:
         result = send_template_once(session, lead, REMINDER_TEMPLATE, REMINDER_ATTEMPT, "wa_reminder_sent_at",
                                     ctx.deps, ctx.now, before_send=session.commit)
         logger.info("lead %s: WhatsApp reminder %s", lead.id, result)
+        if (result in ("failed", "not_allowed") and lead.state == S.IN_SEQUENCE.value
+                and lead.active_channel == "whatsapp"):
+            # refused and decide() did not move the lead: WhatsApp is done, move on now rather than
+            # wait for a no-response that can never come
+            target = switch_channel(session, lead, "wa_no_response", ctx.deps, ctx.now, settings=ctx.settings)
+            logger.info("lead %s: reminder refused, switched to %s", lead.id, target or "nurture")
         return result == "sent"
 
     return _each(ctx, session, "wa_reminder", _pick(session, stmt, keep, ctx.batch), one)
@@ -427,12 +470,33 @@ def _resume_paused(ctx: Ctx, session: Session) -> int:
         Lead.pause_until <= ctx.now).order_by(Lead.pause_until, Lead.id).limit(ctx.batch)))
 
     def one(lead: Lead) -> bool:
+        old_tool_id = lead.tool_lead_id if lead.active_channel == "email" else None
+        if old_tool_id:
+            # the reply that carried the out-of-office stopped (deleted) the tool lead: nothing to resume
+            lead.tool_lead_id = None
+            set_flag(lead, "previous_tool_lead_id", old_tool_id)
         _restart(session, lead, ctx.deps.tool, ctx.now, "ooo_resume")
         lead.pause_until = None
         logger.info("lead %s: out-of-office over, back in sequence", lead.id)
+        if old_tool_id and (lead.step_sent or 0) < LAST_STEP:
+            _re_enrol(ctx, session, lead)
         return True
 
     return _each(ctx, session, "resume_paused", leads, one)
+
+
+def _re_enrol(ctx: Ctx, session: Session, lead: Lead) -> None:
+    """Re-enrol at our next unsent step (sequencer.enroll from_step). On failure the lead is left
+    without a tool lead id, so start_new retries it from step 1 rather than losing it."""
+    from_step = (lead.step_sent or 0) + 1
+    try:
+        with session.begin_nested():
+            enroll(session, lead, ctx.deps.tool, ctx.now, settings=ctx.settings, from_step=from_step)
+        logger.info("lead %s: re-enrolled at step %s", lead.id, from_step)
+    except Exception as exc:  # noqa: BLE001 - recorded; start_new picks the lead up
+        logger.warning("lead %s: re-enrol failed: %s", lead.id, type(exc).__name__)
+        record_integration_error(session, lead.id, f"lead {lead.id}: re-enrol at step {from_step} failed: "
+                                                   f"{type(exc).__name__}", ctx.now)
 
 
 def _account_holds(ctx: Ctx, session: Session) -> int:
@@ -564,7 +628,7 @@ def _decay_scores(ctx: Ctx, session: Session) -> int:
 # ====================================================================== 11. background jobs
 
 def _run_due_jobs(ctx: Ctx, session: Session) -> int:
-    return jobs.run_due(ctx.session_factory, ctx.deps, ctx.now_fn)
+    return jobs.run_due(ctx.session_factory, ctx.deps, ctx.now_fn, after_each=ctx.renew)
 
 
 # ====================================================================== 12. alerts
@@ -660,6 +724,24 @@ class _Lock:
         self.release, self.renew = release, renew
 
 
+def _pg_release(conn: Any) -> None:
+    """Unlock and close. If the unlock fails the session-level lock may still be held: invalidate the
+    connection so the pool discards it (closing the server session frees the lock), never reuses it."""
+    try:
+        conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": PG_LOCK_KEY})
+    except Exception as exc:  # noqa: BLE001 - never raise from release
+        logger.warning("worker lock unlock failed: %s; dropping the connection", type(exc).__name__)
+        try:
+            conn.invalidate()
+        except Exception:  # noqa: BLE001
+            pass
+    finally:
+        try:
+            conn.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def _acquire(session_factory: SessionFactory, now_fn: NowFn) -> Optional[_Lock]:
     s = session_factory()
     bind = s.get_bind()
@@ -675,13 +757,7 @@ def _acquire(session_factory: SessionFactory, now_fn: NowFn) -> Optional[_Lock]:
             conn.close()
             return None
 
-        def pg_release() -> None:
-            try:
-                conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": PG_LOCK_KEY})
-            finally:
-                conn.close()
-
-        return _Lock(pg_release, lambda: None)
+        return _Lock(lambda: _pg_release(conn), lambda: None)
 
     owner = uuid.uuid4().hex
     try:
@@ -747,9 +823,11 @@ def _run(ctx: Ctx, name: str, fn: JobFn) -> int:
 
 
 def tick(session_factory: SessionFactory, deps: Deps, now_fn: NowFn, settings: Settings, *,
-         batch: Optional[int] = None, scanners: Optional[Scanners] = None) -> Dict[str, int]:
+         batch: Optional[int] = None, scanners: Optional[Scanners] = None,
+         stop: Optional[threading.Event] = None) -> Dict[str, int]:
     """Run every job once. Returns {job name: leads/items handled (-1 = the job failed),
-    "failed_jobs": n}, or {"skipped": 1} when another worker holds the lock."""
+    "failed_jobs": n}, or {"skipped": 1} when another worker holds the lock. When `stop` is set
+    (shutdown) the tick ends after the current job, with "stopped": 1."""
     try:
         lock = _acquire(session_factory, now_fn)
     except Exception as exc:  # noqa: BLE001 - e.g. the database is down: try again next tick
@@ -761,10 +839,14 @@ def tick(session_factory: SessionFactory, deps: Deps, now_fn: NowFn, settings: S
     try:
         ctx = Ctx(session_factory=session_factory, deps=deps, settings=settings, now=now_fn(), now_fn=now_fn,
                   batch=batch or getattr(settings, "worker_batch_size", DEFAULT_BATCH),
-                  scanners=scanners or _default_scanners())
+                  scanners=scanners or _default_scanners(), renew=lock.renew)
         results: Dict[str, int] = {}
         failed = 0
         for name, fn in JOBS:
+            if stop is not None and stop.is_set():
+                results["stopped"] = 1
+                logger.info("worker tick stopped before %s (shutdown)", name)
+                break
             results[name] = n = _run(ctx, name, fn)
             if n < 0:
                 failed += 1
@@ -832,7 +914,7 @@ def main(argv: Optional[List[str]] = None, *, settings: Optional[Settings] = Non
     logger.info("worker loop started (every %ss)", settings.worker_interval_s)
     while not stop.is_set():
         try:
-            tick(factory, deps, now_fn, settings)
+            tick(factory, deps, now_fn, settings, stop=stop)
         except Exception as exc:  # noqa: BLE001 - keep looping
             logger.error("worker tick crashed: %s", type(exc).__name__)
         stop.wait(settings.worker_interval_s)

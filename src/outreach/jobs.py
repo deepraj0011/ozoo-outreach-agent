@@ -376,7 +376,7 @@ RAN = frozenset({"obsolete", "done", "retry", "failed", "lost_claim"})
 
 
 def run_due(session_factory: SessionFactory, deps: Deps, now_fn: NowFn, *, limit: int = 20,
-            grace: timedelta = DEFAULT_GRACE) -> int:
+            grace: timedelta = DEFAULT_GRACE, after_each: Optional[Callable[[], None]] = None) -> int:
     """Run pending jobs that are due and older than `grace` (the request's BackgroundTask gets
     the first chance), oldest first, at most `limit`. Returns how many were claimed and run
     (not "skipped" or "error"); one failing job never stops the batch."""
@@ -402,4 +402,9 @@ def run_due(session_factory: SessionFactory, deps: Deps, now_fn: NowFn, *, limit
             continue
         if result in RAN:
             ran += 1
+        if after_each is not None:
+            try:
+                after_each()  # the worker renews its lock lease: LLM jobs can be slow
+            except Exception as exc:  # noqa: BLE001 - never stop the batch for it
+                logger.warning("run_due after_each failed: %s", type(exc).__name__)
     return ran

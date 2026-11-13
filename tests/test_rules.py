@@ -657,3 +657,18 @@ def test_booking_click_not_booked_whatsapp_window_closed_alerts():
 @pytest.mark.parametrize("st", [S.BOOKED, S.PAUSED, S.HANDED_OFF, S.SUPPRESSED])
 def test_booking_click_not_booked_quiet_states(st):
     assert decide(lead_snap(state=st), ev("booking_click_not_booked", channel="system"), NOW) == []
+
+
+def test_sent_maps_the_campaign_step_through_the_resume_offset():
+    lead = lead_snap(step_sent=2, flags={"step_offset": 2})
+    assert decide(lead, ev("sent", step=1), NOW) == [SetStepSent(3), RefreshNextStep()]
+
+
+def test_last_real_step_sent_after_resume_stops_the_tool():
+    lead = lead_snap(step_sent=3, flags={"step_offset": 2})
+    assert decide(lead, ev("sent", step=2), NOW) == [SetStepSent(4), RefreshNextStep(), ToolStop()]
+
+
+def test_sent_beyond_the_last_real_step_is_ignored_but_stops_the_tool():
+    lead = lead_snap(step_sent=4, flags={"step_offset": 2})
+    assert decide(lead, ev("sent", step=3), NOW) == [ToolStop()]

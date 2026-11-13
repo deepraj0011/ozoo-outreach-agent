@@ -135,37 +135,73 @@ def render_reply(
     return t["replies"][key]["body"].format_map(_values(lead, lead.step_sent, s))
 
 
+LAST_STEP = max(SCHEDULE_DAYS)
+STEP_OFFSET = "step_offset"
+
+
+def step_offset(lead: Lead) -> int:
+    """Campaign step + offset = our step. Non-zero only after a mid-sequence re-enrolment."""
+    try:
+        return int((lead.variant_flags or {}).get(STEP_OFFSET, 0))
+    except (TypeError, ValueError):
+        return 0
+
+
 def enroll(
     session: Session, lead: Lead, tool: Any, now: datetime, *,
-    settings: Optional[Settings] = None, templates: Optional[Dict[str, Any]] = None,
+    settings: Optional[Settings] = None, templates: Optional[Dict[str, Any]] = None, from_step: int = 1,
 ) -> None:
+    """Add the lead to its campaign. from_step > 1 re-enrols mid-sequence (after an out-of-office
+    resume: the earlier reply deleted the tool lead). The campaign always starts at its step 1, so
+    campaign step i carries our step from_step - 1 + i and variant_flags["step_offset"] records the
+    shift (rules map the tool's `sent` step back). Campaign steps past our last step repeat the last
+    one (never blank); the tool lead is stopped as soon as our last step is reported sent. The
+    campaign's own day spacing (0 / 4 / 9 / 15) applies from the re-enrolment."""
     if lead.tool_lead_id:
         return
+    if from_step not in SCHEDULE_DAYS:
+        raise ValueError(f"from_step must be one of {sorted(SCHEDULE_DAYS)}")
     s = settings or get_settings()
     group = lead.timezone_group or s.default_tz_group
     campaign_id = s.campaign_ids.get(group)
     if not campaign_id:
         raise SequencerConfigError(f"no campaign configured for timezone group {group!r}")
     t = templates or load_templates()
+    offset = from_step - 1
     variables: Dict[str, str] = {}
     for step in SCHEDULE_DAYS:
-        variables.update(render_step(lead, step, templates=t, settings=s))
+        real = min(step + offset, LAST_STEP)
+        rendered = render_step(lead, real, templates=t, settings=s)
+        variables[f"subject_{step}"] = rendered[f"subject_{real}"]
+        variables[f"body_{step}"] = rendered[f"body_{real}"]
     vals = _values(lead, 1, s)
     variables["first_name"] = vals["first_name"]
     variables["company"] = vals["company"]
     lead.tool_lead_id = tool.add_lead(campaign_id, lead, variables)
-    lead.variant_flags["enrolled_at"] = now.isoformat()
+    flags = dict(lead.variant_flags or {})
+    flags["enrolled_at"] = now.isoformat()
+    if offset:
+        flags[STEP_OFFSET] = offset
+    else:
+        flags.pop(STEP_OFFSET, None)
+    lead.variant_flags = flags
     session.flush()
-    logger.info("enrolled lead_id=%s", lead.id)
+    logger.info("enrolled lead_id=%s from step %s", lead.id, from_step)
 
 
 def refresh_next_step(
     session: Session, lead: Lead, tool: Any, *,
     settings: Optional[Settings] = None, templates: Optional[Dict[str, Any]] = None,
 ) -> None:
-    if not lead.tool_lead_id or lead.step_sent >= max(SCHEDULE_DAYS):
+    if not lead.tool_lead_id or lead.step_sent >= LAST_STEP:
         return
-    tool.update_variables(lead.tool_lead_id, render_step(lead, lead.step_sent + 1, templates=templates, settings=settings))
+    real = lead.step_sent + 1
+    campaign_step = real - step_offset(lead)
+    if campaign_step < 1:
+        return
+    rendered = render_step(lead, real, templates=templates, settings=settings)
+    tool.update_variables(lead.tool_lead_id, {f"subject_{campaign_step}": rendered[f"subject_{real}"],
+                                              f"body_{campaign_step}": rendered[f"body_{real}"]})
 
 
 def end_of_sequence_route(lead: Lead, human_clicks: int) -> Tuple[str, List[Action]]:
