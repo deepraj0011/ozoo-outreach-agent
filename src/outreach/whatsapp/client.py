@@ -86,11 +86,20 @@ class WhatsAppClient:
 
     # ------------------------------------------------------------ sends
     def send_template(self, phone: str, name: str, lang: str = "en",
-                      variables: Optional[Sequence[str]] = None) -> str:
+                      variables: Optional[Sequence[str]] = None,
+                      quick_replies: Optional[Sequence[str]] = None) -> str:
         template: Dict[str, Any] = {"name": name, "language": {"code": lang}}
+        components: List[Dict[str, Any]] = []
         if variables:
             params: List[Dict[str, str]] = [{"type": "text", "text": v} for v in variables]
-            template["components"] = [{"type": "body", "parameters": params}]
+            components.append({"type": "body", "parameters": params})
+        # Without a payload, Meta reports a quick-reply tap with the button TEXT; the rules match
+        # the payload (BOOK_DEMO / ASK_QUESTION), so each button's payload is sent with the template.
+        for i, payload in enumerate(quick_replies or ()):
+            components.append({"type": "button", "sub_type": "quick_reply", "index": str(i),
+                               "parameters": [{"type": "payload", "payload": payload}]})
+        if components:
+            template["components"] = components
         return self._post("template", phone, {"type": "template", "template": template})
 
     def send_text(self, phone: str, text: str) -> str:

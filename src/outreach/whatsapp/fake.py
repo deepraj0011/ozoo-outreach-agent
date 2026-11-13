@@ -38,7 +38,8 @@ class FakeWhatsAppClient:
         return wamid
 
     def send_template(self, phone: str, name: str, lang: str = "en",
-                      variables: Optional[Sequence[str]] = None) -> str:
+                      variables: Optional[Sequence[str]] = None,
+                      quick_replies: Optional[Sequence[str]] = None) -> str:
         return self._send("send_template", phone, name, lang, list(variables or []))
 
     def send_text(self, phone: str, text: str) -> str:

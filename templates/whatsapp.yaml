@@ -9,6 +9,8 @@ templates:
   ozoo_intro:
     language: en
     variables: [first_name, company]
+    # payloads of the template's quick-reply buttons, in button order ("Book a demo", "Ask a question")
+    quick_replies: [BOOK_DEMO, ASK_QUESTION]
   ozoo_reminder:
     language: en
     variables: [first_name]

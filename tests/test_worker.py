@@ -151,7 +151,7 @@ def test_intro_wa_send_error_falls_back_to_email(env):
 def test_intro_attempt_is_committed_before_the_send(env):
     seen = {}
 
-    def spy(phone, name, lang="en", variables=None):
+    def spy(phone, name, lang="en", variables=None, quick_replies=None):
         with env.factory() as s:  # a separate session sees the committed attempt flag
             seen["flag"] = (s.get(Lead, lid).variant_flags or {}).get("wa_intro_attempted_at")
         return "wamid.X"

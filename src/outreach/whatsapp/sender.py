@@ -62,6 +62,9 @@ def validate_wa_templates(data: Any) -> Dict[str, Any]:
         for v in variables:
             if v not in TEMPLATE_VARIABLES:
                 raise ValueError(f"template {name} uses unknown variable {v!r}")
+        qr = t.get("quick_replies", [])
+        if not isinstance(qr, list) or not all(isinstance(x, str) and x.strip() for x in qr):
+            raise ValueError(f"template {name}: quick_replies must be a list of payload strings")
     for key in TEXT_KEYS:
         text = texts.get(key)
         if not isinstance(text, str) or not text.strip():
@@ -190,7 +193,11 @@ class WhatsAppSender:
             raise ValueError(f"unknown WhatsApp template {name!r}")
         vals = self._values(lead)
         variables: List[str] = [vals.get(v) or VARIABLE_FALLBACK[v] for v in cfg["variables"]]
-        wamid = self.client.send_template(phone, name, cfg["language"], variables)
+        if cfg.get("quick_replies"):
+            wamid = self.client.send_template(phone, name, cfg["language"], variables,
+                                              quick_replies=cfg["quick_replies"])
+        else:
+            wamid = self.client.send_template(phone, name, cfg["language"], variables)
         field = SENT_AT_FIELD.get(name)
         if field:
             setattr(lead, field, now)

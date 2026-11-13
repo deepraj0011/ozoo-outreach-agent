@@ -235,7 +235,8 @@ def test_texts_have_no_raw_urls():
         assert key in t["texts"]
         assert "http" not in t["texts"][key].lower()
         assert "www." not in t["texts"][key].lower()
-    assert t["templates"]["ozoo_intro"] == {"language": "en", "variables": ["first_name", "company"]}
+    assert t["templates"]["ozoo_intro"] == {"language": "en", "variables": ["first_name", "company"],
+                                            "quick_replies": ["BOOK_DEMO", "ASK_QUESTION"]}
     assert t["templates"]["ozoo_reminder"] == {"language": "en", "variables": ["first_name"]}
 
 
@@ -365,3 +366,24 @@ def test_booking_url_only_built_when_needed(session, monkeypatch):
     sender.send_text(session, lead, "reschedule", NOW)
     sender.send_text(session, lead, "booking_link", NOW)
     assert built == [lead.id, lead.id]
+
+
+@respx.mock
+def test_template_carries_quick_reply_payloads():
+    """A real tap reports the payload sent here (BOOK_DEMO), not the button text the rules ignore."""
+    route = respx.post(URL).mock(return_value=httpx.Response(200, json=OK))
+    _client().send_template(PHONE, "ozoo_intro", "en", ["Asha", "Acme"], quick_replies=["BOOK_DEMO", "ASK_QUESTION"])
+    comps = json.loads(route.calls.last.request.content)["template"]["components"]
+    assert comps[1:] == [
+        {"type": "button", "sub_type": "quick_reply", "index": "0", "parameters": [{"type": "payload", "payload": "BOOK_DEMO"}]},
+        {"type": "button", "sub_type": "quick_reply", "index": "1", "parameters": [{"type": "payload", "payload": "ASK_QUESTION"}]},
+    ]
+
+
+@respx.mock
+def test_sender_sends_intro_with_configured_payloads(session):
+    route = respx.post(URL).mock(return_value=httpx.Response(200, json=OK))
+    lead = _wa_lead(session)
+    WhatsAppSender(_client(), SETTINGS).send_template(session, lead, "ozoo_intro", NOW)
+    comps = json.loads(route.calls.last.request.content)["template"]["components"]
+    assert [c["parameters"][0]["payload"] for c in comps if c["type"] == "button"] == ["BOOK_DEMO", "ASK_QUESTION"]
