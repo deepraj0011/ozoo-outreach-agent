@@ -126,3 +126,24 @@ class Alert(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime)
     posted_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime)  # NULL = not on Teams yet
     resolved_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime)
+
+
+class Job(Base):
+    """A background LLM call (reply classification or a chatbot answer), run after the webhook
+    request by outreach.jobs. last_error holds an exception type name only, never prompt or lead text."""
+    __tablename__ = "job"
+    __table_args__ = (Index("ix_job_status_run_after", "status", "run_after"),
+                      Index("ix_job_lead_kind", "lead_id", "kind"))
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    lead_id: Mapped[int] = mapped_column(ForeignKey("lead.id"))
+    kind: Mapped[str] = mapped_column(String(20))  # classify|bot_reply
+    event_id: Mapped[Optional[int]] = mapped_column(ForeignKey("event.id"))
+    dedupe_key: Mapped[str] = mapped_column(String(120), unique=True)
+    status: Mapped[str] = mapped_column(String(10), default="pending")  # pending|running|done|failed
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    run_after: Mapped[datetime] = mapped_column(UTCDateTime)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    started_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime)
+    last_error: Mapped[Optional[str]] = mapped_column(String(200))

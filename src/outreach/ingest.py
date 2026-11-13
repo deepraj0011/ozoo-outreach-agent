@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
-from typing import Iterable, Optional, Tuple
+from typing import Iterable, List, Optional, Tuple
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -16,6 +16,7 @@ from .actions import Deps, execute, record_integration_error
 from .botfilter import Scanners, classify_event
 from .emailtool.base import NormalizedEvent
 from .intake import FREE_MAIL_DOMAINS
+from .jobs import discard_enqueued, take_enqueued
 from .models import ChatMessage, Event, Lead
 from .rules import EventSnapshot, LeadSnapshot, decide
 from .states import TERMINAL
@@ -161,15 +162,23 @@ def _ingest_one(session: Session, ev: NormalizedEvent, deps: Deps, now: datetime
 
 
 def ingest(session: Session, events: Iterable[NormalizedEvent], deps: Deps, now: datetime,
-           scanners: Scanners) -> None:
+           scanners: Scanners) -> List[int]:
     """One transaction per event (this function commits). Duplicates are skipped. Any error in
-    decide/execute rolls the event back and re-raises, so the provider's retry is safe."""
+    decide/execute rolls the event back and re-raises, so the provider's retry is safe.
+
+    Returns the ids of the background jobs (outreach.jobs) enqueued and committed by this call;
+    the caller runs them after its response. Collected per session, so per request."""
+    job_ids: List[int] = []
+    discard_enqueued(session)
     for ev in events:
         try:
             _ingest_one(session, ev, deps, now, scanners)
             session.commit()
+            job_ids.extend(take_enqueued(session))
         except Exception as exc:
             session.rollback()
+            discard_enqueued(session)
             logger.error("ingest of %s event %s failed: %s", ev.kind, ev.provider_event_id,
                          type(exc).__name__)
             raise
+    return job_ids

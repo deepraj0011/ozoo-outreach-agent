@@ -11,7 +11,7 @@ import json
 import logging
 import re
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, Iterator, Optional, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Request
@@ -33,6 +33,7 @@ from .emailtool.instantly import InstantlyTool
 from .handoff import start_takeover
 from .ingest import IP_MAX, UA_MAX, ingest
 from .intake import intake_lead
+from .jobs import JobQueue, run_job
 from .links import lead_token, parse_token
 from .llm import make_llm
 from .models import Event, Lead
@@ -131,6 +132,7 @@ def default_deps(settings: Settings) -> Deps:
         outreach=_NotWired("outreach"),  # Task 12
         classify=make_classifier(settings, llm),
         bot_reply=make_bot(settings, llm),
+        jobs=JobQueue(),  # LLM calls never run inside a webhook request
     )
 
 
@@ -228,6 +230,8 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
     scanners = scanners or load_scanners()
     verifier = verifier or EmailVerifier(settings.zerobounce_api_key)
     session_factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    if deps.jobs is None:
+        deps.jobs = JobQueue()  # always: classify / bot replies run after the response, never in it
     home = settings.link_targets.get("homepage") or DEFAULT_HOME
     if deps.intake is None:
         # referrals from "wrong person" replies go through the same intake as POST /intake
@@ -257,6 +261,19 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
         finally:
             s.close()
 
+    def _run_jobs(job_ids: List[int]) -> None:
+        """BackgroundTask after the webhook response: run each job in its own session (run_job
+        never raises). Anything left over (crash, deploy) is picked up by the worker's run_due."""
+        for job_id in job_ids:
+            try:
+                run_job(session_factory, job_id, deps, clock)
+            except Exception as exc:  # noqa: BLE001 - a background task must never raise
+                logger.error("job %s: background run crashed: %s", job_id, type(exc).__name__)
+
+    def _schedule(background: BackgroundTasks, job_ids: List[int]) -> None:
+        if job_ids:
+            background.add_task(_run_jobs, list(job_ids))
+
     @app.exception_handler(Exception)
     async def _unhandled(request: Request, exc: Exception) -> JSONResponse:
         logger.error("unhandled %s on %s", type(exc).__name__, request.url.path.split("/")[1:2])
@@ -268,7 +285,8 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
 
     # ------------------------------------------------------------ email webhook
     @app.post("/webhooks/email")
-    async def email_webhook(request: Request, session: Session = Depends(get_session)) -> Response:
+    async def email_webhook(request: Request, background: BackgroundTasks,
+                            session: Session = Depends(get_session)) -> Response:
         try:
             body = await _read_capped(request)
         except _BodyTooLarge:
@@ -285,10 +303,11 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
             logger.warning("email webhook rejected: malformed body")
             return _fail(400)
         try:
-            await run_in_threadpool(ingest, session, events, deps, now, scanners)
+            job_ids = await run_in_threadpool(ingest, session, events, deps, now, scanners)
         except Exception as exc:  # noqa: BLE001 - provider retries; idempotency makes it safe
             logger.error("email webhook ingest failed: %s", type(exc).__name__)
             return _fail(500)
+        _schedule(background, job_ids)
         return JSONResponse({"ok": True})
 
     # ------------------------------------------------------------ WhatsApp webhook (Meta)
@@ -306,7 +325,8 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
         return PlainTextResponse(challenge)
 
     @app.post("/webhooks/whatsapp")
-    async def whatsapp_webhook(request: Request, session: Session = Depends(get_session)) -> Response:
+    async def whatsapp_webhook(request: Request, background: BackgroundTasks,
+                               session: Session = Depends(get_session)) -> Response:
         try:
             body = await _read_capped(request)
         except _BodyTooLarge:
@@ -322,15 +342,17 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
             logger.warning("whatsapp webhook rejected: malformed body")
             return _fail(400)
         try:
-            await run_in_threadpool(ingest, session, events, deps, clock(), scanners)
+            job_ids = await run_in_threadpool(ingest, session, events, deps, clock(), scanners)
         except Exception as exc:  # noqa: BLE001 - Meta retries; idempotency makes it safe
             logger.error("whatsapp webhook ingest failed: %s", type(exc).__name__)
             return _fail(500)
+        _schedule(background, job_ids)
         return JSONResponse({"ok": True})
 
     # ------------------------------------------------------------ Cal.com webhook
     @app.post("/webhooks/cal")
-    async def cal_webhook(request: Request, session: Session = Depends(get_session)) -> Response:
+    async def cal_webhook(request: Request, background: BackgroundTasks,
+                          session: Session = Depends(get_session)) -> Response:
         try:
             body = await _read_capped(request)
         except _BodyTooLarge:
@@ -348,10 +370,11 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
             logger.warning("cal webhook rejected: malformed body")
             return _fail(400)
         try:
-            await run_in_threadpool(ingest, session, events, deps, now, scanners)
+            job_ids = await run_in_threadpool(ingest, session, events, deps, now, scanners)
         except Exception as exc:  # noqa: BLE001 - Cal.com may retry; idempotency makes it safe
             logger.error("cal webhook ingest failed: %s", type(exc).__name__)
             return _fail(500)
+        _schedule(background, job_ids)
         return JSONResponse({"ok": True})
 
     # ------------------------------------------------------------ tracked links
@@ -560,7 +583,7 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
 
     @app.post("/teams/commands")
     async def teams_commands(request: Request, background: BackgroundTasks,
-                             session: Session = Depends(get_session)) -> Response:
+                        session: Session = Depends(get_session)) -> Response:
         try:
             body = await _read_capped(request, TEAMS_MAX_BODY)
         except _BodyTooLarge:

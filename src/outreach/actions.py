@@ -18,6 +18,7 @@ from .states import IllegalTransition, LeadState, transition
 if TYPE_CHECKING:  # pragma: no cover
     from .emailtool.base import EmailTool
     from .intake import IntakeResult
+    from .jobs import JobQueue
 
 ALERT_KINDS = frozenset({
     "hot_lead", "hot_no_reply", "question", "unsure", "unmatched_reply", "unmatched_inbound",
@@ -243,6 +244,9 @@ class Deps:
     handoff: Optional[Callable[[Session, Lead, datetime], None]] = None
     intake: Optional[Callable[[Session, Dict[str, Any], datetime], "IntakeResult"]] = None
     takeover: Optional[Callable[[Session, Lead, str, datetime], None]] = None
+    # set in production (create_app / default_deps): Classify / BotReply become background jobs
+    # (outreach.jobs) instead of an LLM call inside the webhook request. None = inline (unit tests).
+    jobs: Optional["JobQueue"] = None
 
 
 _FAILED = object()
@@ -433,10 +437,15 @@ class _Run:
         elif isinstance(a, Classify):
             if self.event is None:
                 self.alert("unsure", f"lead {lead.id}: classify requested without an event")
+            elif deps.jobs is not None and deps.classify is not None:
+                deps.jobs.enqueue(s, lead, "classify", self.event, self.now)
             else:
                 self.followup("classify", deps.classify, s, lead, self.event, self.now)
         elif isinstance(a, BotReply):
-            self.followup("bot_reply", deps.bot_reply, s, lead, self.now)
+            if deps.jobs is not None and deps.bot_reply is not None:
+                deps.jobs.enqueue(s, lead, "bot_reply", self.event, self.now)
+            else:
+                self.followup("bot_reply", deps.bot_reply, s, lead, self.now)
         elif isinstance(a, HandOff):
             if deps.handoff is None:
                 self.alert("handoff", f"lead {lead.id}: hand off to sales")
