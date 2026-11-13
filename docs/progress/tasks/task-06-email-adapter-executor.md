@@ -1,7 +1,7 @@
 # Task 06: Email adapter, webhooks, click redirect, executor
 
 ## Status
-🔍 In review. Implemented and fix round 1 is committed (`a521f9b`). Waiting for re-review.
+✅ Done. Review clean after 2 fix rounds (`a521f9b`, `4cb3162`).
 
 ## What it does (plain language)
 Connects the pure rules to the real world. It talks to Instantly, receives its webhooks, handles tracked-link clicks and the unsubscribe page, accepts leads over an API, runs the actions the rules return, and posts Slack alerts after the database commit.
@@ -37,10 +37,10 @@ Task 7 (`EmailTool`, `OutreachPort.refresh_next_step`), Task 8 (`ingest`, `Norma
 - Fix round 1: domain-matched replies keep the real sender in the event; non-idempotent POSTs (add lead, reply) retry only on connect errors, 429, 503; step counter only moves forward; unmatched alert failure is isolated.
 
 ## Tests
-110: http 10, tool adapter 25, execute 24, webhooks_email 25, redirect 13, intake_api 5, alerts 8. (100 in the first commits, 10 in the fix round.)
+110: http 10, tool adapter 25, execute 24, webhooks_email 25, redirect 13, intake_api 5, alerts 8. (100 in the first commits, 10 in fix round 1, 4 in fix round 2 — Slack posts only after the outermost DB commit.)
 
 ## Commits
-`b01edd6` feat: http retry helper, Instantly email adapter, Slack alerter. `b615b84` feat: action executor with Deps ports and integration-error isolation. `8eecca1` feat: email adapter, shared ingest, click redirect, action executor. `a521f9b` fix: keep real sender on domain match, safe POST retries, Slack after commit.
+`b01edd6` feat: http retry helper, Instantly email adapter, Slack alerter. `b615b84` feat: action executor with Deps ports and integration-error isolation. `8eecca1` feat: email adapter, shared ingest, click redirect, action executor. `a521f9b` fix: keep real sender on domain match, safe POST retries, Slack after commit. `4cb3162` fix: post Slack only after outermost commit.
 
 ## Open items / deferred minors
 - Uvicorn access logs record `/r` and `/u` tokens. Task 13 runbook must disable or redact the access log and note X-Forwarded-For trust.
