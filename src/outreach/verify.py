@@ -66,7 +66,51 @@ class FakeVerifier:
         return "invalid" if "bounce" in low or "invalid" in low else "valid"
 
 
-def make_verifier(settings) -> "EmailVerifier | FakeVerifier":
+class ReacherVerifier:
+    """Reacher (open source, self-hosted: `docker run -p 8080:8080 reacherhq/backend`). It talks
+    SMTP to the lead's mail server without sending anything, so it needs outbound port 25: run it
+    on a server, not a home connection (most ISPs block 25; then every answer is "unknown", which
+    is still sendable). A failure to answer maps to VERIFY_ERROR, like ZeroBounce."""
+
+    TIMEOUT_S = 60.0  # SMTP checks can wait on greylisting
+
+    def __init__(self, base_url: str, secret: str = "", client: Optional[httpx.Client] = None) -> None:
+        self._url = base_url.rstrip("/") + "/v0/check_email"
+        self._secret = secret
+        self._client = client
+
+    def check(self, email: str) -> str:
+        try:
+            headers = {"x-reacher-secret": self._secret} if self._secret else {}
+            send = self._client.post if self._client is not None else httpx.post
+            resp = send(self._url, json={"to_email": email}, headers=headers, timeout=self.TIMEOUT_S)
+            if resp.status_code != 200:
+                logger.warning("email verification (reacher) returned HTTP %s", resp.status_code)
+                return VERIFY_ERROR
+            body = resp.json()
+            reach = str((body or {}).get("is_reachable", "")).lower() if isinstance(body, dict) else ""
+            if not reach:
+                logger.warning("email verification (reacher) returned an unexpected body")
+                return VERIFY_ERROR
+            if reach == "safe":
+                return "valid"
+            if reach == "invalid":
+                return "invalid"
+            if reach == "risky":
+                misc, smtp = body.get("misc") or {}, body.get("smtp") or {}
+                if misc.get("is_disposable"):
+                    return "invalid"
+                if smtp.get("is_catch_all"):
+                    return "catch_all"
+            return "unknown"  # risky (role account, full inbox) or Reacher could not tell
+        except Exception as exc:  # noqa: BLE001 - never leak the address / secret; fail soft
+            logger.warning("email verification (reacher) failed: %s", type(exc).__name__)
+            return VERIFY_ERROR
+
+
+def make_verifier(settings) -> "EmailVerifier | ReacherVerifier | FakeVerifier":
     if getattr(settings, "verify_mode", "real") == "fake":
         return FakeVerifier()
+    if getattr(settings, "verify_provider", "zerobounce") == "reacher":
+        return ReacherVerifier(settings.reacher_url, getattr(settings, "reacher_secret", ""))
     return EmailVerifier(settings.zerobounce_api_key)

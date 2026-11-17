@@ -33,7 +33,7 @@ MODE_FIELDS = ("email_mode", "whatsapp_mode", "llm_mode", "alerts_mode", "verify
 # Credentials each service needs only when its mode is "real" (blank is fine in fake mode).
 REAL_MODE_REQUIRES: Dict[str, tuple] = {
     "email_mode": ("tool_api_key",),
-    "verify_mode": ("zerobounce_api_key",),
+    "verify_mode": (),  # zerobounce_api_key or reacher_url, by verify_provider (checked in _modes)
     "whatsapp_mode": ("wa_phone_number_id", "wa_access_token"),
     "alerts_mode": ("teams_webhook_url",),
     "llm_mode": ("llm_provider", "llm_classifier_model", "llm_chat_model"),
@@ -160,7 +160,12 @@ class Settings(BaseSettings):
     llm_timeout_s: float = Field(30.0, gt=0, le=300)
 
     # Intake
-    zerobounce_api_key: str = ""  # required when verify_mode is real
+    # Email verification before email 1 (verify_mode real): "zerobounce" (paid API) or "reacher"
+    # (open source, self-hosted; REACHER_URL = its backend, REACHER_SECRET = its x-reacher-secret).
+    verify_provider: Literal["zerobounce", "reacher"] = "zerobounce"
+    zerobounce_api_key: str = ""  # required when verify_mode is real and the provider is zerobounce
+    reacher_url: str = ""  # required when verify_mode is real and the provider is reacher
+    reacher_secret: str = ""
     intake_api_key: str
 
     # Cal.com (the booking page is LINK_TARGETS["booking"], required)
@@ -264,6 +269,10 @@ class Settings(BaseSettings):
         missing = [f"{f} (because {mode} is real)" for mode, fields in REAL_MODE_REQUIRES.items()
                    if getattr(self, mode) == "real" for f in fields
                    if getattr(self, f) is None or (isinstance(getattr(self, f), str) and not getattr(self, f).strip())]
+        if self.verify_mode == "real":
+            need = "reacher_url" if self.verify_provider == "reacher" else "zerobounce_api_key"
+            if not getattr(self, need).strip():
+                missing.append(f"{need} (because verify_mode is real, provider {self.verify_provider})")
         if missing:
             raise ValueError(f"must not be blank: {', '.join(missing)}")
         return self
