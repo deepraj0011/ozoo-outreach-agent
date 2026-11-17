@@ -161,20 +161,26 @@ def test_lead_token_rejects_negative():
         lead_token(-1, settings=SETTINGS)
 
 
+def _loc(r):
+    """Where a click goes: the 302 location, or the click page's link (CLICK_JS_CONFIRM)."""
+    from outreach import devsim
+    return r.headers["location"] if r.status_code == 302 else devsim.click_target(r.text)
+
+
 def test_booking_redirect_appends_metadata(env):
     client, s, _ = env
     lead = add_lead(s)
     tok = make_link(lead.id, 1, "booking", settings=SETTINGS).rsplit("/", 1)[1]
     r = client.get(f"/r/{tok}")
-    assert r.status_code == 302
-    loc = urlsplit(r.headers["location"])
+    assert r.status_code == 200 and "Content-Security-Policy" in r.headers
+    loc = urlsplit(_loc(r))
     want = urlsplit(LINK_TARGETS["booking"])
     assert (loc.scheme, loc.netloc, loc.path) == (want.scheme, want.netloc, want.path)
     q = parse_qs(loc.query)
     assert parse_lead_token(q["metadata[lead]"][0], settings=SETTINGS) == lead.id
     # other tags are untouched
     tok = make_link(lead.id, 1, "pricing", settings=SETTINGS).rsplit("/", 1)[1]
-    assert client.get(f"/r/{tok}").headers["location"] == LINK_TARGETS["pricing"]
+    assert _loc(client.get(f"/r/{tok}")) == LINK_TARGETS["pricing"]
 
 
 def test_booking_redirect_keeps_existing_query():
@@ -184,7 +190,7 @@ def test_booking_redirect_keeps_existing_query():
     app = create_app(settings, deps=make_deps(), engine=engine, clock=lambda: NOW, scanners=SCANNERS)
     client = TestClient(app, follow_redirects=False)
     tok = make_link(7, 1, "booking", settings=settings).rsplit("/", 1)[1]
-    loc = urlsplit(client.get(f"/r/{tok}").headers["location"])
+    loc = urlsplit(_loc(client.get(f"/r/{tok}")))
     assert loc.netloc == "cal.com" and loc.path == "/ozoo/demo"
     q = parse_qs(loc.query)
     assert q["month"] == ["2026-11"]

@@ -151,7 +151,8 @@ def test_email_open_is_logged_only(env):
 def test_email_pricing_click_hot_lead_alert(env):
     lid = env.started_email()
     r = env.send(devsim.click(env.settings, env.sim_lead(lid), tag="pricing"))
-    assert r.status_code == 302 and r.headers["location"] == env.settings.link_targets["pricing"]
+    assert r.status_code == 200 and devsim.click_target(r.text) == env.settings.link_targets["pricing"]
+    assert env.send(devsim.click_confirm(r.text)).status_code == 204  # the browser's script ran
     env.advance(minutes=1)
     env.tick()  # the click settles: human, +10, hot_lead alert, booking slots reply
     assert len(env.alerts("hot_lead", lid)) == 1
@@ -198,7 +199,7 @@ def test_email_unsubscribe_link_suppresses_email_and_phone(env):
     env.tick()
     sim = env.sim_lead(lid)
     r = env.send(devsim.click(env.settings, sim, tag="unsubscribe"))
-    assert r.status_code == 302 and r.headers["location"].startswith("/u/")
+    assert r.status_code == 200 and devsim.click_target(r.text).startswith("/u/")
     assert _state(env, lid) == S.IN_SEQUENCE.value  # a GET (scanner) never unsubscribes
     assert env.send(devsim.unsubscribe_link(env.settings, sim)).status_code == 200
     assert _state(env, lid) == S.SUPPRESSED.value

@@ -11,7 +11,10 @@ from .config import Settings, get_settings
 
 logger = logging.getLogger(__name__)
 
-VALID_TAGS = frozenset({"booking", "pricing", "case_study", "product", "homepage", "unsubscribe"})
+# "trap": the honeypot link hidden in our HTML emails. No person can see it, so whatever visits
+# it is a security scanner (and its other clicks on that email are scanner clicks too).
+TRAP_TAG = "trap"
+VALID_TAGS = frozenset({"booking", "pricing", "case_study", "product", "homepage", "unsubscribe", TRAP_TAG})
 VALID_CHANNELS = frozenset({"email", "whatsapp"})
 SIG_LEN = 16
 
@@ -139,6 +142,10 @@ def parse_open_token(token: object, *, settings: Optional[Settings] = None) -> O
         return int(lead_s), int(step_s)
     except (ValueError, binascii.Error, UnicodeError, AttributeError, TypeError):
         return None
+
+
+def make_trap_url(lead_id: int, step: int, *, settings: Optional[Settings] = None) -> str:
+    return make_link(lead_id, step, TRAP_TAG, settings=settings)
 
 
 def make_unsubscribe_url(lead_id: int, step: int, *, settings: Optional[Settings] = None) -> str:

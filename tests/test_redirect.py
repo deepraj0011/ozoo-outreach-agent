@@ -13,7 +13,7 @@ from tests.conftest import NOW, make_lead
 from tests.fakes import LINK_TARGETS, make_app_engine, make_deps, make_settings
 
 SCANNERS = Scanners(ua_substrings=(), cidrs=(), apple_proxy_cidrs=())
-SETTINGS = make_settings()
+SETTINGS = make_settings(click_js_confirm=False)  # the plain 302 path; the click page: test_click_confirm.py
 
 
 @pytest.fixture
@@ -74,7 +74,7 @@ def test_bad_token_goes_home(env):
 def test_missing_target_goes_home(env):
     client, s, _, engine = env
     lead = lead_in(s)
-    app = create_app(make_settings(link_targets={"homepage": "https://ozoo.ai/", "booking": "https://cal.com/x"}), deps=make_deps(),
+    app = create_app(make_settings(link_targets={"homepage": "https://ozoo.ai/", "booking": "https://cal.com/x"}, click_js_confirm=False), deps=make_deps(),
                      engine=engine, clock=lambda: NOW, scanners=SCANNERS)
     # token signed with same secret
     r = TestClient(app, follow_redirects=False).get(f"/r/{token(lead.id, 1, 'case_study')}")

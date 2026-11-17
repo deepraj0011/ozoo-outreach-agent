@@ -129,7 +129,7 @@ def test_sim_sends_signed_request_and_prints_summary(envfile, capsys):
     assert run(envfile, "sim", "wa-button", "--lead", "2", "--id", "book_demo", client=client) == 0
     assert "qualifying" in capsys.readouterr().out
     assert run(envfile, "sim", "click", "--lead", "1", "--tag", "pricing", client=client) == 0
-    assert "HTTP 302" in capsys.readouterr().out
+    assert "browser confirmed the click" in capsys.readouterr().out
     assert run(envfile, "sim", "teams", "--text", "help", client=client) == 0
     assert "Commands:" in capsys.readouterr().out
     assert run(envfile, "sim", "wa-status", "--lead", "2", "--status", "delivered", client=client) == 0

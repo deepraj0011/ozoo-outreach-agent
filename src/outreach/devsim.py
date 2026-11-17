@@ -14,6 +14,10 @@ Times come from `now` (the server's clock: the local fake clock when APP_ENV=loc
 """
 from __future__ import annotations
 
+import html
+
+import re
+
 import base64
 import hashlib
 import hmac
@@ -140,6 +144,22 @@ def click(settings: Settings, lead: SimLead, *, tag: str, step: Optional[int] = 
     ch = channel or (lead.active_channel if lead.active_channel in ("email", "whatsapp") else "email")
     url = make_link(lead.id, step if step is not None else lead.step_sent, tag, ch, settings=settings)
     return SimRequest("GET", urlsplit(url).path, {"User-Agent": SCANNER_UA if scanner else BROWSER_UA})
+
+
+_CONFIRM_RE = re.compile(r'fetch\("(/r/[A-Za-z0-9_.\-]+/ok\?e=\d+)"')
+_HREF_RE = re.compile(r'<a href="([^"]+)"')
+
+
+def click_confirm(page: str, user_agent: str = BROWSER_UA) -> Optional[SimRequest]:
+    """What a person's browser does on our click page (CLICK_JS_CONFIRM): the script's beacon. None
+    when the answer was a plain redirect. A scanner never sends it."""
+    m = _CONFIRM_RE.search(page or "")
+    return SimRequest("POST", m.group(1), {"User-Agent": user_agent}) if m else None
+
+
+def click_target(page: str) -> Optional[str]:
+    m = _HREF_RE.search(page or "")
+    return html.unescape(m.group(1)) if m else None
 
 
 # ====================================================================== WhatsApp (Meta)

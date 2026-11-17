@@ -416,6 +416,18 @@ def cmd_sim(args: argparse.Namespace, settings: Settings, client: Any = None) ->
     detail = ""
     if resp.status_code in (301, 302, 303, 307):
         detail = f" -> {resp.headers.get('location')}"
+    elif args.scenario == "click" and resp.status_code == 200:
+        # our click page: a person's browser runs its script (the beacon); --scanner never does
+        beacon = None if getattr(args, "scanner", False) else devsim.click_confirm(resp.text)
+        target = devsim.click_target(resp.text)
+        if beacon is not None:
+            try:
+                _send(beacon, base, client)
+                detail = f" -> {target} (browser confirmed the click)"
+            except Exception as exc:  # noqa: BLE001
+                detail = f" -> {target} (beacon failed: {type(exc).__name__})"
+        elif target:
+            detail = f" -> {target} (no browser script ran)"
     elif args.scenario == "teams":
         try:
             detail = f" teams reply: {resp.json().get('text')}"
@@ -478,9 +490,9 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def devsim_tags() -> List[str]:
-    from .links import VALID_TAGS
+    from .links import TRAP_TAG, VALID_TAGS
 
-    return list(VALID_TAGS)
+    return sorted(VALID_TAGS - {TRAP_TAG})
 
 
 def main(argv: Optional[List[str]] = None, *, client: Any = None) -> int:

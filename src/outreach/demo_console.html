@@ -122,8 +122,11 @@ const PAGES = [
 const $ = id => document.getElementById(id);
 // Event title + who did it. Unsubscribe-link visits only show the confirm page (nothing happens
 // unless the button is pressed), so they are named for what they are. Scanner / automatic
-// opens and clicks are tagged and never counted.
-const evTitle = e => e.kind === 'click' && /(^|· )link: unsubscribe( ·|$)/.test(e.summary || '') ? 'Unsubscribe page opened' : (KIND[e.kind] || e.kind);
+// opens and clicks are tagged and never counted. The hidden trap link is only ever visited by
+// security scanners (no person can see it).
+const evTitle = e => e.kind !== 'click' ? (KIND[e.kind] || e.kind)
+  : /(^|· )link: unsubscribe( ·|$)/.test(e.summary || '') ? 'Unsubscribe page opened'
+  : /(^|· )link: trap( ·|$)/.test(e.summary || '') ? 'Hidden trap link visited' : (KIND[e.kind] || e.kind);
 const evTag = e => {
   const t = e.verdict === 'bot' ? 'security scanner, ignored' : e.verdict === 'machine' ? 'automatic (Apple Mail), ignored'
     : (e.verdict == null && (e.kind === 'click' || e.kind === 'open')) ? 'checking…' : '';

@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from .actions import Action, Alert, SetState, ToolStop
 from .config import Settings, get_settings
-from .links import make_link, make_open_pixel, make_unsubscribe_url
+from .links import make_link, make_open_pixel, make_trap_url, make_unsubscribe_url
 from .models import Lead
 from .score import band
 from .states import LeadState
@@ -142,6 +142,8 @@ def _tracking_vars(lead: Lead, campaign_step: int, real: int, s: Settings) -> Di
     out = {f"unsubscribe_url_{campaign_step}": make_unsubscribe_url(lead.id, real, settings=s)}
     if getattr(s, "email_open_pixel", False):
         out[f"open_pixel_{campaign_step}"] = make_open_pixel(lead.id, real, settings=s)
+    if getattr(s, "email_honeypot", True):
+        out[f"trap_url_{campaign_step}"] = make_trap_url(lead.id, real, settings=s)
     return out
 
 

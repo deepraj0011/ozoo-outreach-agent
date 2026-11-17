@@ -141,6 +141,13 @@ class Settings(BaseSettings):
     # image. Off by default: opens are unreliable (Apple / Gmail proxies load images by themselves)
     # and a tracking image can lower inbox placement for cold email. Replies are the real signal.
     email_open_pixel: bool = False
+    # Same modes: a hidden honeypot link in every email. No reader sees it, so a visit marks the
+    # visitor (and its other clicks on that email from the same network) as a security scanner.
+    email_honeypot: bool = True
+    # Every tracked email link opens a tiny page that confirms the click with a JavaScript beacon
+    # before forwarding. Most link scanners fetch without running JavaScript; a click with no beacon
+    # is labelled bot. Set false for a plain 302 redirect.
+    click_js_confirm: bool = True
     tool_webhook_secret: str
     campaign_ids: Dict[str, str]
     default_tz_group: str

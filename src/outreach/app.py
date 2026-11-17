@@ -43,7 +43,7 @@ from .handoff import start_takeover
 from .ingest import IP_MAX, UA_MAX, ingest
 from .intake import intake_lead
 from .jobs import JobQueue, run_job
-from .links import lead_token, parse_open_token, parse_token
+from .links import TRAP_TAG, lead_token, parse_open_token, parse_token
 from .llm import make_llm
 from .llm.local_fake import RuleBasedLLM
 from .localclock import default_clock
@@ -66,6 +66,37 @@ MAX_BODY = 1024 * 1024  # 1 MiB
 MAX_CHALLENGE_LEN = 64
 DEFAULT_HOME = "https://ozoo.ai/"
 NO_STORE = {"Cache-Control": "no-store"}
+# Click confirmation page (CLICK_JS_CONFIRM): a person's browser runs the beacon, then goes on;
+# most link scanners fetch the page without running JavaScript. A beacon must arrive within this.
+CLICK_CONFIRM_WINDOW_S = 600
+TRAP_HTML = "<!doctype html><title>OK</title><p>OK</p>"
+
+
+def _aware(dt: datetime) -> datetime:
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
+
+def _click_page(target: str, confirm_path: str, nonce: str) -> str:
+    def js(v: str) -> str:  # a JS string literal that cannot close the <script> element
+        return json.dumps(v).replace("<", "\\u003c")
+    href = html.escape(target, quote=True)
+    return (
+        '<!doctype html><html><head><meta charset="utf-8"><meta name="robots" content="noindex">'
+        '<meta name="referrer" content="no-referrer"><title>Opening…</title>'
+        f'<noscript><meta http-equiv="refresh" content="0;url={href}"></noscript></head>'
+        '<body style="font-family:Arial,sans-serif;color:#555;padding:24px">'
+        f'<p>Opening… <a href="{href}">continue</a></p>'
+        f'<script nonce="{nonce}">(function(){{var t={js(target)},done=false;'
+        'function go(){if(!done){done=true;location.replace(t);}}'
+        f'try{{fetch({js(confirm_path)},{{method:"POST",keepalive:true,credentials:"omit"}})'
+        '.then(go,go);}catch(e){go();}setTimeout(go,1200);})();</script></body></html>')
+
+
+def _click_page_headers(nonce: str) -> Dict[str, str]:
+    return {"Cache-Control": "no-store", "X-Robots-Tag": "noindex", "Referrer-Policy": "no-referrer",
+            "Content-Security-Policy": (f"default-src 'none'; script-src 'nonce-{nonce}'; connect-src 'self'; "
+                                        "style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; "
+                                        "frame-ancestors 'none'")}
 # 1x1 transparent GIF for the open pixel (/o/<token>.gif)
 PIXEL_GIF = (b"GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\x00\x00\x00!\xf9\x04\x01\x00\x00\x00\x00"
              b",\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;")
@@ -268,7 +299,8 @@ def wire_deps(deps: Deps, settings: Settings, verifier: Any) -> Deps:
         def _referral_intake(session: Session, payload: Dict[str, Any], now: datetime) -> Any:
             return intake_lead(session, payload, verifier, now, primary_when_both=settings.primary_when_both,
                                eu_email_approved=settings.eu_email_approved, tz_groups=settings.campaign_ids,
-                               default_tz_group=settings.default_tz_group)
+                               default_tz_group=settings.default_tz_group,
+                               default_phone_region=settings.default_phone_region)
 
         deps.intake = _referral_intake
     if deps.handoff is None:
@@ -487,29 +519,61 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
             return RedirectResponse(home, status_code=302, headers=NO_STORE)
         lead_id, step, tag, channel = parsed
         now = clock()
+        # email links (not WhatsApp: its preview fetcher is told apart by user agent) open a page that
+        # confirms the click with a JavaScript beacon; the trap link is never forwarded anywhere
+        js_check = bool(settings.click_js_confirm) and channel == "email" and tag != TRAP_TAG
+        event_id: Optional[int] = None
         try:
             exists = session.get(Lead, lead_id) is not None
             ua = request.headers.get("user-agent")
-            session.add(Event(
+            ev = Event(
                 lead_id=lead_id if exists else None, channel=channel, kind="click", tag=tag, step=step,
                 occurred_at=now, received_at=now, ip=_client_ip(request, settings.trust_proxy_headers),
                 user_agent=ua[:UA_MAX] if ua else None,
-                # every click waits for the worker's human/bot verdict; unsubscribe visits are only
-                # labelled, never acted on (ruling 9: only the confirm button unsubscribes)
-                processed=False, data={},
-            ))
+                # every click waits for the worker's human/bot verdict; unsubscribe visits and trap hits
+                # are only labelled, never acted on (ruling 9: only the confirm button unsubscribes)
+                processed=False, data={"js_check": True} if js_check else {},
+            )
+            session.add(ev)
             session.commit()
+            event_id = ev.id
             logger.info("click lead %s step %s tag %s", lead_id, step, tag)
         except Exception as exc:  # noqa: BLE001 - the visitor must always be redirected
             session.rollback()
             logger.error("click store failed for lead %s: %s", lead_id, type(exc).__name__)
+        if tag == TRAP_TAG:
+            return HTMLResponse(TRAP_HTML, headers={**NO_STORE, "X-Robots-Tag": "noindex"})
         if tag == "unsubscribe":
             target = f"/u/{token}"
         elif tag == "booking" and settings.link_targets.get("booking"):
             target = with_lead_token(settings.link_targets["booking"], lead_id, settings)
         else:
             target = settings.link_targets.get(tag) or home
+        if js_check and event_id is not None:
+            nonce = base64.b64encode(uuid.uuid4().bytes).decode().rstrip("=")
+            return HTMLResponse(_click_page(target, f"/r/{token}/ok?e={event_id}", nonce),
+                                headers=_click_page_headers(nonce))
         return RedirectResponse(target, status_code=302, headers=NO_STORE)
+
+    @app.post("/r/{token}/ok")
+    def click_confirmed(token: str, e: int = 0, session: Session = Depends(get_session)) -> Response:
+        """The beacon from the click page: this click ran JavaScript in a browser. The event must be
+        the one this token's visit stored (same lead, step and tag), recent and not yet settled."""
+        parsed = parse_token(token, settings=settings)
+        if parsed is not None and e > 0:
+            lead_id, step, tag, channel = parsed
+            try:
+                ev = session.get(Event, e)
+                fresh = ev is not None and (clock() - _aware(ev.received_at)).total_seconds() <= CLICK_CONFIRM_WINDOW_S
+                if (fresh and ev.kind == "click" and not ev.processed and (ev.data or {}).get("js_check")
+                        and (ev.lead_id in (lead_id, None)) and ev.step == step and ev.tag == tag
+                        and ev.channel == channel):
+                    ev.data = {**(ev.data or {}), "js": True}
+                    session.commit()
+            except Exception as exc:  # noqa: BLE001 - a beacon never errors back to the browser
+                session.rollback()
+                logger.error("click confirm failed: %s", type(exc).__name__)
+        return Response(status_code=204, headers=NO_STORE)
 
     # ------------------------------------------------------------ open pixel
     @app.get("/o/{token}")
@@ -572,7 +636,8 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
     def _do_intake(session: Session, payload: Any, now: datetime) -> Any:
         result = intake_lead(session, payload, verifier, now, primary_when_both=settings.primary_when_both,
                              eu_email_approved=settings.eu_email_approved, tz_groups=settings.campaign_ids,
-                             default_tz_group=settings.default_tz_group)
+                             default_tz_group=settings.default_tz_group,
+                               default_phone_region=settings.default_phone_region)
         session.commit()
         return result
 

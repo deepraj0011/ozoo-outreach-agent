@@ -64,7 +64,7 @@ from .actions import (
     TOOL_BLOCK_PENDING, TOOL_REALERT_AFTER, TOOL_STOP_PENDING, Alert, Deps, SetState, execute,
     record_integration_error, tool_retry_delay, tool_stop_failed_text,
 )
-from .botfilter import Scanners, classify_event, load_scanners
+from .botfilter import TRAP_TAG, Scanners, classify_event, load_scanners
 from .chatbot import takeover_active
 from .config import DELAY_DEFAULTS_S, Settings
 from .health import check_mailboxes
@@ -96,7 +96,12 @@ DEFAULT_BATCH = 50
 SCAN_CHUNK = 200
 CLICK_SETTLE = timedelta(seconds=DELAY_DEFAULTS_S["click_settle"])
 CLICK_MAX_FAILURES = 3
-SIBLING_WINDOW = timedelta(seconds=10)
+# other clicks on the same email that can change a verdict: the multi-link burst (10 s, checked in
+# botfilter) and a honeypot hit from the same network (botfilter.TRAP_WINDOW)
+SIBLING_WINDOW = timedelta(hours=1)
+# a click from our click page waits at least this long, so the browser's beacon is in before the
+# verdict (matters only when TIME_SCALE shrinks click_settle below it)
+JS_CONFIRM_GRACE = timedelta(seconds=10)
 BOOKING_NUDGE_AFTER = timedelta(seconds=DELAY_DEFAULTS_S["booking_nudge_after"])
 BOOKING_NUDGE_LOOKBACK = timedelta(days=7)
 WA_REMINDER_AFTER = timedelta(seconds=DELAY_DEFAULTS_S["wa_reminder_after"])
@@ -347,11 +352,13 @@ def _process_settled_clicks(ctx: Ctx, session: Session) -> int:
     rows = list(session.scalars(select(Event).where(
         Event.kind == "click", Event.processed.is_(False), Event.received_at <= ctx.now - _delay(ctx, "click_settle"))
         .order_by(Event.received_at, Event.id).limit(ctx.batch)))
+    rows = [ev for ev in rows if not (ev.data or {}).get("js_check")
+            or _ts(ev.received_at) <= ctx.now - JS_CONFIRM_GRACE]
 
     def settle(ev: Event) -> None:
         lead = _fresh(session, ev.lead_id, lambda ld: True) if ev.lead_id is not None else None
         ev.verdict = classify_event(ev, _sent_at(session, ev, lead), _siblings(session, ev), ctx.scanners)
-        if lead is not None and ev.tag != "unsubscribe":
+        if lead is not None and ev.tag not in ("unsubscribe", TRAP_TAG):
             actions = decide(LeadSnapshot.from_lead(lead, ctx.now), EventSnapshot.from_event(ev), ctx.now)
             execute(session, lead, actions, ctx.deps, ctx.now, event=ev)
         ev.processed = True

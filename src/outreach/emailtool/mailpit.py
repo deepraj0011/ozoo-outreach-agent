@@ -74,10 +74,10 @@ class MailpitError(Exception):
 _URL_RE = re.compile(r"https?://[^\s<>\"']+")
 
 
-def html_with_pixel(body: str, pixel_url: str) -> str:
-    """The plain-text body as simple HTML (escaped, links clickable, line breaks kept) plus our 1x1
-    open-tracking image at the end. Only URLs we put in the body become links; the pixel URL is
-    ours (signed, from config), never lead input."""
+def body_html(body: str, pixel_url: Optional[str] = None, trap_url: Optional[str] = None) -> str:
+    """The plain-text body as simple HTML (escaped, links clickable, line breaks kept), plus our
+    1x1 open-tracking image and / or the hidden honeypot link at the end. Only URLs we put in the
+    body become links; the pixel and trap URLs are ours (signed, from config), never lead input."""
     out: List[str] = []
     pos = 0
     for m in _URL_RE.finditer(body):
@@ -88,11 +88,19 @@ def html_with_pixel(body: str, pixel_url: str) -> str:
         pos = m.start() + len(raw)
     out.append(html.escape(body[pos:]))
     text = "".join(out).replace("\r\n", "\n").replace("\n", "<br>\n")
-    pixel = html.escape(pixel_url, quote=True)
+    extra = ""
+    if trap_url:  # invisible to a reader; security scanners follow every href
+        extra += (f'<a href="{html.escape(trap_url, quote=True)}" style="display:none" aria-hidden="true" '
+                  f'tabindex="-1">&#8203;</a>')
+    if pixel_url:
+        extra += (f'<img src="{html.escape(pixel_url, quote=True)}" width="1" height="1" alt="" '
+                  f'style="border:0;width:1px;height:1px">')
     return (f'<!doctype html><html><body><div style="font-family:Arial,sans-serif;font-size:14px;'
-            f'line-height:1.5">{text}</div>'
-            f'<img src="{pixel}" width="1" height="1" alt="" style="border:0;width:1px;height:1px">'
-            f'</body></html>')
+            f'line-height:1.5">{text}</div>{extra}</body></html>')
+
+
+def html_with_pixel(body: str, pixel_url: str) -> str:
+    return body_html(body, pixel_url=pixel_url)
 
 
 def thread_subject(first_subject: str) -> str:
@@ -111,11 +119,11 @@ def set_unsubscribe_headers(msg: EmailMessage, unsubscribe_url: Optional[str]) -
         msg["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
 
 
-def set_body(msg: EmailMessage, body: str, pixel_url: Optional[str]) -> None:
-    """Plain text always; an HTML alternative with the open pixel when we have one."""
+def set_body(msg: EmailMessage, body: str, pixel_url: Optional[str], trap_url: Optional[str] = None) -> None:
+    """Plain text always; an HTML alternative when there is a pixel or a honeypot link to carry."""
     msg.set_content(body)
-    if pixel_url:
-        msg.add_alternative(html_with_pixel(body, pixel_url), subtype="html")
+    if pixel_url or trap_url:
+        msg.add_alternative(body_html(body, pixel_url, trap_url), subtype="html")
 
 
 def is_loopback_host(host: str) -> bool:
@@ -288,7 +296,8 @@ class MailpitEmailTool:
 
     # ------------------------------------------------------------------ sending (used by the sender)
     def _smtp_send(self, to: str, subject: str, body: str, in_reply_to: Optional[str] = None,
-                   pixel_url: Optional[str] = None, unsubscribe_url: Optional[str] = None) -> str:
+                   pixel_url: Optional[str] = None, unsubscribe_url: Optional[str] = None,
+                   trap_url: Optional[str] = None) -> str:
         msg = EmailMessage()
         msg["From"] = FROM_ADDR
         msg["To"] = to
@@ -300,7 +309,7 @@ class MailpitEmailTool:
             msg["In-Reply-To"] = in_reply_to
             msg["References"] = in_reply_to
         set_unsubscribe_headers(msg, unsubscribe_url)
-        set_body(msg, body, pixel_url)
+        set_body(msg, body, pixel_url, trap_url)
         smtp = self._smtp_factory(self.smtp_host, self.smtp_port)
         try:
             smtp.send_message(msg)
@@ -353,7 +362,8 @@ class MailpitEmailTool:
                     in_reply_to = row["last_message_id"]
                 msg_id = self._smtp_send(row["email"], subject, body, in_reply_to=in_reply_to,
                                          pixel_url=variables.get(f"open_pixel_{step}") or None,
-                                         unsubscribe_url=variables.get(f"unsubscribe_url_{step}") or None)
+                                         unsubscribe_url=variables.get(f"unsubscribe_url_{step}") or None,
+                                         trap_url=variables.get(f"trap_url_{step}") or None)
                 status = "done" if step >= LAST_STEP else "active"
                 db.execute("UPDATE mp_lead SET last_step = ?, last_subject = ?, last_message_id = ?, status = ? "
                            "WHERE tool_lead_id = ?", (step, subject, msg_id, status, tid))

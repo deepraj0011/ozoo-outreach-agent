@@ -127,7 +127,8 @@ class GmailEmailTool(MailpitEmailTool):
 
     # ------------------------------------------------------------------ sending
     def _smtp_send(self, to: str, subject: str, body: str, in_reply_to: Optional[str] = None,
-                   pixel_url: Optional[str] = None, unsubscribe_url: Optional[str] = None) -> str:
+                   pixel_url: Optional[str] = None, unsubscribe_url: Optional[str] = None,
+                   trap_url: Optional[str] = None) -> str:
         msg = EmailMessage()
         msg["From"] = formataddr((self.from_name, self.address))
         msg["To"] = to
@@ -139,7 +140,7 @@ class GmailEmailTool(MailpitEmailTool):
             msg["In-Reply-To"] = in_reply_to
             msg["References"] = in_reply_to
         set_unsubscribe_headers(msg, unsubscribe_url)
-        set_body(msg, body, pixel_url)
+        set_body(msg, body, pixel_url, trap_url)
         smtp = self._smtp_factory(self.smtp_host, self.smtp_port, timeout=30)
         try:
             smtp.login(self.address, self._password)

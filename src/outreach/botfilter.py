@@ -15,6 +15,10 @@ BOT_SEND_WINDOW = timedelta(seconds=60)
 MULTI_TAG_WINDOW = timedelta(seconds=10)
 WHATSAPP_PREVIEW_UA_PREFIX = "WhatsApp/"
 APPLE_PROXY_UA = "Mozilla/5.0"
+TRAP_TAG = "trap"  # links.TRAP_TAG (the hidden honeypot link)
+# A trap hit marks other clicks on the same email as scanner clicks when they come from the same
+# network (/24 IPv4, /48 IPv6) within this window: scanners fetch every link from one pool.
+TRAP_WINDOW = timedelta(hours=1)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_SCANNERS = REPO_ROOT / "config" / "scanners.yaml"
@@ -51,6 +55,17 @@ def _ip_in(ip: Optional[str], nets: Iterable[IPNetwork]) -> bool:
     return any(addr.version == n.version and addr in n for n in nets)
 
 
+def _same_network(a: Optional[str], b: Optional[str]) -> bool:
+    try:
+        x, y = ipaddress.ip_address((a or "").strip()), ipaddress.ip_address((b or "").strip())
+    except ValueError:
+        return False
+    if x.version != y.version:
+        return False
+    prefix = 24 if x.version == 4 else 48
+    return ipaddress.ip_network(f"{x}/{prefix}", strict=False) == ipaddress.ip_network(f"{y}/{prefix}", strict=False)
+
+
 def classify_event(event: Any, sent_at: Optional[datetime], sibling_clicks: Iterable[Any], scanners: Scanners) -> str:
     """Return "human", "bot" or "machine" for a link click / open event.
 
@@ -63,11 +78,21 @@ def classify_event(event: Any, sent_at: Optional[datetime], sibling_clicks: Iter
     if is_click and event.channel == "whatsapp":
         return "bot" if ua.startswith(WHATSAPP_PREVIEW_UA_PREFIX) else "human"
 
+    # (a2) the hidden honeypot link: no person can see it
+    if is_click and event.tag == TRAP_TAG:
+        return "bot"
+
     # (b) known scanners
     ua_l = ua.lower()
     if any(sub.lower() in ua_l for sub in scanners.ua_substrings if sub):
         return "bot"
     if _ip_in(event.ip, scanners.cidrs):
+        return "bot"
+
+    # (b2) the visitor's network also hit this email's honeypot link
+    siblings = list(sibling_clicks)
+    if is_click and any(o.tag == TRAP_TAG and _same_network(o.ip, event.ip)
+                        and abs(o.occurred_at - event.occurred_at) <= TRAP_WINDOW for o in siblings):
         return "bot"
 
     # (c) too soon after send
@@ -76,9 +101,15 @@ def classify_event(event: Any, sent_at: Optional[datetime], sibling_clicks: Iter
 
     # (d) several different link tags clicked at once
     if is_click:
-        for other in sibling_clicks:
+        for other in siblings:
             if other.tag != event.tag and abs(other.occurred_at - event.occurred_at) <= MULTI_TAG_WINDOW:
                 return "bot"
+
+    # (d2) our click page (CLICK_JS_CONFIRM) was served but its script never ran: a person's
+    # browser runs it within a second; most link scanners fetch without running JavaScript
+    data = getattr(event, "data", None) or {}
+    if is_click and data.get("js_check") and not data.get("js"):
+        return "bot"
 
     # (e) Apple Mail Privacy Protection
     if event.kind == "open" and (ua == APPLE_PROXY_UA or _ip_in(event.ip, scanners.apple_proxy_cidrs)):
