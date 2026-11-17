@@ -10,3 +10,6 @@ __pycache__/
 !.env.example
 .local_clock.json
 .clock-*
+
+# local test leads with real addresses: never commit
+docs/test_leads.csv

@@ -156,8 +156,8 @@ def _ingest_one(session: Session, ev: NormalizedEvent, deps: Deps, now: datetime
 
     if ev.kind == "click":
         # Scanner-safe: clicks are settled + decided by the worker; unsubscribe link clicks only
-        # lead to the confirm page and are never acted on.
-        row.processed = ev.tag == "unsubscribe"
+        # lead to the confirm page: the worker labels them human/bot and never acts on them.
+        row.processed = False
         return
 
     actions = decide(LeadSnapshot.from_lead(lead, now), EventSnapshot.from_event(row), now)

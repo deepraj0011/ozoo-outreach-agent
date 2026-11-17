@@ -136,6 +136,9 @@ class Settings(BaseSettings):
     gmail_address: str = ""
     gmail_app_password: str = ""
     gmail_from_name: str = "Ozoo.ai"
+    # mailpit / gmail modes (we send the emails ourselves): add our 1x1 open-tracking image. A
+    # tracking image slightly raises spam scores; set false to send without one.
+    email_open_pixel: bool = True
     tool_webhook_secret: str
     campaign_ids: Dict[str, str]
     default_tz_group: str

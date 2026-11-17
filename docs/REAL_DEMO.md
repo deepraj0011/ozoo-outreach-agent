@@ -126,6 +126,50 @@ Then let them play the lead, on their own phone:
 
 Everything they did shows in the console: timeline, WhatsApp transcript, alerts.
 
+## How email tracking works (and how far to trust it)
+
+| Signal | How it is recorded | How reliable |
+|---|---|---|
+| **Reply** | Read from the Gmail inbox over IMAP, classified by the AI | Fully reliable: this drives the flow |
+| **Link click** | Every link goes through our signed `/r/` address, then on to the real page | Reliable once scanners are filtered (below) |
+| **Unsubscribe** | Only when the person presses **Confirm** on our page, or uses Gmail's own Unsubscribe button (one-click header) | Fully reliable |
+| **Open** | A 1x1 image in the email (turn off with `EMAIL_OPEN_PIXEL=false`) | Rough: logged only, never changes score or flow |
+
+**Scanners.** Company mailboxes (Microsoft 365, Mimecast, Proofpoint, ...) open every email and visit
+every link, unsubscribe included, seconds after delivery. The agent marks these "security scanner,
+ignored" by their address (`config/scanners.yaml`, which lists Microsoft's Safe Links ranges), by
+timing (within 60 s of sending), and by pattern (several links at once). Visiting the unsubscribe
+link only shows the confirm page, so a scanner can never unsubscribe anyone. A scanner from a new
+range can still look human at first: check its address and add the range (owner checked at
+rdap.arin.net) to `config/scanners.yaml`.
+
+**Opens are rough on purpose.** Gmail loads images through Google's proxy and often fetches them once
+on delivery (marked "scanner"), so a later real open may not reach us; Gmail never loads images in
+Spam; Apple Mail opens everything automatically. Use replies and clicks for decisions.
+
+## Follow-ups
+
+- Email 1 starts a thread; emails 2-4 are sent as replies in that same thread ("Re: ..."), like a
+  person following up. Any reply, booking, confirmed unsubscribe or bounce stops the sequence at once.
+- The schedule is day 0 / 4 / 9 / 15. The demo speeds it up with `TIME_SCALE` in `.env.demo`:
+  `TIME_SCALE=288` makes a day 5 minutes (emails at 0, 20, 45 and 75 minutes); `1440` makes a day
+  one minute; remove it for real timing.
+- When someone at a company books, outreach to their colleagues at the same company pauses.
+
+## Landing in the inbox, not Spam
+
+What the agent already does: plain-text email with a simple HTML copy, one-click unsubscribe headers
+(Gmail and Yahoo expect them), follow-ups in one thread, a visible unsubscribe link, no attachments.
+
+What the demo cannot fix, and production must:
+- **Links on `trycloudflare.com`.** Spam filters distrust this shared tunnel domain, and every tracked
+  link and the open image use it during the demo. Production uses your own domain (for example
+  `go.ozoo.ai`).
+- **A personal Gmail sender** with no history. Production sends from a separate domain with SPF,
+  DKIM and DMARC records, warmed up slowly (about 20 emails a day per mailbox at first).
+- **First emails from a new sender** often land in Spam. For tests, mark the first one "Not spam" or
+  add the sender to contacts.
+
 ## Before the demo: fill the chatbot's facts
 
 `kb/ozoo_kb.md` is placeholder text, so the bot hands most questions to a person. Add 5–10 real lines

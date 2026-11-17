@@ -8,8 +8,14 @@ ua_substrings:
   - Trend Micro
   - BingPreview
 
-# Add scanner IP ranges observed in logs.
-cidrs: []
+# Scanner IP ranges observed in logs. Verify ownership (e.g. rdap.arin.net) before adding: a range
+# listed here turns every open / click from it into "bot".
+cidrs:
+  # Microsoft 365 Defender Safe Links: opens every image and visits every link (including
+  # unsubscribe) seconds after delivery. Seen 2026-11-17 on a Microsoft 365 inbox; both blocks are
+  # registered to MSFT (ARIN). Real people do not browse from these Azure data-centre blocks.
+  - 74.224.0.0/14
+  - 4.208.0.0/12
 
 # Apple Mail Privacy Protection proxy ranges. 17.0.0.0/8 is Apple's block;
 # the full egress list is at https://mask-api.icloud.com/egress-ip-ranges.csv

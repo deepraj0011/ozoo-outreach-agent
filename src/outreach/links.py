@@ -139,3 +139,12 @@ def parse_open_token(token: object, *, settings: Optional[Settings] = None) -> O
         return int(lead_s), int(step_s)
     except (ValueError, binascii.Error, UnicodeError, AttributeError, TypeError):
         return None
+
+
+def make_unsubscribe_url(lead_id: int, step: int, *, settings: Optional[Settings] = None) -> str:
+    """Direct confirm-page URL (/u/<token>) for the List-Unsubscribe header. GET shows the confirm
+    page (scanner-safe); POST, which Gmail / Yahoo send for one-click unsubscribe (RFC 8058),
+    unsubscribes. Same token as the in-body unsubscribe link."""
+    s = settings or get_settings()
+    token = make_link(lead_id, step, "unsubscribe", "email", settings=s).rsplit("/r/", 1)[1]
+    return f"{s.link_base_url.rstrip('/')}/u/{token}"

@@ -113,7 +113,8 @@ def test_unsubscribe_link_goes_to_confirm_page(env):
     r = client.get(f"/r/{tok}")
     assert r.status_code == 302 and r.headers["location"] == f"/u/{tok}"
     ev = s.scalars(select(Event)).one()
-    assert ev.tag == "unsubscribe" and ev.processed is True
+    # waits for the worker's human/bot label; the worker never acts on it (test_tracking_accuracy)
+    assert ev.tag == "unsubscribe" and ev.processed is False
     assert s.scalar(select(func.count()).select_from(Suppression)) == 0
 
 

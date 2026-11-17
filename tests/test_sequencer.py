@@ -8,7 +8,7 @@ import pytest
 from outreach import sequencer
 from outreach.actions import Alert, SetState, SwitchChannel, ToolStop
 from outreach.emailtool.fake import FakeEmailTool
-from outreach.links import parse_token
+from outreach.links import make_link, parse_token
 from outreach.sequencer import (
     END_WAIT_DAYS, SCHEDULE_DAYS, SequencerConfigError, end_of_sequence_route, enroll,
     load_templates, refresh_next_step, render_reply, render_step,
@@ -176,7 +176,7 @@ def test_refresh_updates_next_step(session, st, tpl):
     lead = make_lead(session, tool_lead_id="t1", step_sent=1)
     refresh_next_step(session, lead, tool, settings=st, templates=tpl)
     assert tool.calls[0][0] == "update_variables" and tool.calls[0][1] == "t1"
-    assert set(tool.calls[0][2]) == {"subject_2", "body_2", "open_pixel_2"}
+    assert set(tool.calls[0][2]) == {"subject_2", "body_2", "open_pixel_2", "unsubscribe_url_2"}
 
 
 def test_refresh_noop_without_tool_id(session, st, tpl):
@@ -281,6 +281,8 @@ def test_refresh_after_resume_targets_the_campaign_step(session, st, tpl):
     real4 = render_step(lead, 4, templates=tpl, settings=st)
     sent = dict(tool.calls[0][2])
     pixel = sent.pop("open_pixel_2")
+    unsub = sent.pop("unsubscribe_url_2")
+    assert unsub.rsplit("/u/", 1)[1] == make_link(lead.id, 4, "unsubscribe", settings=st).rsplit("/r/", 1)[1]
     assert sent == {"subject_2": real4["subject_4"], "body_2": real4["body_4"]}
     from outreach.links import parse_open_token
     assert parse_open_token(pixel.rsplit("/o/", 1)[1], settings=st) == (lead.id, 4)  # our step, not the campaign's

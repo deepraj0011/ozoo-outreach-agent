@@ -111,7 +111,12 @@ def test_steps_follow_schedule(tool, clock):
     assert [s["step"] for s in sends(tool)] == [3]  # one step per pass
     assert [s["step"] for s in sends(tool)] == [4]
     assert sends(tool) == []  # sequence done
-    assert [m["Subject"] for m in SMTPStub.sent] == ["Subject 1", "Subject 2", "Subject 3", "Subject 4"]
+    # follow-ups reply in email 1's thread
+    assert [m["Subject"] for m in SMTPStub.sent] == ["Subject 1"] + ["Re: Subject 1"] * 3
+    assert SMTPStub.sent[0]["In-Reply-To"] is None
+    for prev, msg in zip(SMTPStub.sent, SMTPStub.sent[1:]):
+        assert msg["In-Reply-To"] == prev["Message-ID"] and msg["References"] == prev["Message-ID"]
+    assert [m.get_content().split()[1] for m in SMTPStub.sent] == ["1", "2", "3", "4"]  # each step's own body
 
 
 def test_time_scale(tool, clock):
@@ -127,7 +132,8 @@ def test_update_variables_changes_next_email(tool, clock):
     tool.update_variables(tid, {"subject_2": "Pick a time", "body_2": "slots"})
     clock.t = T0 + timedelta(days=4)
     sends(tool)
-    assert SMTPStub.sent[-1]["Subject"] == "Pick a time"
+    assert SMTPStub.sent[-1].get_content().strip() == "slots"  # the refreshed step 2 body
+    assert SMTPStub.sent[-1]["Subject"] == "Re: Subject 1"  # still in email 1's thread
 
 
 # ---------------------------------------------------------------- stop / pause / block

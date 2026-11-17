@@ -86,5 +86,8 @@ def test_load_scanners_seed():
     sc = load_scanners(root / "config" / "scanners.yaml")
     assert any("barracuda" in s.lower() for s in sc.ua_substrings)
     assert ipaddress.ip_network("17.0.0.0/8") in sc.apple_proxy_cidrs
-    assert sc.cidrs == ()
+    # Microsoft 365 Defender Safe Links blocks (MSFT per ARIN) are scanners
+    assert ipaddress.ip_network("74.224.0.0/14") in sc.cidrs and ipaddress.ip_network("4.208.0.0/12") in sc.cidrs
+    assert classify_event(ev(ip="74.224.61.23"), SENT, [], sc) == "bot"
+    assert classify_event(ev(ip="4.213.146.152"), SENT, [], sc) == "bot"
     assert classify_event(ev(ua="Mimecast Link Scanner"), SENT, [], sc) == "bot"

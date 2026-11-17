@@ -91,6 +91,22 @@ def html_with_pixel(body: str, pixel_url: str) -> str:
             f'</body></html>')
 
 
+def thread_subject(first_subject: str) -> str:
+    """Follow-ups go in the same thread as email 1: "Re: <email 1 subject>" (never "Re: Re:")."""
+    base = first_subject.strip()
+    while base.lower().startswith("re:"):
+        base = base[3:].strip()
+    return f"Re: {base}"
+
+
+def set_unsubscribe_headers(msg: EmailMessage, unsubscribe_url: Optional[str]) -> None:
+    """RFC 2369 + RFC 8058 one-click unsubscribe. Gmail / Yahoo expect it from bulk senders and
+    show their own "Unsubscribe" button instead of the reader reaching for "Report spam"."""
+    if unsubscribe_url:
+        msg["List-Unsubscribe"] = f"<{unsubscribe_url}>"
+        msg["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
+
+
 def set_body(msg: EmailMessage, body: str, pixel_url: Optional[str]) -> None:
     """Plain text always; an HTML alternative with the open pixel when we have one."""
     msg.set_content(body)
@@ -230,9 +246,10 @@ class MailpitEmailTool:
             row = self._row(db, tool_lead_id)
             if self._blocked(db, row["email"]):
                 return False
-            subject = row["last_subject"] or "Following up"
-            subject = subject if subject.lower().startswith("re:") else f"Re: {subject}"
-            msg_id = self._smtp_send(row["email"], subject, body, in_reply_to=row["last_message_id"])
+            subject = thread_subject(row["last_subject"] or "Following up")
+            unsub = json.loads(row["variables"]).get(f"unsubscribe_url_{max(row['last_step'], 1)}")
+            msg_id = self._smtp_send(row["email"], subject, body, in_reply_to=row["last_message_id"],
+                                     unsubscribe_url=unsub or None)
             db.execute("UPDATE mp_lead SET last_message_id = ? WHERE tool_lead_id = ?", (msg_id, tool_lead_id))
         logger.info("%s tool: reply sent for %s", self.LABEL, tool_lead_id)
         return True
@@ -249,7 +266,7 @@ class MailpitEmailTool:
 
     # ------------------------------------------------------------------ sending (used by the sender)
     def _smtp_send(self, to: str, subject: str, body: str, in_reply_to: Optional[str] = None,
-                   pixel_url: Optional[str] = None) -> str:
+                   pixel_url: Optional[str] = None, unsubscribe_url: Optional[str] = None) -> str:
         msg = EmailMessage()
         msg["From"] = FROM_ADDR
         msg["To"] = to
@@ -260,6 +277,7 @@ class MailpitEmailTool:
         if in_reply_to:
             msg["In-Reply-To"] = in_reply_to
             msg["References"] = in_reply_to
+        set_unsubscribe_headers(msg, unsubscribe_url)
         set_body(msg, body, pixel_url)
         smtp = self._smtp_factory(self.smtp_host, self.smtp_port)
         try:
@@ -305,8 +323,15 @@ class MailpitEmailTool:
                 if not subject or not body:
                     logger.warning("mailpit tool: %s step %s has no content; skipped", tid, step)
                     continue
-                msg_id = self._smtp_send(row["email"], subject, body,
-                                         pixel_url=variables.get(f"open_pixel_{step}") or None)
+                # follow-ups reply in email 1's thread (one conversation in the lead's inbox, as
+                # Instantly does with an empty follow-up subject); email 1 opens the thread
+                in_reply_to = None
+                if step > 1 and row["last_message_id"] and row["last_subject"]:
+                    subject = thread_subject(row["last_subject"])
+                    in_reply_to = row["last_message_id"]
+                msg_id = self._smtp_send(row["email"], subject, body, in_reply_to=in_reply_to,
+                                         pixel_url=variables.get(f"open_pixel_{step}") or None,
+                                         unsubscribe_url=variables.get(f"unsubscribe_url_{step}") or None)
                 status = "done" if step >= LAST_STEP else "active"
                 db.execute("UPDATE mp_lead SET last_step = ?, last_subject = ?, last_message_id = ?, status = ? "
                            "WHERE tool_lead_id = ?", (step, subject, msg_id, status, tid))

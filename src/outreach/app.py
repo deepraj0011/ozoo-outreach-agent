@@ -494,8 +494,9 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
                 lead_id=lead_id if exists else None, channel=channel, kind="click", tag=tag, step=step,
                 occurred_at=now, received_at=now, ip=_client_ip(request, settings.trust_proxy_headers),
                 user_agent=ua[:UA_MAX] if ua else None,
-                # unsubscribe clicks are never acted on (ruling 9); others wait for the worker
-                processed=tag == "unsubscribe", data={},
+                # every click waits for the worker's human/bot verdict; unsubscribe visits are only
+                # labelled, never acted on (ruling 9: only the confirm button unsubscribes)
+                processed=False, data={},
             ))
             session.commit()
             logger.info("click lead %s step %s tag %s", lead_id, step, tag)
