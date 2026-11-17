@@ -66,10 +66,16 @@ def _same_network(a: Optional[str], b: Optional[str]) -> bool:
     return ipaddress.ip_network(f"{x}/{prefix}", strict=False) == ipaddress.ip_network(f"{y}/{prefix}", strict=False)
 
 
+def _is_scanner(event: Any, scanners: Scanners) -> bool:
+    ua_l = (event.user_agent or "").lower()
+    return (any(sub.lower() in ua_l for sub in scanners.ua_substrings if sub)
+            or _ip_in(event.ip, scanners.cidrs))
+
+
 def classify_event(event: Any, sent_at: Optional[datetime], sibling_clicks: Iterable[Any], scanners: Scanners) -> str:
     """Return "human", "bot" or "machine" for a link click / open event.
 
-    sibling_clicks: other click events of the same lead+step (excluding this one).
+    sibling_clicks: click events of the same lead+step (excluding this one); used for clicks and opens.
     """
     ua = event.user_agent or ""
     is_click = event.kind == "click"
@@ -83,16 +89,15 @@ def classify_event(event: Any, sent_at: Optional[datetime], sibling_clicks: Iter
         return "bot"
 
     # (b) known scanners
-    ua_l = ua.lower()
-    if any(sub.lower() in ua_l for sub in scanners.ua_substrings if sub):
-        return "bot"
-    if _ip_in(event.ip, scanners.cidrs):
+    if _is_scanner(event, scanners):
         return "bot"
 
-    # (b2) the visitor's network also hit this email's honeypot link
+    # (b2) the visitor's network also fetched this email as a scanner (its honeypot link, or any
+    # link from a listed scanner): scanners load the image and every link from one pool. Catches
+    # Microsoft Defender opens from ranges not (yet) in scanners.yaml; Defender runs JavaScript.
     siblings = list(sibling_clicks)
-    if is_click and any(o.tag == TRAP_TAG and _same_network(o.ip, event.ip)
-                        and abs(o.occurred_at - event.occurred_at) <= TRAP_WINDOW for o in siblings):
+    if any((o.tag == TRAP_TAG or _is_scanner(o, scanners)) and _same_network(o.ip, event.ip)
+           and abs(o.occurred_at - event.occurred_at) <= TRAP_WINDOW for o in siblings):
         return "bot"
 
     # (c) too soon after send

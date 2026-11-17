@@ -85,9 +85,8 @@ def test_open_is_logged_and_image_served(env):
     assert r.status_code == 200 and r.headers["content-type"] == "image/gif"
     assert r.content.startswith(b"GIF89a") and "no-store" in r.headers["cache-control"]
     ev = s.scalars(select(Event).where(Event.kind == "open")).one()
-    assert (ev.lead_id, ev.step, ev.channel, ev.verdict, ev.processed) == (lead.id, 1, "email", "human", True)
-    s.expire_all()
-    assert s.get(Lead, lead.id).variant_flags.get("human_opens") == 1
+    # stored unjudged: the worker decides after the settle window (with the email's other clicks)
+    assert (ev.lead_id, ev.step, ev.channel, ev.verdict, ev.processed) == (lead.id, 1, "email", None, False)
 
 
 def test_open_never_changes_state_or_score(env):
@@ -106,16 +105,6 @@ def test_reloads_within_five_minutes_count_once(env):
     for _ in range(3):
         assert client.get(f"/o/{tok(lead.id, 1)}", headers=BROWSER).status_code == 200
     assert len(s.scalars(select(Event).where(Event.kind == "open")).all()) == 1
-
-
-def test_scanner_open_is_logged_as_bot_not_counted(env):
-    client, s = env
-    lead = _lead(s)
-    client.get(f"/o/{tok(lead.id, 1)}", headers={"User-Agent": "BadScanner/1.0"})
-    ev = s.scalars(select(Event).where(Event.kind == "open")).one()
-    assert ev.verdict == "bot"
-    s.expire_all()
-    assert not s.get(Lead, lead.id).variant_flags.get("human_opens")
 
 
 @pytest.mark.parametrize("path", ["/o/garbage.gif", "/o/x", "/o/" + "A" * 300])

@@ -35,4 +35,16 @@ Also: the IMAP timeout fix (`2ef16fd`): a stalled Gmail connection froze the sen
 - The click page adds a short visible "Opening…" step (about 0.2 s) before Cal.com.
 - Microsoft Defender's sandbox runs JavaScript. It is still caught by the honeypot (same network) and the Microsoft IP ranges in `config/scanners.yaml`.
 - Not done: identifying scanners by network owner (ASN) instead of IP lists, and parsing RFC 3464 bounce reports (we match the bounce notice text).
-- Tests: 1645 passing.
+- Tests: 1645 passing (1648 after the Outlook-opens addendum).
+
+## Addendum: Outlook bot opens (2026-11-17)
+
+Seen in the demo on a Microsoft 365 inbox:
+- Defender fetches every email within about 30–60 s, from Azure ranges.
+- It **runs JavaScript**, so the click page's check passes. It does not always click the honeypot link.
+- Opens were judged the instant the pixel loaded, using only the IP list and the "under 60 s after send" rule. A Defender fetch from a range not in `scanners.yaml`, or later than 60 s, counted as a human open.
+
+Fix:
+- Opens are now stored unjudged and settled by the worker together with clicks (`ingest.SETTLED_KINDS`, after the 30 s settle window).
+- `botfilter`: an open or click is bot when the same network (/24, /48) fetched any link of that email as a scanner within 1 h. "As a scanner" means the honeypot link, or a scanner-listed IP or user agent. Apple proxy opens are still `machine`.
+- Tests: 1648 passing.

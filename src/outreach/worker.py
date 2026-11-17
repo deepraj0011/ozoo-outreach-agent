@@ -350,7 +350,8 @@ def _siblings(session: Session, ev: Event) -> List[Event]:
 
 def _process_settled_clicks(ctx: Ctx, session: Session) -> int:
     rows = list(session.scalars(select(Event).where(
-        Event.kind == "click", Event.processed.is_(False), Event.received_at <= ctx.now - _delay(ctx, "click_settle"))
+        Event.kind.in_(("click", "open")), Event.processed.is_(False),
+        Event.received_at <= ctx.now - _delay(ctx, "click_settle"))
         .order_by(Event.received_at, Event.id).limit(ctx.batch)))
     rows = [ev for ev in rows if not (ev.data or {}).get("js_check")
             or _ts(ev.received_at) <= ctx.now - JS_CONFIRM_GRACE]
@@ -379,7 +380,7 @@ def _process_settled_clicks(ctx: Ctx, session: Session) -> int:
             record_integration_error(session, lead_id, f"click event {ev_id}: settle failed ({failures} of "
                                                        f"{CLICK_MAX_FAILURES}): {type(exc).__name__}", ctx.now)
             return False
-        logger.info("click event %s (lead %s, %s): %s", ev_id, lead_id, ev.tag, ev.verdict)
+        logger.info("%s event %s (lead %s, %s): %s", ev.kind, ev_id, lead_id, ev.tag, ev.verdict)
         return True
 
     return _each(ctx, session, "process_settled_clicks", rows, one, lambda ev: ev.lead_id)

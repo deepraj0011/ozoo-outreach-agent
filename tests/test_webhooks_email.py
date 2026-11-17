@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
 from outreach.app import create_app
-from outreach.botfilter import Scanners, load_scanners
+from outreach.botfilter import Scanners
 from tests.fakes import TestSession
 from outreach.emailtool.base import NormalizedEvent
 from outreach.emailtool.instantly import SECRET_HEADER
@@ -245,33 +245,15 @@ def test_ingest_earlier_events_committed_before_failure(session):
     assert [e.provider_event_id for e in session.scalars(select(Event).where(Event.kind == "sent"))] == ["a"]
 
 
-def test_ingest_open_verdict_bot_within_60s_of_send(session):
-    lead = make_lead(session, email="x@acme.com", step_sent=1, last_sent_at=NOW - timedelta(seconds=30))
-    session.commit()
-    ingest(session, [nev(email="x@acme.com", step=1, user_agent="Thunderbird", ip="198.51.100.2")],
-           make_deps(), NOW, SCANNERS)
-    ev = session.scalars(select(Event)).one()
-    assert ev.verdict == "bot" and ev.processed
-    assert session.get(Lead, lead.id).score == 0
-
-
-def test_ingest_open_human_recorded_not_scored(session):
+def test_ingest_open_deferred_to_worker(session):
     lead = make_lead(session, email="x@acme.com", step_sent=1, last_sent_at=NOW - timedelta(hours=2))
     session.commit()
     ingest(session, [nev(email="X@ACME.com", step=1, user_agent="Thunderbird", ip="198.51.100.2")],
            make_deps(), NOW, SCANNERS)
     ev = session.scalars(select(Event)).one()
-    assert ev.verdict == "human" and ev.lead_id == lead.id
+    assert ev.processed is False and ev.verdict is None and ev.lead_id == lead.id
     lead = session.get(Lead, lead.id)
-    assert lead.score == 0 and lead.variant_flags["human_opens"] == 1
-
-
-def test_ingest_open_apple_mpp_machine(session):
-    make_lead(session, email="x@acme.com")
-    session.commit()
-    ingest(session, [nev(email="x@acme.com", step=1, user_agent="Mozilla/5.0")],
-           make_deps(), NOW, load_scanners("config/scanners.yaml"))
-    assert session.scalars(select(Event)).one().verdict == "machine"
+    assert lead.score == 0 and not lead.variant_flags.get("human_opens")
 
 
 def test_ingest_click_deferred_to_worker(session):

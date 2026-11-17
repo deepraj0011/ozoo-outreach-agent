@@ -13,7 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .actions import Deps, execute, record_integration_error
-from .botfilter import Scanners, classify_event
+from .botfilter import Scanners
 from .emailtool.base import NormalizedEvent
 from .intake import FREE_MAIL_DOMAINS
 from .jobs import discard_enqueued, take_enqueued
@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 WA_WINDOW = timedelta(hours=24)
 WA_INBOUND_KINDS = frozenset({"wa_text", "wa_button"})
 HUMAN_KINDS = frozenset({"reply", "wa_read"}) | WA_INBOUND_KINDS
+SETTLED_KINDS = frozenset({"click", "open"})  # judged by the worker after the settle window
 UNMATCHED_ALERTS = {"reply": "unmatched_reply", "wa_text": "unmatched_inbound", "wa_button": "unmatched_inbound",
                     "booking_created": "unmatched_booking", "form_submitted": "unmatched_form"}
 # only a promising stranger is worth a person's time: low-fit forms are stored, never alerted
@@ -72,15 +73,10 @@ def match_lead(session: Session, ev: NormalizedEvent) -> Tuple[Optional[Lead], O
 
 
 def _verdict(row: Event, lead: Optional[Lead], scanners: Scanners) -> Optional[str]:
-    if row.kind == "open":
-        sent_at = None
-        if lead is not None and row.step is not None and row.step == lead.step_sent:
-            sent_at = lead.last_sent_at
-        return classify_event(row, sent_at, [], scanners)
     if row.kind in HUMAN_KINDS:
         return "human"
-    if row.kind == "click":
-        return None  # the worker classifies settled clicks (needs sibling clicks)
+    if row.kind in SETTLED_KINDS:
+        return None  # the worker classifies settled clicks / opens (needs the email's other clicks)
     return "n/a"
 
 
@@ -154,9 +150,10 @@ def _ingest_one(session: Session, ev: NormalizedEvent, deps: Deps, now: datetime
             wa_message_id=row.data.get("wamid"), created_at=ev.occurred_at,
         ))
 
-    if ev.kind == "click":
-        # Scanner-safe: clicks are settled + decided by the worker; unsubscribe link clicks only
-        # lead to the confirm page: the worker labels them human/bot and never acts on them.
+    if ev.kind in SETTLED_KINDS:
+        # Scanner-safe: clicks and opens are settled + decided by the worker (a scanner's other
+        # fetches of the same email arrive within seconds); unsubscribe link clicks only lead to
+        # the confirm page: the worker labels them human/bot and never acts on them.
         row.processed = False
         return
 

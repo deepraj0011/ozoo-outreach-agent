@@ -140,6 +140,8 @@ def test_email_open_is_logged_only(env):
     lid = env.started_email()
     env.send(devsim.email_open(env.settings, env.sim_lead(lid), env.now()))
     env.send(devsim.email_open(env.settings, env.sim_lead(lid), env.now(), ip="17.58.0.1"))  # Apple MPP
+    env.advance(minutes=1)
+    env.tick()  # opens settle like clicks
     with env.factory() as s:
         verdicts = sorted(s.scalars(select(Event.verdict).where(Event.kind == "open")))
     assert verdicts == ["human", "machine"]

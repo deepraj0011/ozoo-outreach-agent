@@ -3,6 +3,7 @@ link (EMAIL_HONEYPOT). A scanner that fetches without running JavaScript, or tha
 invisible link, is labelled bot; a person's browser click is human."""
 from __future__ import annotations
 
+import ipaddress
 from datetime import timedelta
 from types import SimpleNamespace
 
@@ -276,3 +277,77 @@ def test_sent_email_hides_the_trap_link_in_html_only(tmp_path):
     assert 'href="https://x.test/r/trap1" style="display:none"' in html
     assert "trap1" not in msg.get_body(("plain",)).get_content()  # never visible to a reader
     assert "<img" not in html  # no open pixel by default
+
+
+# ---------------------------------------------------------------- opens settle like clicks (Outlook)
+
+MS_SCANNERS = Scanners(ua_substrings=(), cidrs=(ipaddress.ip_network("74.224.0.0/14"),),
+                       apple_proxy_cidrs=(ipaddress.ip_network("17.0.0.0/8"),))
+
+
+def _wopen(w, lead_id, ip, ua=BROWSER["User-Agent"], at=NOW):
+    with w.factory() as s:
+        s.add(Event(lead_id=lead_id, channel="email", kind="open", step=1, occurred_at=at, received_at=at,
+                    ip=ip, user_agent=ua, processed=False))
+        s.commit()
+
+
+def _open(w, lead_id):
+    with w.factory() as s:
+        ev = s.scalars(select(Event).where(Event.lead_id == lead_id, Event.kind == "open")).one()
+        return ev.verdict, ev.processed, s.get(Lead, lead_id).variant_flags.get("human_opens")
+
+
+def _mtick(w, at):
+    worker.tick(w.factory, w.deps, lambda: at, SETTINGS, scanners=MS_SCANNERS)
+
+
+def test_defender_open_from_unlisted_range_is_bot_via_trap(w):
+    """Defender loads the pixel and clicks the hidden link from one data-centre network (and runs
+    JavaScript): the open is a bot even though the range is not in scanners.yaml."""
+    lid = _wlead(w)
+    _wopen(w, lid, "4.213.147.0")
+    _wclick(w, lid, "trap", "4.213.147.7", {})
+    _mtick(w, NOW + timedelta(minutes=1))
+    assert _open(w, lid) == ("bot", True, None)
+
+
+def test_open_from_network_of_a_listed_scanner_click_is_bot(w):
+    lid = _wlead(w)
+    _wopen(w, lid, "74.224.61.30")  # listed range itself
+    _wclick(w, lid, "unsubscribe", "74.224.61.24", {"js_check": True, "js": True})
+    _mtick(w, NOW + timedelta(minutes=1))
+    assert _open(w, lid)[0] == "bot"
+
+
+def test_open_from_other_network_than_scanner_is_human_and_counted(w):
+    lid = _wlead(w)
+    _wclick(w, lid, "trap", "4.213.147.7", {})
+    _wopen(w, lid, "103.61.75.147", at=NOW + timedelta(minutes=5))
+    _mtick(w, NOW + timedelta(minutes=6))
+    assert _open(w, lid) == ("human", True, 1)
+
+
+def test_apple_proxy_open_is_machine(w):
+    lid = _wlead(w)
+    _wopen(w, lid, "17.58.0.1", ua="Mozilla/5.0")
+    _mtick(w, NOW + timedelta(minutes=1))
+    assert _open(w, lid) == ("machine", True, None)
+
+
+def test_open_within_60s_of_send_is_bot(w):
+    with w.factory() as s:
+        lead = make_lead(s, verify_status="valid", active_channel="email", step_sent=1,
+                         last_sent_at=NOW - timedelta(seconds=30))
+        s.commit()
+        lid = lead.id
+    _wopen(w, lid, "198.51.100.2")
+    _mtick(w, NOW + timedelta(minutes=1))
+    assert _open(w, lid)[0] == "bot"
+
+
+def test_open_waits_for_settle_window(w):
+    lid = _wlead(w)
+    _wopen(w, lid, "198.51.100.2")
+    _mtick(w, NOW + timedelta(seconds=5))
+    assert _open(w, lid) == (None, False, None)
