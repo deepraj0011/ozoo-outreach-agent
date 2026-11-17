@@ -167,6 +167,11 @@ class MailpitEmailTool:
         conn = sqlite3.connect(str(self.state_file), timeout=10)
         try:
             conn.executescript(_SCHEMA)  # executescript manages its own commit
+            for table in ("mp_lead", "mp_send"):  # older state files: the sending mailbox column
+                cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+                if "mailbox" not in cols:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN mailbox TEXT")
+            conn.commit()
         finally:
             conn.close()
 
@@ -278,7 +283,7 @@ class MailpitEmailTool:
             subject = thread_subject(row["last_subject"] or "Following up")
             unsub = json.loads(row["variables"]).get(f"unsubscribe_url_{max(row['last_step'], 1)}")
             msg_id = self._smtp_send(row["email"], subject, body, in_reply_to=row["last_message_id"],
-                                     unsubscribe_url=unsub or None)
+                                     unsubscribe_url=unsub or None, mailbox=row["mailbox"])
             db.execute("UPDATE mp_lead SET last_message_id = ? WHERE tool_lead_id = ?", (msg_id, tool_lead_id))
             self._remember_msgid(db, msg_id, tool_lead_id)
         logger.info("%s tool: reply sent for %s", self.LABEL, tool_lead_id)
@@ -297,7 +302,7 @@ class MailpitEmailTool:
     # ------------------------------------------------------------------ sending (used by the sender)
     def _smtp_send(self, to: str, subject: str, body: str, in_reply_to: Optional[str] = None,
                    pixel_url: Optional[str] = None, unsubscribe_url: Optional[str] = None,
-                   trap_url: Optional[str] = None) -> str:
+                   trap_url: Optional[str] = None, mailbox: Optional[str] = None) -> str:
         msg = EmailMessage()
         msg["From"] = FROM_ADDR
         msg["To"] = to
@@ -319,6 +324,11 @@ class MailpitEmailTool:
             except Exception:  # noqa: BLE001 - the message is already handed over
                 pass
         return msg_id
+
+    def _choose_mailbox(self, db: sqlite3.Connection, row: sqlite3.Row, now: datetime) -> Optional[str]:
+        """The mailbox this step goes out from ("" = the only one), or None to wait (the mailbox
+        tool's daily caps). Mailpit has one sender and no caps."""
+        return row["mailbox"] or ""
 
     def _candidates(self) -> List[str]:
         with self._db() as db:
@@ -354,6 +364,9 @@ class MailpitEmailTool:
                 if not subject or not body:
                     logger.warning("mailpit tool: %s step %s has no content; skipped", tid, step)
                     continue
+                mailbox = self._choose_mailbox(db, row, now)
+                if mailbox is None:
+                    continue  # its mailbox is at today's cap / within its gap: a later pass sends it
                 # follow-ups reply in email 1's thread (one conversation in the lead's inbox, as
                 # Instantly does with an empty follow-up subject); email 1 opens the thread
                 in_reply_to = None
@@ -363,12 +376,13 @@ class MailpitEmailTool:
                 msg_id = self._smtp_send(row["email"], subject, body, in_reply_to=in_reply_to,
                                          pixel_url=variables.get(f"open_pixel_{step}") or None,
                                          unsubscribe_url=variables.get(f"unsubscribe_url_{step}") or None,
-                                         trap_url=variables.get(f"trap_url_{step}") or None)
+                                         trap_url=variables.get(f"trap_url_{step}") or None,
+                                         mailbox=mailbox or None)
                 status = "done" if step >= LAST_STEP else "active"
-                db.execute("UPDATE mp_lead SET last_step = ?, last_subject = ?, last_message_id = ?, status = ? "
-                           "WHERE tool_lead_id = ?", (step, subject, msg_id, status, tid))
-                db.execute("INSERT INTO mp_send (tool_lead_id, campaign_id, step, sent_at) VALUES (?, ?, ?, ?)",
-                           (tid, row["campaign_id"], step, _iso(now)))
+                db.execute("UPDATE mp_lead SET last_step = ?, last_subject = ?, last_message_id = ?, status = ?, "
+                           "mailbox = ? WHERE tool_lead_id = ?", (step, subject, msg_id, status, mailbox or None, tid))
+                db.execute("INSERT INTO mp_send (tool_lead_id, campaign_id, step, sent_at, mailbox) "
+                           "VALUES (?, ?, ?, ?, ?)", (tid, row["campaign_id"], step, _iso(now), mailbox or None))
                 self._remember_msgid(db, msg_id, tid)
             logger.info("mailpit tool: %s step %s sent", tid, step)
             sent.append({"tool_lead_id": tid, "lead_id": row["lead_id"], "email": row["email"],

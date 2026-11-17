@@ -15,7 +15,7 @@ import smtplib
 import logging
 import os
 import sys
-import time
+import threading
 from typing import Any, Callable, List, Optional
 
 from . import devsim
@@ -30,6 +30,17 @@ DEFAULT_INTERVAL_S = 5.0
 
 
 def make_tool(settings: Any, now: Optional[Callable[[], Any]] = None, **kw: Any) -> MailpitEmailTool:
+    if getattr(settings, "email_mode", None) == "mailbox":
+        from .emailtool.mailbox import Mailbox, MailboxEmailTool
+        from .localclock import default_clock
+
+        boxes = [Mailbox(address=m.address.strip(), password=m.password.get_secret_value().replace(" ", ""),
+                         smtp_host=m.smtp_host, smtp_port=m.smtp_port, imap_host=m.imap_host, imap_port=m.imap_port,
+                         from_name=m.from_name, daily_limit=m.daily_limit, warmup_start=m.warmup_start,
+                         warmup_step=m.warmup_step, min_gap_s=m.min_gap_s) for m in settings.mailboxes]
+        return MailboxEmailTool(settings.tool_webhook_secret, mailboxes=boxes,
+                                state_file=getattr(settings, "mailbox_state_file", None) or None,
+                                now=now or default_clock(settings), **kw)
     if getattr(settings, "email_mode", None) == "gmail":
         from .emailtool.gmail import GmailEmailTool
 
@@ -103,7 +114,10 @@ def notify_inbound(tool: Any, settings: Any, base_url: str, client: Any = None) 
     return n
 
 
-def run_once(tool: MailpitEmailTool, settings: Any, base_url: str, client: Any = None) -> List[dict]:
+def run_once(tool: MailpitEmailTool, settings: Any, base_url: str, client: Any = None,
+             fetch: bool = True) -> List[dict]:
+    """One pass: send what is due, report sends, then (fetch=True) read every inbox once and report
+    replies. The looping sender passes fetch=False: its IMAP IDLE watchers read the inboxes."""
     label = tool.LABEL
     try:
         sent = tool.send_due(SCHEDULE_DAYS, float(getattr(settings, "time_scale", 1.0) or 1.0))
@@ -117,10 +131,11 @@ def run_once(tool: MailpitEmailTool, settings: Any, base_url: str, client: Any =
         print(f"[{label.upper()}] lead {s['lead_id']}: Email {s['step']} sent -> {where}", flush=True)
     notify(tool, settings, base_url, client)
     if hasattr(tool, "fetch_inbound"):
-        try:
-            tool.fetch_inbound()
-        except (OSError, imaplib.IMAP4.error) as exc:
-            logger.warning("gmail IMAP read failed (%s); is IMAP allowed for this account?", type(exc).__name__)
+        if fetch:
+            try:
+                tool.fetch_inbound()
+            except (OSError, imaplib.IMAP4.error) as exc:
+                logger.warning("IMAP read failed (%s); is IMAP allowed for this account?", type(exc).__name__)
         notify_inbound(tool, settings, base_url, client)
     return sent
 
@@ -134,26 +149,45 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
-    from .dev import CliError, _local_settings
+    from pydantic import ValidationError
+
+    from .dev import CliError, _local_settings, _settings
 
     try:
-        settings = _local_settings(args.env_file)
-    except CliError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        settings = _settings(args.env_file)
+    except ValidationError as exc:
+        fields = ", ".join(sorted({".".join(str(x) for x in e["loc"]) or e["msg"] for e in exc.errors()}))
+        print(f"error: settings invalid ({fields})", file=sys.stderr)
         return 2
-    if getattr(settings, "email_mode", None) not in ("mailpit", "gmail"):
-        print("error: EMAIL_MODE is not mailpit or gmail in your settings; nothing to send", file=sys.stderr)
+    if getattr(settings, "email_mode", None) != "mailbox":  # mailpit / gmail: local only
+        try:
+            settings = _local_settings(args.env_file)
+        except CliError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+    if getattr(settings, "email_mode", None) not in ("mailpit", "gmail", "mailbox"):
+        print("error: EMAIL_MODE is not mailpit, gmail or mailbox in your settings; nothing to send", file=sys.stderr)
         return 2
     tool = make_tool(settings)
-    print(f"{tool.LABEL} sender: SMTP {tool.smtp_host}:{tool.smtp_port}, app {args.base_url}. Ctrl+C to stop.", flush=True)
+    n = len(getattr(tool, "mailboxes", []) or [1])
+    print(f"{tool.LABEL} sender: {n} mailbox(es), app {args.base_url}. Ctrl+C to stop.", flush=True)
     if args.once:
         run_once(tool, settings, args.base_url)
         return 0
+    stop, wake = threading.Event(), threading.Event()
+    watching = hasattr(tool, "start_watchers")
+    if watching:  # replies arrive in seconds over IMAP IDLE; this loop only reports them
+        tool.start_watchers(stop, on_new=wake.set)
     try:
         while True:
-            run_once(tool, settings, args.base_url)
-            time.sleep(args.interval)
+            try:
+                run_once(tool, settings, args.base_url, fetch=not watching)
+            except Exception as exc:  # noqa: BLE001 - one bad pass must not end the sender
+                logger.error("sender pass failed (%s); retrying", type(exc).__name__)
+            wake.wait(args.interval)
+            wake.clear()
     except KeyboardInterrupt:
+        stop.set()
         return 0
 
 

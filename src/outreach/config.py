@@ -6,11 +6,11 @@ import ipaddress
 import socket
 from functools import lru_cache
 from datetime import timedelta
-from typing import Dict, FrozenSet, Literal, Optional
+from typing import Dict, FrozenSet, List, Literal, Optional
 from urllib.parse import urlsplit
 
 import phonenumbers
-from pydantic import Field, field_validator, model_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -27,7 +27,9 @@ Mode = Literal["fake", "real"]
 # email only: "mailpit" = local SMTP to Mailpit (emailtool/mailpit.py); local-only like "fake"
 # "gmail" = a real Gmail mailbox over SMTP + IMAP (emailtool/gmail.py): free demo / pilot sending to
 # real inboxes, run from this machine; local-only too (production uses the cold-email tool).
-EmailMode = Literal["fake", "real", "mailpit", "gmail"]
+# "mailbox" = our own sender over ordinary SMTP + IMAP mailboxes (emailtool/mailbox.py; MAILBOXES):
+# several mailboxes, daily caps with warm-up, IMAP IDLE replies. Allowed in production.
+EmailMode = Literal["fake", "real", "mailpit", "gmail", "mailbox"]
 LOCAL_ONLY_MODES = frozenset({"fake", "mailpit", "gmail"})
 MODE_FIELDS = ("email_mode", "whatsapp_mode", "llm_mode", "alerts_mode", "verify_mode")
 # Credentials each service needs only when its mode is "real" (blank is fine in fake mode).
@@ -94,6 +96,46 @@ def _private_host(host: str) -> bool:
     return ip.is_loopback or ip.is_private
 
 
+MAILBOX_PRESETS = {  # provider -> (smtp host, smtp port, imap host, imap port)
+    "google": ("smtp.gmail.com", 465, "imap.gmail.com", 993),
+    "zoho": ("smtp.zoho.com", 465, "imap.zoho.com", 993),
+    "zoho_in": ("smtp.zoho.in", 465, "imap.zoho.in", 993),
+    "microsoft": ("smtp.office365.com", 587, "outlook.office365.com", 993),
+}
+
+
+class MailboxConfig(BaseModel):
+    """One sending mailbox (EMAIL_MODE=mailbox). MAILBOXES is a JSON list of these. The password is
+    an app password (Google / Zoho) or the account password where the provider allows SMTP AUTH."""
+
+    address: str
+    password: SecretStr
+    provider: Literal["google", "zoho", "zoho_in", "microsoft", "custom"] = "google"
+    smtp_host: Optional[str] = None  # custom provider (or to override a preset)
+    smtp_port: Optional[int] = Field(None, ge=1, le=65535)
+    imap_host: Optional[str] = None
+    imap_port: Optional[int] = Field(None, ge=1, le=65535)
+    from_name: str = "Ozoo.ai"
+    daily_limit: int = Field(30, ge=1, le=2000)  # the most this mailbox sends in a day
+    warmup_start: Optional[int] = Field(10, ge=1)  # day-one cap; null: daily_limit from day one
+    warmup_step: int = Field(2, ge=0, le=100)  # added per day since the mailbox's first send
+    min_gap_s: float = Field(60.0, ge=0, le=3600)  # at least this long between two sends
+
+    @model_validator(mode="after")
+    def _hosts(self) -> "MailboxConfig":
+        if "@" not in self.address.strip() or not self.password.get_secret_value().strip():
+            raise ValueError("each mailbox needs an address and a password")
+        preset = MAILBOX_PRESETS.get(self.provider)
+        if preset is None and not (self.smtp_host and self.imap_host):
+            raise ValueError("a custom mailbox needs smtp_host and imap_host")
+        sh, sp, ih, ip = preset or (None, 465, None, 993)
+        object.__setattr__(self, "smtp_host", (self.smtp_host or sh).strip())
+        object.__setattr__(self, "smtp_port", self.smtp_port or sp)
+        object.__setattr__(self, "imap_host", (self.imap_host or ih).strip())
+        object.__setattr__(self, "imap_port", self.imap_port or ip)
+        return self
+
+
 class Settings(BaseSettings):
     """Environment-driven settings. Secrets have no defaults and are required.
 
@@ -137,6 +179,10 @@ class Settings(BaseSettings):
     gmail_address: str = ""
     gmail_app_password: str = ""
     gmail_from_name: str = "Ozoo.ai"
+    # EMAIL_MODE=mailbox: JSON list of mailboxes (see MailboxConfig), e.g.
+    # [{"address": "deep@send.ozoo.ai", "password": "app-password", "provider": "google"}]
+    mailboxes: List[MailboxConfig] = []
+    mailbox_state_file: Optional[str] = None  # default .mailbox_tool.db in the repo
     # mailpit / gmail / mailbox modes (we send the emails ourselves): add our 1x1 open-tracking
     # image. Off by default: opens are unreliable (Apple / Gmail proxies load images by themselves)
     # and a tracking image can lower inbox placement for cold email. Replies are the real signal.
@@ -260,6 +306,12 @@ class Settings(BaseSettings):
             short = [f"{n}_s" for n, default in DELAY_DEFAULTS_S.items() if getattr(self, f"{n}_s") < default]
             if short:
                 raise ValueError(f"shorter-than-spec delays are not allowed in production: {', '.join(short)}")
+        if self.email_mode == "mailbox":
+            if not self.mailboxes:
+                raise ValueError("must not be blank: mailboxes (because email_mode is mailbox)")
+            addrs = [m.address.strip().lower() for m in self.mailboxes]
+            if len(set(addrs)) != len(addrs):
+                raise ValueError("mailboxes: each address may be listed once")
         if self.email_mode == "gmail" and (not self.gmail_address.strip() or not self.gmail_app_password.strip()):
             raise ValueError("must not be blank: gmail_address, gmail_app_password (because email_mode is gmail)")
         if (self.app_env == "local" and self.real_sending and not self.allow_real_local):
@@ -287,7 +339,7 @@ class Settings(BaseSettings):
     @property
     def real_sending(self) -> bool:
         """Email or WhatsApp goes to real people (a real provider)."""
-        return "real" in (self.email_mode, self.whatsapp_mode) or self.email_mode == "gmail"
+        return "real" in (self.email_mode, self.whatsapp_mode) or self.email_mode in ("gmail", "mailbox")
 
     @field_validator("smtp_host")
     @classmethod

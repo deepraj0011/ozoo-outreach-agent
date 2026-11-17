@@ -178,8 +178,9 @@ def default_deps(settings: Settings) -> Deps:
     if settings.email_mode == "fake":
         tool: Any = FakeEmailTool(webhook_secret=settings.tool_webhook_secret, log_calls=True,
                                   id_prefix=f"fake-{run_id}-")
-    elif settings.email_mode in ("mailpit", "gmail"):
-        # mailpit: local SMTP to Mailpit; gmail: a real Gmail mailbox. The mailpit_sender sends the steps.
+    elif settings.email_mode in ("mailpit", "gmail", "mailbox"):
+        # mailpit: local SMTP to Mailpit; gmail: one real Gmail mailbox; mailbox: our own SMTP / IMAP
+        # mailboxes (production too). The mailpit_sender process sends the steps and reads replies.
         tool = make_mailpit_tool(settings)
     elif settings.tool_name != "instantly":
         raise ValueError(f"no adapter for tool {settings.tool_name!r} yet")

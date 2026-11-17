@@ -31,6 +31,7 @@ Branch: `feat/outreach-agent-v1`. Plan: `docs/superpowers/plans/2026-11-12-outre
 | D2 | Real free demo: `EMAIL_MODE=gmail` (Gmail SMTP + IMAP replies), WhatsApp test number, Groq AI, `.env.demo`; fix: intro template now sends quick-reply payloads (real taps arrive as BOOK_DEMO / ASK_QUESTION, not button text) | ✅ Built, startup verified with dummy keys; not yet run with real accounts | uncommitted | 6 | [REAL_DEMO.md](../REAL_DEMO.md) |
 | D3 | Web app at `/` (local only): Overview funnel, Leads with CSV / Excel import (column matching, preview, intake results), lead panel with step tracker + simulate buttons, WhatsApp Conversations with salesperson takeover, Sales alerts, How it works, Settings; `scripts/start_demo` | ✅ Done, smoke-tested in isolation | uncommitted | 9 | [DEMO_SCRIPT.md](../DEMO_SCRIPT.md) |
 | 15 | Own open tracking (pixel), Microsoft scanner ranges, labelled unsubscribe visits, one-click unsubscribe headers, threaded follow-ups | ✅ Done | see git log | 35 | [task-15](tasks/task-15-tracking-accuracy.md) |
+| 17 | Free, accurate email layer: `EMAIL_MODE=mailbox` (several SMTP / IMAP mailboxes, daily caps + warm-up, IMAP IDLE replies), Reacher verification, honeypot link, JavaScript-confirmed clicks, auto-reply filter, thread-header reply matching, open pixel off by default | ✅ Done | see git log | 50 | [task-17](tasks/task-17-mailbox-mode.md) |
 
 **Tests now:** 1566 passing (`.venv/bin/pytest -q`).
 
