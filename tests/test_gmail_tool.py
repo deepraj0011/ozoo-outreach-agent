@@ -40,7 +40,8 @@ class FakeIMAP:
         self.messages = messages  # num -> bytes
         self.seen = set()
 
-    def __call__(self, host, port):
+    def __call__(self, host, port, timeout=None):
+        self.timeout = timeout
         return self
 
     def login(self, u, p):
@@ -117,3 +118,10 @@ def test_reply_text_strips_quotes():
     assert reply_text("Sure\n\nOn Mon, Nov 10, 2026 at 9:00 AM Ozoo <a@b.com>\nwrote:\n> old") == "Sure"
     assert reply_text("Ok\n-----Original Message-----\nFrom: x") == "Ok"
     assert reply_text("Ok\n> quoted") == "Ok"
+
+
+def test_imap_connection_has_a_timeout(tool):
+    """Regression: without one, a stalled Gmail IMAP socket froze the sender (no sends, no replies)."""
+    tool.add_lead("c1", SimpleNamespace(id=7, email="boss@example.com"), {"subject_1": "Hello", "body_1": "Hi"})
+    tool.fetch_inbound()
+    assert tool._fake_imap.timeout and tool._fake_imap.timeout <= 60

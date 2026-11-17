@@ -87,6 +87,9 @@ def _body_text(msg: Any) -> str:
     return _html_to_text(content) if part.get_content_type() == "text/html" else content
 
 
+IMAP_TIMEOUT_S = 30
+
+
 class GmailEmailTool(MailpitEmailTool):
     LOOPBACK_ONLY = False
     LABEL = "gmail"
@@ -146,7 +149,8 @@ class GmailEmailTool(MailpitEmailTool):
         if not leads:
             return 0
         since = min(v["enrolled_at"] for v in leads.values()) - timedelta(days=1)
-        imap = self._imap_factory(IMAP_HOST, IMAP_PORT)
+        # A timeout on every IMAP call: one stalled Gmail connection must never freeze the sender.
+        imap = self._imap_factory(IMAP_HOST, IMAP_PORT, timeout=IMAP_TIMEOUT_S)
         recorded = 0
         try:
             imap.login(self.address, self._password)

@@ -38,3 +38,10 @@ Testing with real inboxes showed four problems:
 - SPF / DKIM / DMARC and mailbox warm-up.
 - Sending window for the Gmail/Postal sender.
 - Scanner ranges for other vendors, to be added as they are observed.
+
+## Fix (2026-11-17): Gmail sender froze on a stalled IMAP connection
+
+- Symptom: replies were not picked up and new leads got no email. The sender process was alive but blocked forever reading a Gmail IMAP socket.
+- Cause: `imaplib.IMAP4_SSL` was opened without a timeout.
+- Fix: `IMAP_TIMEOUT_S = 30` in `emailtool/gmail.py`. A stall now raises `TimeoutError` (an `OSError`), which `run_once` logs; the next pass retries. Regression test: `test_imap_connection_has_a_timeout`.
+- Demo note: tracking URLs are signed per (lead id, step). After a DB reset, lead ids repeat, so opening an *old* test email counts against the new lead with the same id. Delete old test emails before a fresh run.
