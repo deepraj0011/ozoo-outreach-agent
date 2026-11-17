@@ -43,7 +43,7 @@ from .handoff import start_takeover
 from .ingest import IP_MAX, UA_MAX, ingest
 from .intake import intake_lead
 from .jobs import JobQueue, run_job
-from .links import lead_token, parse_token
+from .links import lead_token, parse_open_token, parse_token
 from .llm import make_llm
 from .llm.local_fake import RuleBasedLLM
 from .localclock import default_clock
@@ -66,6 +66,11 @@ MAX_BODY = 1024 * 1024  # 1 MiB
 MAX_CHALLENGE_LEN = 64
 DEFAULT_HOME = "https://ozoo.ai/"
 NO_STORE = {"Cache-Control": "no-store"}
+# 1x1 transparent GIF for the open pixel (/o/<token>.gif)
+PIXEL_GIF = (b"GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\x00\x00\x00!\xf9\x04\x01\x00\x00\x00\x00"
+             b",\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;")
+PIXEL_HEADERS = {"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0", "Pragma": "no-cache"}
+OPEN_DEDUPE_S = 300  # repeated loads of the same email within 5 minutes count as one open
 TEAMS_MAX_BODY = 64 * 1024
 TEAMS_MAX_AGE_S = 300
 TEAMS_SIG_MAX_LEN = 128
@@ -504,6 +509,31 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
         else:
             target = settings.link_targets.get(tag) or home
         return RedirectResponse(target, status_code=302, headers=NO_STORE)
+
+    # ------------------------------------------------------------ open pixel
+    @app.get("/o/{token}")
+    def open_pixel(token: str, request: Request, session: Session = Depends(get_session)) -> Response:
+        """Our own open tracking (mailpit / gmail modes; Instantly tracks its own). Always answers
+        with the image, whatever happens, so a mail client never shows a broken picture. Opens are
+        logged only (plan v2.1): the shared ingest path classifies them (Apple proxy -> machine,
+        known scanners / too soon after send -> bot) and rules only count human ones."""
+        parsed = parse_open_token(token, settings=settings)
+        if parsed is not None:
+            lead_id, step = parsed
+            now = clock()
+            ua = request.headers.get("user-agent")
+            bucket = int(now.timestamp()) // OPEN_DEDUPE_S
+            ev = NormalizedEvent(provider_event_id=f"open:{lead_id}:{step}:{bucket}", channel="email",
+                                 kind="open", occurred_at=now, step=step, lead_id=lead_id,
+                                 ip=_client_ip(request, settings.trust_proxy_headers),
+                                 user_agent=ua[:UA_MAX] if ua else None)
+            try:
+                ingest(session, [ev], deps, now, scanners)
+                logger.info("open lead %s step %s", lead_id, step)
+            except Exception as exc:  # noqa: BLE001 - the image is always served
+                session.rollback()
+                logger.error("open store failed for lead %s: %s", lead_id, type(exc).__name__)
+        return Response(PIXEL_GIF, media_type="image/gif", headers=PIXEL_HEADERS)
 
     # ------------------------------------------------------------ unsubscribe (scanner-safe)
     def _unsub_token(token: str) -> Optional[tuple]:

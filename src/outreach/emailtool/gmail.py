@@ -26,7 +26,7 @@ from html import unescape
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from .mailpit import MailpitEmailTool, _iso, _parse, _utcnow
+from .mailpit import MailpitEmailTool, _iso, _parse, _utcnow, set_body
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +108,8 @@ class GmailEmailTool(MailpitEmailTool):
             conn.close()
 
     # ------------------------------------------------------------------ sending
-    def _smtp_send(self, to: str, subject: str, body: str, in_reply_to: Optional[str] = None) -> str:
+    def _smtp_send(self, to: str, subject: str, body: str, in_reply_to: Optional[str] = None,
+                   pixel_url: Optional[str] = None) -> str:
         msg = EmailMessage()
         msg["From"] = formataddr((self.from_name, self.address))
         msg["To"] = to
@@ -119,7 +120,7 @@ class GmailEmailTool(MailpitEmailTool):
         if in_reply_to:
             msg["In-Reply-To"] = in_reply_to
             msg["References"] = in_reply_to
-        msg.set_content(body)
+        set_body(msg, body, pixel_url)
         smtp = self._smtp_factory(self.smtp_host, self.smtp_port, timeout=30)
         try:
             smtp.login(self.address, self._password)

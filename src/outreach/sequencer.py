@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from .actions import Action, Alert, SetState, ToolStop
 from .config import Settings, get_settings
-from .links import make_link
+from .links import make_link, make_open_pixel
 from .models import Lead
 from .score import band
 from .states import LeadState
@@ -174,6 +174,7 @@ def enroll(
         rendered = render_step(lead, real, templates=t, settings=s)
         variables[f"subject_{step}"] = rendered[f"subject_{real}"]
         variables[f"body_{step}"] = rendered[f"body_{real}"]
+        variables[f"open_pixel_{step}"] = make_open_pixel(lead.id, real, settings=s)
     vals = _values(lead, 1, s)
     variables["first_name"] = vals["first_name"]
     variables["company"] = vals["company"]
@@ -201,7 +202,9 @@ def refresh_next_step(
         return
     rendered = render_step(lead, real, templates=templates, settings=settings)
     tool.update_variables(lead.tool_lead_id, {f"subject_{campaign_step}": rendered[f"subject_{real}"],
-                                              f"body_{campaign_step}": rendered[f"body_{real}"]})
+                                              f"body_{campaign_step}": rendered[f"body_{real}"],
+                                              f"open_pixel_{campaign_step}": make_open_pixel(
+                                                  lead.id, real, settings=settings or get_settings())})
 
 
 def end_of_sequence_route(lead: Lead, human_clicks: int) -> Tuple[str, List[Action]]:

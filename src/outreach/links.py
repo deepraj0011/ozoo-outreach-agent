@@ -96,3 +96,46 @@ def parse_lead_token(token: object, *, settings: Optional[Settings] = None) -> O
         return int(lead_s)
     except (ValueError, binascii.Error, UnicodeError, AttributeError, TypeError):
         return None
+
+
+# ------------------------------------------------------------------ open pixel (our own open tracking)
+# Same secret again, payload prefixed "O." so an open token never decodes as a click token
+# (4 fields) or a lead token ("L." prefix), and neither of those decodes as an open token.
+# Used by the mailpit / gmail tools, which send the emails themselves (Instantly tracks its own opens).
+OPEN_PREFIX = "O."
+OPEN_TOKEN_MAX = 128
+OPEN_SUFFIX = ".gif"
+
+
+def make_open_pixel(lead_id: int, step: int, *, settings: Optional[Settings] = None) -> str:
+    """URL of the 1x1 tracking image for this lead + email step."""
+    if lead_id < 0 or step < 0:
+        raise ValueError("lead_id and step must be non-negative")
+    s = settings or get_settings()
+    payload = base64.urlsafe_b64encode(f"{OPEN_PREFIX}{lead_id}.{step}".encode()).decode().rstrip("=")
+    return f"{s.link_base_url.rstrip('/')}/o/{payload}.{_sign(payload, s.link_secret)}{OPEN_SUFFIX}"
+
+
+def parse_open_token(token: object, *, settings: Optional[Settings] = None) -> Optional[Tuple[int, int]]:
+    """Verify and decode an open token (with or without the .gif suffix). Returns (lead_id, step)
+    or None on any problem; never raises."""
+    try:
+        if not isinstance(token, str) or not token or len(token) > OPEN_TOKEN_MAX:
+            return None
+        if token.endswith(OPEN_SUFFIX):
+            token = token[: -len(OPEN_SUFFIX)]
+        s = settings or get_settings()
+        payload, sep, sig = token.partition(".")
+        if not sep or not payload or "." in sig:
+            return None
+        if not hmac.compare_digest(sig.encode(), _sign(payload, s.link_secret).encode()):
+            return None
+        raw = base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)).decode()
+        if not raw.startswith(OPEN_PREFIX):
+            return None
+        lead_s, dot, step_s = raw[len(OPEN_PREFIX):].partition(".")
+        if not dot or not all(x.isascii() and x.isdigit() and len(x) <= 18 for x in (lead_s, step_s)):
+            return None
+        return int(lead_s), int(step_s)
+    except (ValueError, binascii.Error, UnicodeError, AttributeError, TypeError):
+        return None

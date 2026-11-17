@@ -10,9 +10,11 @@ Safety: the SMTP host must be a loopback address. Logs carry ids only, never add
 """
 from __future__ import annotations
 
+import html
 import ipaddress
 import json
 import logging
+import re
 import smtplib
 import sqlite3
 import uuid
@@ -63,6 +65,37 @@ CREATE TABLE IF NOT EXISTS mp_send (
 
 class MailpitError(Exception):
     pass
+
+
+_URL_RE = re.compile(r"https?://[^\s<>\"']+")
+
+
+def html_with_pixel(body: str, pixel_url: str) -> str:
+    """The plain-text body as simple HTML (escaped, links clickable, line breaks kept) plus our 1x1
+    open-tracking image at the end. Only URLs we put in the body become links; the pixel URL is
+    ours (signed, from config), never lead input."""
+    out: List[str] = []
+    pos = 0
+    for m in _URL_RE.finditer(body):
+        out.append(html.escape(body[pos:m.start()]))
+        raw = m.group(0).rstrip(".,;:!?)")  # "…see https://x/r/abc." -> the link stops before the dot
+        url = html.escape(raw, quote=True)
+        out.append(f'<a href="{url}">{url}</a>')
+        pos = m.start() + len(raw)
+    out.append(html.escape(body[pos:]))
+    text = "".join(out).replace("\r\n", "\n").replace("\n", "<br>\n")
+    pixel = html.escape(pixel_url, quote=True)
+    return (f'<!doctype html><html><body><div style="font-family:Arial,sans-serif;font-size:14px;'
+            f'line-height:1.5">{text}</div>'
+            f'<img src="{pixel}" width="1" height="1" alt="" style="border:0;width:1px;height:1px">'
+            f'</body></html>')
+
+
+def set_body(msg: EmailMessage, body: str, pixel_url: Optional[str]) -> None:
+    """Plain text always; an HTML alternative with the open pixel when we have one."""
+    msg.set_content(body)
+    if pixel_url:
+        msg.add_alternative(html_with_pixel(body, pixel_url), subtype="html")
 
 
 def is_loopback_host(host: str) -> bool:
@@ -215,7 +248,8 @@ class MailpitEmailTool:
         return {"sent": int(n), "bounced": 0}
 
     # ------------------------------------------------------------------ sending (used by the sender)
-    def _smtp_send(self, to: str, subject: str, body: str, in_reply_to: Optional[str] = None) -> str:
+    def _smtp_send(self, to: str, subject: str, body: str, in_reply_to: Optional[str] = None,
+                   pixel_url: Optional[str] = None) -> str:
         msg = EmailMessage()
         msg["From"] = FROM_ADDR
         msg["To"] = to
@@ -226,7 +260,7 @@ class MailpitEmailTool:
         if in_reply_to:
             msg["In-Reply-To"] = in_reply_to
             msg["References"] = in_reply_to
-        msg.set_content(body)
+        set_body(msg, body, pixel_url)
         smtp = self._smtp_factory(self.smtp_host, self.smtp_port)
         try:
             smtp.send_message(msg)
@@ -271,7 +305,8 @@ class MailpitEmailTool:
                 if not subject or not body:
                     logger.warning("mailpit tool: %s step %s has no content; skipped", tid, step)
                     continue
-                msg_id = self._smtp_send(row["email"], subject, body)
+                msg_id = self._smtp_send(row["email"], subject, body,
+                                         pixel_url=variables.get(f"open_pixel_{step}") or None)
                 status = "done" if step >= LAST_STEP else "active"
                 db.execute("UPDATE mp_lead SET last_step = ?, last_subject = ?, last_message_id = ?, status = ? "
                            "WHERE tool_lead_id = ?", (step, subject, msg_id, status, tid))

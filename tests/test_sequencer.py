@@ -176,7 +176,7 @@ def test_refresh_updates_next_step(session, st, tpl):
     lead = make_lead(session, tool_lead_id="t1", step_sent=1)
     refresh_next_step(session, lead, tool, settings=st, templates=tpl)
     assert tool.calls[0][0] == "update_variables" and tool.calls[0][1] == "t1"
-    assert set(tool.calls[0][2]) == {"subject_2", "body_2"}
+    assert set(tool.calls[0][2]) == {"subject_2", "body_2", "open_pixel_2"}
 
 
 def test_refresh_noop_without_tool_id(session, st, tpl):
@@ -279,4 +279,8 @@ def test_refresh_after_resume_targets_the_campaign_step(session, st, tpl):
     lead = make_lead(session, tool_lead_id="t1", step_sent=3, variant_flags={"step_offset": 2})
     refresh_next_step(session, lead, tool, settings=st, templates=tpl)
     real4 = render_step(lead, 4, templates=tpl, settings=st)
-    assert tool.calls[0][2] == {"subject_2": real4["subject_4"], "body_2": real4["body_4"]}
+    sent = dict(tool.calls[0][2])
+    pixel = sent.pop("open_pixel_2")
+    assert sent == {"subject_2": real4["subject_4"], "body_2": real4["body_4"]}
+    from outreach.links import parse_open_token
+    assert parse_open_token(pixel.rsplit("/o/", 1)[1], settings=st) == (lead.id, 4)  # our step, not the campaign's
