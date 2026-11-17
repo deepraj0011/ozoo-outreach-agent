@@ -18,7 +18,7 @@ from outreach.sequencer import SCHEDULE_DAYS, enroll
 from tests.conftest import NOW, make_lead
 from tests.fakes import TestSession, make_app_engine, make_deps, make_settings
 
-SETTINGS = make_settings()
+SETTINGS = make_settings(email_open_pixel=True)
 SCANNERS = Scanners(ua_substrings=("BadScanner",), cidrs=(), apple_proxy_cidrs=())
 BROWSER = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0) Chrome/120"}
 

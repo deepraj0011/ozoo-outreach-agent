@@ -26,6 +26,7 @@ from html import unescape
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+from ..classifier import AUTO_REPLY_MARK
 from .mailpit import MailpitEmailTool, _iso, _parse, _utcnow, set_body, set_unsubscribe_headers
 
 logger = logging.getLogger(__name__)
@@ -68,6 +69,20 @@ def reply_text(body: str) -> str:
             break
         out.append(line)
     return "\n".join(out).strip()[:TEXT_MAX]
+
+
+_AUTO_PRECEDENCE = ("auto_reply", "bulk", "junk")
+
+
+def is_auto_reply(msg: Any) -> bool:
+    """RFC 3834 and the common vendor headers: true when a machine wrote this message
+    (out-of-office, vacation, ticket confirmations). Such a reply never counts as engagement."""
+    auto = str(msg.get("Auto-Submitted", "") or "").strip().lower()
+    if auto and auto != "no":
+        return True
+    if msg.get("X-Autoreply") or msg.get("X-Autorespond"):
+        return True
+    return str(msg.get("Precedence", "") or "").strip().lower() in _AUTO_PRECEDENCE
 
 
 def _html_to_text(html: str) -> str:
@@ -189,15 +204,23 @@ class GmailEmailTool(MailpitEmailTool):
         message_id = str(msg.get("Message-ID") or "").strip()
         if not sender or not message_id or sender == self.address.lower():
             return None
-        if sender in leads:
-            text = reply_text(_body_text(msg))
-            return {"email": sender, "kind": "reply", "text": text or "(empty reply)", "message_id": message_id}
         if sender.startswith(BOUNCE_SENDERS):
             body = _body_text(msg).lower()
             for addr in leads:
                 if addr in body:
                     return {"email": addr, "kind": "bounce", "text": None, "message_id": message_id}
-        return None
+            return None
+        lead_email = sender if sender in leads else None
+        if lead_email is None:  # another address answering in our thread (alias, assistant)
+            refs = re.findall(r"<[^<>\s]+>", f"{msg.get('In-Reply-To', '')} {msg.get('References', '')}")
+            found = self.lead_email_for_message_ids(refs)
+            lead_email = found if found in leads else None
+        if lead_email is None:
+            return None
+        text = reply_text(_body_text(msg)) or "(empty reply)"
+        if is_auto_reply(msg):
+            text = f"{AUTO_REPLY_MARK} {text}"
+        return {"email": lead_email, "kind": "reply", "text": text[:TEXT_MAX], "message_id": message_id}
 
     def pending_inbound(self) -> List[Dict[str, Any]]:
         with self._db() as db:

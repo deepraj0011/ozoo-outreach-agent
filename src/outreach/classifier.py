@@ -106,6 +106,17 @@ class ReplyClass:
     draft_answer: Optional[str]
 
 
+# Set by the mailbox tools in front of a reply whose headers say a machine wrote it (RFC 3834
+# Auto-Submitted, X-Autoreply, Precedence: auto_reply ...). Such a reply is never a person
+# engaging: it is always treated as out-of-office (the model only reads the return date).
+AUTO_REPLY_MARK = "[Automatic reply]"
+
+
+def _auto_ooo(reason: str) -> ReplyClass:
+    return ReplyClass(label="ooo", confidence=1.0, return_date=None, later_date=None, referral_email=None,
+                      referral_phone=None, referral_name=None, reason=reason, draft_answer=None)
+
+
 def _unsure(reason: str) -> ReplyClass:
     return ReplyClass(label="unsure", confidence=0.0, return_date=None, later_date=None, referral_email=None,
                       referral_phone=None, referral_name=None, reason=reason[:MAX_REASON], draft_answer=None)
@@ -204,10 +215,11 @@ def _user_message(text: str, channel: str, today: date) -> str:
 
 def classify_reply(text: str, channel: str, llm: LLMClient, *, model: str, today: date) -> ReplyClass:
     """Classify one reply with a forced tool call. Never raises."""
+    auto = (text or "").lstrip().startswith(AUTO_REPLY_MARK)
     try:
         body = strip_quoted(text)[:MAX_TEXT].strip()
         if not body:
-            return _unsure("empty_reply")
+            return _auto_ooo("automatic reply") if auto else _unsure("empty_reply")
         raw = llm.structured(
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": _user_message(_neutralise_tags(body), channel, today)}],
@@ -221,9 +233,13 @@ def classify_reply(text: str, channel: str, llm: LLMClient, *, model: str, today
             raise TypeError("tool input is not an object")
         parsed = _ToolOutput.model_validate(raw)
     except LLMTruncated:
+        if auto:
+            return _auto_ooo("automatic reply")
         logger.warning("reply classifier output cut at max_tokens")
         return _unsure("classifier_error:max_tokens")
     except Exception as exc:  # noqa: BLE001 - every failure goes to a human
+        if auto:
+            return _auto_ooo("automatic reply")
         # LLMError text is fixed by the adapters (reason + HTTP status, no key/URL/prompt); any other
         # exception may carry reply text, so only its type is logged
         logger.warning("reply classifier failed: %s%s", type(exc).__name__,
@@ -231,6 +247,8 @@ def classify_reply(text: str, channel: str, llm: LLMClient, *, model: str, today
         return _unsure(f"classifier_error:{type(exc).__name__}")
 
     label = parsed.label if parsed.confidence >= MIN_CONFIDENCE else "unsure"
+    if auto:  # a machine wrote it: never "interested" / "unsure"; keep the return date the model read
+        label = "ooo"
 
     def future(d: Optional[date]) -> Optional[date]:
         return d if d is not None and d >= today else None

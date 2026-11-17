@@ -60,6 +60,10 @@ CREATE TABLE IF NOT EXISTS mp_send (
     step INTEGER,
     sent_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS mp_msgid (
+    message_id TEXT PRIMARY KEY,
+    tool_lead_id TEXT NOT NULL
+);
 """
 
 
@@ -182,6 +186,23 @@ class MailpitEmailTool:
         return row
 
     @staticmethod
+    def _remember_msgid(db: sqlite3.Connection, msg_id: str, tool_lead_id: str) -> None:
+        """Every Message-ID we send, so a reply can be matched by its In-Reply-To / References even
+        when it comes from another address (an alias, an assistant, a forwarding rule)."""
+        db.execute("INSERT OR IGNORE INTO mp_msgid (message_id, tool_lead_id) VALUES (?, ?)",
+                   (msg_id.strip(), tool_lead_id))
+
+    def lead_email_for_message_ids(self, ids: List[str]) -> Optional[str]:
+        ids = [i.strip() for i in ids if i and i.strip()]
+        if not ids:
+            return None
+        with self._db() as db:
+            row = db.execute(
+                "SELECT l.email FROM mp_msgid m JOIN mp_lead l ON l.tool_lead_id = m.tool_lead_id "
+                f"WHERE m.message_id IN ({','.join('?' * len(ids))}) ORDER BY l.rowid DESC LIMIT 1", ids).fetchone()
+        return row["email"] if row else None
+
+    @staticmethod
     def _blocked(db: sqlite3.Connection, email: str) -> bool:
         return db.execute("SELECT 1 FROM mp_blocked WHERE email = ?", (email.lower(),)).fetchone() is not None
 
@@ -251,6 +272,7 @@ class MailpitEmailTool:
             msg_id = self._smtp_send(row["email"], subject, body, in_reply_to=row["last_message_id"],
                                      unsubscribe_url=unsub or None)
             db.execute("UPDATE mp_lead SET last_message_id = ? WHERE tool_lead_id = ?", (msg_id, tool_lead_id))
+            self._remember_msgid(db, msg_id, tool_lead_id)
         logger.info("%s tool: reply sent for %s", self.LABEL, tool_lead_id)
         return True
 
@@ -337,6 +359,7 @@ class MailpitEmailTool:
                            "WHERE tool_lead_id = ?", (step, subject, msg_id, status, tid))
                 db.execute("INSERT INTO mp_send (tool_lead_id, campaign_id, step, sent_at) VALUES (?, ?, ?, ?)",
                            (tid, row["campaign_id"], step, _iso(now)))
+                self._remember_msgid(db, msg_id, tid)
             logger.info("mailpit tool: %s step %s sent", tid, step)
             sent.append({"tool_lead_id": tid, "lead_id": row["lead_id"], "email": row["email"],
                          "step": step, "subject": subject, "sent_at": now})

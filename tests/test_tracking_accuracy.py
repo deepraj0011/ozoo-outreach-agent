@@ -25,7 +25,7 @@ from outreach.whatsapp.fake import FakeWhatsApp
 from tests.conftest import NOW, make_lead
 from tests.fakes import WEBHOOK_SECRET, TestSession, make_app_engine, make_deps, make_settings
 
-SETTINGS = make_settings()
+SETTINGS = make_settings(email_open_pixel=True)
 MS_SCANNER_IP = "74.224.61.24"  # Microsoft Defender Safe Links (seen 2026-11-17)
 OFFICE_IP = "103.61.75.147"
 

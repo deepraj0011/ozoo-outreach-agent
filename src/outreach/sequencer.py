@@ -140,7 +140,7 @@ def _tracking_vars(lead: Lead, campaign_step: int, real: int, s: Settings) -> Di
     List-Unsubscribe URL and, unless EMAIL_OPEN_PIXEL=false, the open-tracking image. Both carry our
     step (real), keyed by the campaign step. Instantly ignores them."""
     out = {f"unsubscribe_url_{campaign_step}": make_unsubscribe_url(lead.id, real, settings=s)}
-    if getattr(s, "email_open_pixel", True):
+    if getattr(s, "email_open_pixel", False):
         out[f"open_pixel_{campaign_step}"] = make_open_pixel(lead.id, real, settings=s)
     return out
 

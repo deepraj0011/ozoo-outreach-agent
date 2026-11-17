@@ -9,6 +9,7 @@ from datetime import timedelta
 from typing import Dict, FrozenSet, Literal, Optional
 from urllib.parse import urlsplit
 
+import phonenumbers
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -136,9 +137,10 @@ class Settings(BaseSettings):
     gmail_address: str = ""
     gmail_app_password: str = ""
     gmail_from_name: str = "Ozoo.ai"
-    # mailpit / gmail modes (we send the emails ourselves): add our 1x1 open-tracking image. A
-    # tracking image slightly raises spam scores; set false to send without one.
-    email_open_pixel: bool = True
+    # mailpit / gmail / mailbox modes (we send the emails ourselves): add our 1x1 open-tracking
+    # image. Off by default: opens are unreliable (Apple / Gmail proxies load images by themselves)
+    # and a tracking image can lower inbox placement for cold email. Replies are the real signal.
+    email_open_pixel: bool = False
     tool_webhook_secret: str
     campaign_ids: Dict[str, str]
     default_tz_group: str
@@ -191,6 +193,9 @@ class Settings(BaseSettings):
     # Channels and hours
     primary_when_both: Literal["whatsapp", "email"] = "whatsapp"
     business_tz: str = "Asia/Kolkata"
+    # Country used to read a phone number written without its country code ("98765 43210") when the
+    # lead has no country. Blank: such numbers are rejected. Two-letter ISO code.
+    default_phone_region: Optional[str] = "IN"
     business_hours: str = "Mon-Fri 09:00-18:00"
 
     # Approvals: EU cold email needs legal sign-off; until then EU leads get no email
@@ -215,6 +220,16 @@ class Settings(BaseSettings):
     @classmethod
     def _blank_mode_is_default(cls, v: object) -> object:
         return None if isinstance(v, str) and not v.strip() else (v.strip() if isinstance(v, str) else v)
+
+    @field_validator("default_phone_region", mode="before")
+    @classmethod
+    def _phone_region(cls, v: object) -> object:
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return None
+        code = str(v).strip().upper()
+        if code not in phonenumbers.SUPPORTED_REGIONS:
+            raise ValueError("default_phone_region must be a two-letter country code, e.g. IN")
+        return code
 
     @model_validator(mode="after")
     def _modes(self) -> "Settings":

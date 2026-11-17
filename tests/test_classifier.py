@@ -579,3 +579,18 @@ def test_llm_error_text_logged_for_status(caplog):
     caplog.clear()
     classify("secret body", client=FakeClient(RuntimeError("secret body")))
     assert "secret body" not in caplog.text  # only LLMError text (safe by construction) is logged
+
+
+# ---------------------------------------------------------------- automatic replies (RFC 3834 headers)
+
+def test_auto_reply_is_always_ooo_and_keeps_the_return_date():
+    from outreach.classifier import AUTO_REPLY_MARK
+    r = classify(f"{AUTO_REPLY_MARK} Thanks, I'm away until Nov 20",
+                 client=FakeClient(out("interested", 0.9, return_date="2026-11-20")))
+    assert r.label == "ooo" and r.return_date == date(2026, 11, 20)
+
+
+def test_auto_reply_is_ooo_even_when_the_model_fails():
+    from outreach.classifier import AUTO_REPLY_MARK
+    r = classify(f"{AUTO_REPLY_MARK} Ticket #123 received", client=FakeClient(LLMUnavailable("down")))
+    assert r.label == "ooo"

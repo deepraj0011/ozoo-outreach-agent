@@ -125,3 +125,44 @@ def test_imap_connection_has_a_timeout(tool):
     tool.add_lead("c1", SimpleNamespace(id=7, email="boss@example.com"), {"subject_1": "Hello", "body_1": "Hi"})
     tool.fetch_inbound()
     assert tool._fake_imap.timeout and tool._fake_imap.timeout <= 60
+
+
+def _raw(frm, body, mid, **headers):
+    m = EmailMessage()
+    m["From"], m["To"], m["Subject"], m["Message-ID"] = frm, "agent@gmail.com", "Re: Hi", mid
+    for k, v in headers.items():
+        m[k.replace("_", "-")] = v
+    m.set_content(body)
+    return m.as_bytes()
+
+
+@pytest.mark.parametrize("headers", [{"Auto_Submitted": "auto-replied"}, {"X_Autoreply": "yes"},
+                                     {"Precedence": "auto_reply"}])
+def test_automatic_replies_are_marked(tool, headers):
+    from outreach.classifier import AUTO_REPLY_MARK
+    tool.add_lead("c1", SimpleNamespace(id=7, email="boss@example.com"), {})
+    tool._fake_imap.messages = {b"1": _raw("boss@example.com", "I am out of office", "<a@x>", **headers)}
+    assert tool.fetch_inbound() == 1
+    assert tool.pending_inbound()[0]["text"].startswith(AUTO_REPLY_MARK)
+
+
+def test_auto_submitted_no_is_a_person(tool):
+    from outreach.classifier import AUTO_REPLY_MARK
+    tool.add_lead("c1", SimpleNamespace(id=7, email="boss@example.com"), {})
+    tool._fake_imap.messages = {b"1": _raw("boss@example.com", "Let's talk", "<a@x>", Auto_Submitted="no")}
+    tool.fetch_inbound()
+    assert not tool.pending_inbound()[0]["text"].startswith(AUTO_REPLY_MARK)
+
+
+def test_reply_from_another_address_is_matched_by_thread_headers(tool):
+    tid = tool.add_lead("c1", SimpleNamespace(id=7, email="boss@example.com"), {"subject_1": "Hello", "body_1": "Hi"})
+    tool.send_due({1: 0, 2: 4, 3: 9, 4: 15})
+    sent_id = FakeSMTP.sent[-1][1]["Message-ID"]
+    tool._fake_imap.messages = {
+        b"1": _raw("Assistant <pa@example.com>", "He'd like a call", "<r@x>", In_Reply_To=sent_id),
+        b"2": _raw("Stranger <s@other.com>", "hi", "<s@x>", In_Reply_To="<unknown@x>"),
+    }
+    assert tool.fetch_inbound() == 1
+    (row,) = tool.pending_inbound()
+    assert row["lead_email"] == "boss@example.com" and row["lead_id"] == 7 and tid
+    assert tool._fake_imap.seen == {b"1"}
