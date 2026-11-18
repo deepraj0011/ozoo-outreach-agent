@@ -60,7 +60,7 @@ It prints `https://<random-words>.trycloudflare.com`. In `.env.demo`: `LINK_BASE
    **`ozoo_intro`**: category *Marketing*, language **English** (code `en`).
    Body (variables are filled by the agent):
    ```
-   Hi {{1}}, thanks for your interest in Ozoo.ai. We help teams like {{2}} follow up with every lead automatically. Would a short demo be useful?
+   Hi {{1}}, thanks for your interest in Ozoo.ai. We help lenders like {{2}} check every call for quality and compliance, and reach borrowers with AI voice and WhatsApp agents. Would a short demo be useful?
    ```
    Sample values: `{{1}}` = Priya, `{{2}}` = Northwind.
    Buttons → **Quick reply**, in this order: `Book a demo`, `Ask a question`.

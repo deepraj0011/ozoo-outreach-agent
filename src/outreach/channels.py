@@ -4,13 +4,20 @@ from typing import Optional
 
 import phonenumbers
 
+from .eu import country_code
+
 EMAIL_OK_STATUSES = frozenset({"valid", "catch_all", "unknown"})
 
 
-def normalize_phone(raw: str, default_region: Optional[str]) -> Optional[str]:
-    """Return E.164 or None if the number cannot be parsed / is invalid."""
+def normalize_phone(raw: str, country: Optional[str], fallback_region: Optional[str] = None) -> Optional[str]:
+    """Return E.164 or None if the number cannot be parsed / is invalid.
+
+    A number with "+" (or "00") carries its own country. Otherwise it is read in the lead's country
+    (an ISO code or a common name, see eu.country_code), else in fallback_region (settings
+    DEFAULT_PHONE_REGION). With neither, a number without its country code is rejected."""
+    region = country_code(country) or (fallback_region.upper() if fallback_region else None)
     try:
-        num = phonenumbers.parse(raw, default_region.upper() if default_region else None)
+        num = phonenumbers.parse(raw, region)
     except phonenumbers.NumberParseException:
         return None
     if not phonenumbers.is_valid_number(num):

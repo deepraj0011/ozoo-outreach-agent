@@ -427,8 +427,8 @@ def test_default_kb_resolved_from_repo_root(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     assert DEFAULT_KB == Path(__file__).resolve().parents[1] / "kb" / "ozoo_kb.md"
     raw = DEFAULT_KB.read_text()
-    assert "# MARKETING: fill before go-live" in raw
-    for section in ("Services", "Who it's for", "How engagement works", "FAQs"):
+    assert "TODO" not in raw
+    for section in ("What Ozoo.ai is", "Products", "Who it's for", "How engagement works", "Pricing", "FAQs"):
         assert section in raw
     client = FakeClient(out("answer", "ok"))
     lead = SimpleNamespace(id=1, variant_flags={}, wa_bot_turns=0, state="engaged")

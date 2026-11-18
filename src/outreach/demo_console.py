@@ -26,12 +26,16 @@ from sqlalchemy.orm import sessionmaker
 from .models import Alert, ChatMessage, Event, Job, Lead
 from .score import band
 from .states import LeadState
+from .whatsapp.sender import CTA_KEYS, VARIABLE_FALLBACK, load_wa_templates, template_values
 
 import csv
 import io
 import re
 
 PAGE = Path(__file__).with_name("demo_console.html")
+LOOPBACK_CLIENTS = frozenset({"127.0.0.1", "::1", "localhost", "testclient"})
+TUNNEL_HEADERS = ("cf-connecting-ip", "cf-ray", "x-forwarded-for", "x-forwarded-host", "x-real-ip",
+                  "forwarded", "ngrok-skip-browser-warning")
 IMPORT_MAX_BYTES = 5 * 1024 * 1024
 IMPORT_MAX_ROWS = 2000
 # lead field -> accepted column headers (lower-case, spaces/underscores/dashes removed)
@@ -100,6 +104,65 @@ def _lead_row(ld: Lead) -> Dict[str, Any]:
         "nurture_track": ld.nurture_track, "nurture_until": _iso(ld.nurture_until),
         "last_sent_at": _iso(ld.last_sent_at), "created_at": _iso(ld.created_at),
     }
+
+
+# ------------------------------------------------------------------ WhatsApp phone view
+def _template_view(name: str, lead: Any, templates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """A Meta template as the lead's phone shows it, from the local preview copy in whatsapp.yaml."""
+    cfg = templates["templates"].get(name) or {}
+    pv = cfg.get("preview")
+    if not pv:
+        return None
+    vals = template_values(lead)
+    text = pv["body"]
+    for i, var in enumerate(cfg.get("variables", []), start=1):
+        text = text.replace("{{%d}}" % i, vals.get(var) or VARIABLE_FALLBACK[var])
+    buttons = [{"label": label, "payload": payload}
+               for label, payload in zip(pv.get("buttons", []), cfg.get("quick_replies", []))]
+    return {"kind": "template", "name": name, "text": text, "buttons": buttons}
+
+
+def _cta_texts(lead: Any, templates: Dict[str, Any]) -> Dict[str, str]:
+    """Rendered text of each message sent with a link button -> the button label."""
+    vals = {**template_values(lead), "booking_link": ""}
+    out = {}
+    for key in CTA_KEYS:
+        tpl = templates["texts"].get(key, "")
+        if "{booking_link}" not in tpl:
+            out[tpl.format_map(vals)] = templates["buttons"][key]
+    return out
+
+
+def chat_view(lead: Any, chat: List[Any], templates: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Chat rows plus `view`: what the lead's phone shows (template text + quick-reply buttons,
+    link buttons), since templates are stored only as "[template:name]"."""
+    ctas = _cta_texts(lead, templates)
+    rows = []
+    for m in chat:
+        text = m.text or ""
+        view: Optional[Dict[str, Any]] = None
+        if m.direction == "out" and text.startswith("[template:") and text.endswith("]"):
+            view = _template_view(text[10:-1], lead, templates)
+        elif m.direction == "out" and text in ctas:
+            view = {"kind": "cta", "text": text, "cta": ctas[text]}
+        rows.append({"id": m.id, "direction": m.direction, "author": m.author, "text": text,
+                     "at": _iso(m.created_at), "view": view or {"kind": "text", "text": text}})
+    return rows
+
+
+def wa_preview(lead: Any, templates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The intro the lead will get, shown before anything is sent; None without a phone."""
+    if not lead.phone:
+        return None
+    message = _template_view("ozoo_intro", lead, templates)
+    if not lead.consent_whatsapp:
+        return {"will_send": False, "why": "No WhatsApp opt-in: the agent never messages this number.", "message": message}
+    if lead.active_channel != "whatsapp":
+        return {"will_send": False, "why": "This lead is on email. WhatsApp starts only if email gets no response.",
+                "message": message}
+    if lead.state not in (LeadState.IN_SEQUENCE.value,):
+        return {"will_send": False, "why": "This lead is no longer in the outreach sequence.", "message": message}
+    return {"will_send": True, "why": "Sent automatically at the next worker tick (within seconds).", "message": message}
 
 
 def _event_row(e: Event, names: Dict[int, str]) -> Dict[str, Any]:
@@ -275,7 +338,7 @@ def parse_leads(filename: str, data: bytes) -> Dict[str, Any]:
                                    "role": get(row, "role") or "Not given", "source": "file_import"}
         email = get(row, "email")
         phone = get(row, "phone")
-        if phone and phone[0].isdigit() and re.fullmatch(r"\d{11,15}", phone):
+        if phone and phone[0] in "123456789" and re.fullmatch(r"\d{11,15}", phone):
             phone = "+" + phone  # international number stored without the plus (common in Excel)
         if email:
             payload["email"] = email
@@ -302,6 +365,20 @@ def parse_leads(filename: str, data: bytes) -> Dict[str, Any]:
 def register(app: FastAPI, session_factory: sessionmaker, clock: Callable[[], datetime], settings: Any) -> None:
     modes = {"email": settings.email_mode, "whatsapp": settings.whatsapp_mode, "ai": settings.llm_mode,
              "alerts": settings.alerts_mode}
+
+    @app.middleware("http")
+    async def console_is_local_only(request: Request, call_next: Any) -> Response:
+        """The console shows lead data and runs dev actions, so it answers only on this computer.
+        A request that came through a tunnel (cloudflared, ngrok, ...) carries a forwarding header
+        even though it arrives from 127.0.0.1: those get a 404. Tracked links (/r/), webhooks and
+        unsubscribe pages are not affected."""
+        path = request.url.path
+        if path == "/" or path == "/demo" or path.startswith("/demo/"):
+            client = request.client.host if request.client else ""
+            proxied = any(h in request.headers for h in TUNNEL_HEADERS)
+            if proxied or client not in LOOPBACK_CLIENTS:
+                return Response(status_code=404)
+        return await call_next(request)
 
     @app.get("/", include_in_schema=False)
     def home() -> Response:
@@ -382,6 +459,7 @@ def register(app: FastAPI, session_factory: sessionmaker, clock: Callable[[], da
             if ld is None:
                 return JSONResponse({"error": "not found"}, status_code=404)
             names = {ld.id: ld.name}
+            wa_templates = load_wa_templates()
             events = list(s.scalars(select(Event).where(Event.lead_id == lead_id).order_by(Event.id)))
             chat = list(s.scalars(select(ChatMessage).where(ChatMessage.lead_id == lead_id)
                                   .order_by(ChatMessage.id)))
@@ -390,8 +468,8 @@ def register(app: FastAPI, session_factory: sessionmaker, clock: Callable[[], da
             return JSONResponse({
                 "lead": _lead_row(ld),
                 "events": [_event_row(e, names) for e in events],
-                "chat": [{"id": m.id, "direction": m.direction, "author": m.author, "text": m.text,
-                          "at": _iso(m.created_at)} for m in chat],
+                "chat": chat_view(ld, chat, wa_templates),
+                "wa_preview": None if chat or ld.wa_template_sent_at else wa_preview(ld, wa_templates),
                 "alerts": [{"id": a.id, "kind": a.kind, "text": a.text, "at": _iso(a.created_at)} for a in alerts],
                 "jobs": [{"id": j.id, "kind": j.kind, "status": j.status, "attempts": j.attempts} for j in jobs],
             }, headers={"Cache-Control": "no-store"})

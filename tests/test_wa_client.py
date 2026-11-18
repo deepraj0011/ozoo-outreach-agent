@@ -235,9 +235,19 @@ def test_texts_have_no_raw_urls():
         assert key in t["texts"]
         assert "http" not in t["texts"][key].lower()
         assert "www." not in t["texts"][key].lower()
-    assert t["templates"]["ozoo_intro"] == {"language": "en", "variables": ["first_name", "company"],
-                                            "quick_replies": ["BOOK_DEMO", "ASK_QUESTION"]}
-    assert t["templates"]["ozoo_reminder"] == {"language": "en", "variables": ["first_name"]}
+    send = lambda name: {k: v for k, v in t["templates"][name].items() if k != "preview"}  # preview: display only
+    assert send("ozoo_intro") == {"language": "en", "variables": ["first_name", "company"],
+                                  "quick_replies": ["BOOK_DEMO", "ASK_QUESTION"]}
+    assert send("ozoo_reminder") == {"language": "en", "variables": ["first_name"]}
+
+
+def test_template_preview_needs_one_label_per_quick_reply():
+    import copy
+    from outreach.whatsapp.sender import validate_wa_templates
+    t = copy.deepcopy(load_wa_templates())
+    t["templates"]["ozoo_intro"]["preview"]["buttons"] = ["Book a demo"]
+    with pytest.raises(ValueError, match="one button label per quick reply"):
+        validate_wa_templates(t)
 
 
 def test_marketing_markers_present():

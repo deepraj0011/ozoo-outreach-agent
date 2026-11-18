@@ -11,9 +11,18 @@ templates:
     variables: [first_name, company]
     # payloads of the template's quick-reply buttons, in button order ("Book a demo", "Ask a question")
     quick_replies: [BOOK_DEMO, ASK_QUESTION]
+    # Copy of the text approved in Meta, used ONLY to show the message in the local web app.
+    # Keep it identical to the Meta template. {{1}}, {{2}} follow `variables`; one button label per quick reply.
+    # MARKETING: replace
+    preview:
+      body: "Hi {{1}}, thanks for your interest in Ozoo.ai. We help lenders like {{2}} check every call for quality and compliance, and reach borrowers with AI voice and WhatsApp agents. Would a short demo be useful?"
+      buttons: ["Book a demo", "Ask a question"]
   ozoo_reminder:
     language: en
     variables: [first_name]
+    # MARKETING: replace
+    preview:
+      body: "Hi {{1}}, just checking in. Happy to show you Ozoo.ai in a quick call whenever suits you."
 
 # CTA button labels (Meta limit: 20 characters).
 buttons:

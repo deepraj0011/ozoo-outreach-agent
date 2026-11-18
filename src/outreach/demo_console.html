@@ -22,6 +22,10 @@ tailwind.config = { theme: { extend: {
   .btn:disabled { opacity:.45; cursor:not-allowed; }
   .btn-primary { background:#4c6fff; border-color:#4c6fff; color:#fff; } .btn-primary:hover { background:#3a5af0; color:#fff; }
   .btn-sm { padding:.35rem .6rem; font-size:.75rem; }
+  .wa-btn { display:flex; align-items:center; justify-content:center; gap:.35rem; width:100%; margin-top:2px; padding:.45rem .75rem; border-radius:.5rem;
+    font-size:.8125rem; font-weight:500; color:#027eb5; box-shadow:0 1px .5px rgba(11,20,26,.13); }
+  button.wa-btn:hover { filter:brightness(.97); }
+  .wa-btn[disabled] { cursor:default; filter:none; }
   .card { background:#fff; border:1px solid #e5e9f0; border-radius:.9rem; }
   .nav-a { display:flex; align-items:center; gap:.7rem; padding:.55rem .75rem; border-radius:.55rem; color:#a9b3cc; font-size:.875rem; font-weight:500; }
   .nav-a:hover { background:#1b2540; color:#fff; } .nav-a.on { background:#4c6fff; color:#fff; }
@@ -349,17 +353,37 @@ function dActivity() {
       <div class="text-[11px] text-slate-400 whitespace-nowrap">${when(e.at)}</div></div>
       ${e.summary ? `<div class="text-xs text-slate-500 mt-0.5">${esc(prettySummary(e))}</div>` : ''}</li>`; }).join('')}</ol>`;
 }
+const TAP = {BOOK_DEMO:'👆 Tapped “Book a demo”', ASK_QUESTION:'👆 Tapped “Ask a question”'};
+const TAP_BTN = {BOOK_DEMO:'book_demo', ASK_QUESTION:'ask_question'};
+// One WhatsApp message as the lead's phone shows it: template text with its quick-reply buttons,
+// or a text with its link button. preview: shown before sending (faded, buttons not tappable).
+function bubble(m, d, preview) {
+  const out = m.direction === 'out', v = m.view || {kind:'text', text:m.text}, bg = out ? 'bg-[#d9fdd3]' : 'bg-white';
+  const who = m.author === 'bot' ? '🤖 Ozoo bot' : m.author === 'human' ? '👤 Sales' : esc(d.lead.name);
+  const text = v.kind === 'text' ? (TAP[v.text] || esc(v.text)) : esc(v.text);
+  const tag = v.kind === 'template' ? `<div class="text-[10px] text-slate-500 mb-1">📨 Approved template · ${esc(v.name)}</div>` : '';
+  let btns = '';
+  if (v.kind === 'template') btns = (v.buttons || []).map(b => preview
+      ? `<button disabled class="wa-btn ${bg}">↩ ${esc(b.label)}</button>`
+      : `<button class="wa-btn ${bg}" title="Demo: tap as ${esc(d.lead.name)}" onclick="run({action:'wa_button',lead:${d.lead.id},button:'${TAP_BTN[b.payload] || ''}'})">↩ ${esc(b.label)}</button>`).join('');
+  if (v.kind === 'cta') btns = `<div class="wa-btn ${bg}">🔗 ${esc(v.cta)}</div>`;
+  return `<div class="flex ${out ? 'justify-end' : 'justify-start'} ${preview ? 'opacity-70' : ''}"><div class="max-w-[80%] min-w-[220px]">
+    <div class="rounded-lg px-3 py-2 shadow-sm ${bg} ${preview ? 'border border-dashed border-slate-400' : ''}">
+      <div class="text-[10px] font-semibold ${out ? 'text-emerald-700' : 'text-slate-500'}">${who}</div>${tag}<div class="text-sm whitespace-pre-wrap">${text}</div>
+      <div class="text-[10px] text-slate-400 text-right">${preview ? 'not sent yet' : when(m.at)}</div></div>${btns}</div></div>`;
+}
 function bubbles(d) {
-  return d.chat.map(m => { const out = m.direction === 'out';
-    const who = m.author === 'bot' ? '🤖 Ozoo bot' : m.author === 'human' ? '👤 Sales' : esc(d.lead.name);
-    const TAP = {BOOK_DEMO:'👆 Tapped “Book a demo”', ASK_QUESTION:'👆 Tapped “Ask a question”'};
-    const text = m.text.startsWith('[template:') ? `📨 Approved intro message (${esc(m.text.slice(10, -1))})` : TAP[m.text] || esc(m.text);
-    return `<div class="flex ${out ? 'justify-end' : 'justify-start'}"><div class="max-w-[80%] rounded-lg px-3 py-2 shadow-sm ${out ? 'bg-[#d9fdd3]' : 'bg-white'}">
-      <div class="text-[10px] font-semibold ${out ? 'text-emerald-700' : 'text-slate-500'}">${who}</div><div class="text-sm whitespace-pre-wrap">${text}</div>
-      <div class="text-[10px] text-slate-400 text-right">${when(m.at)}</div></div></div>`; }).join('');
+  if (!d.chat.length) return waPreview(d);
+  return d.chat.map(m => bubble(m, d, false)).join('');
+}
+function waPreview(d) {
+  const p = d.wa_preview;
+  if (!p) return empty('No WhatsApp messages with this lead.');
+  const note = `<div class="text-center"><span class="inline-block text-[11px] bg-white/90 text-slate-600 rounded-md px-2.5 py-1 shadow-sm max-w-md">
+    <b>${p.will_send ? 'Preview: what ' + esc(d.lead.name) + ' will see on WhatsApp' : 'Preview only'}</b> · ${esc(p.why)}</span></div>`;
+  return note + (p.message ? bubble({direction:'out', author:'bot', view:p.message}, d, true) : '');
 }
 function dChat(d) {
-  if (!d.chat.length) return empty('No WhatsApp messages with this lead.');
   return `<div class="bg-[#efeae2] rounded-xl p-4 space-y-2">${bubbles(d)}</div>`;
 }
 function dAlerts() {
@@ -399,22 +423,22 @@ function dDemo(l) {
 
 // ------------------------------------------------------------------ Conversations
 function pConversations() {
-  const list = data.leads.filter(l => l.last_msg || (l.channel === 'whatsapp' && l.phone))
+  const list = data.leads.filter(l => l.last_msg || l.phone)
     .sort((a, b) => ((b.last_msg||{}).at || '').localeCompare((a.last_msg||{}).at || ''));
-  if (!list.length) return `<div class="card">${empty('No WhatsApp conversations yet. Leads who opted in to WhatsApp get the approved intro message first.')}</div>`;
+  if (!list.length) return `<div class="card">${empty('No leads with a WhatsApp number yet. Add one (or import a file with a Phone / WhatsApp column) to see their chat here.')}</div>`;
   if (convId == null || !list.some(l => l.id === convId)) { convId = list[0].id; convDetail = null; setTimeout(() => selectConv(convId), 0); }
   const cur = convDetail && convDetail.lead.id === convId ? convDetail : null;
   const l = cur ? cur.lead : list.find(x => x.id === convId);
   return `<div class="card overflow-hidden grid grid-cols-1 lg:grid-cols-[320px_1fr] h-[calc(100vh-10rem)] min-h-[520px] fade">
     <div class="border-r border-slate-100 overflow-y-auto thin">${list.map(x => `<button onclick="selectConv(${x.id})" class="w-full text-left px-4 py-3 flex gap-3 border-b border-slate-50 ${x.id === convId ? 'bg-brand-50' : 'hover:bg-slate-50'}">
       ${avatar(x.name)}<div class="min-w-0 flex-1"><div class="flex items-baseline justify-between gap-2"><span class="font-medium text-sm truncate">${esc(x.name)}</span><span class="text-[10px] text-slate-400 whitespace-nowrap">${x.last_msg ? when(x.last_msg.at) : ''}</span></div>
-      <div class="text-xs text-slate-500 truncate">${x.last_msg ? (x.last_msg.author === 'bot' ? '🤖 ' : x.last_msg.author === 'human' ? '👤 ' : '') + esc(x.last_msg.text.startsWith('[template:') ? 'Intro message sent' : x.last_msg.text) : 'Waiting for the intro message…'}</div>
+      <div class="text-xs text-slate-500 truncate">${x.last_msg ? (x.last_msg.author === 'bot' ? '🤖 ' : x.last_msg.author === 'human' ? '👤 ' : '') + esc(x.last_msg.text.startsWith('[template:') ? 'Intro message sent' : x.last_msg.text) : (!x.consent_whatsapp ? 'No WhatsApp opt-in · preview only' : x.channel === 'whatsapp' ? 'Intro about to be sent…' : 'On email for now · preview')}</div>
       ${x.human_owner ? '<div class="text-[10px] text-violet-700 mt-0.5">Sales has the chat</div>' : ''}</div></button>`).join('')}</div>
     <div class="flex flex-col min-h-0">
       <div class="px-5 py-3 border-b border-slate-100 flex items-center gap-3">${avatar(l.name)}<div class="min-w-0 flex-1"><div class="font-medium text-sm">${esc(l.name)} <span class="text-slate-400 font-normal">· ${esc(l.company)}</span></div>
-        <div class="text-xs text-slate-500">${esc(l.phone || '')} · ${l.human_owner ? '👤 Handled by sales (' + esc(l.human_owner) + ')' : '🤖 Handled by the bot'}</div></div>${badge(l.state)}
+        <div class="text-xs text-slate-500"><span class="text-emerald-700">WhatsApp</span> ${esc(l.phone || '')} · ${!l.consent_whatsapp ? 'No WhatsApp opt-in' : l.human_owner ? '👤 Handled by sales (' + esc(l.human_owner) + ')' : '🤖 Handled by the bot'}</div></div>${badge(l.state)}
         <button class="btn btn-sm" onclick="openLead(${l.id})">Lead details</button></div>
-      <div id="thread" class="flex-1 overflow-y-auto thin bg-[#efeae2] p-5 space-y-2">${cur ? (cur.chat.length ? bubbles(cur) : empty('No messages yet.')) : '<div class="text-sm text-slate-500">Loading…</div>'}</div>
+      <div id="thread" class="flex-1 overflow-y-auto thin bg-[#efeae2] p-5 space-y-2">${cur ? bubbles(cur) : '<div class="text-sm text-slate-500">Loading…</div>'}</div>
       <div class="border-t border-slate-100 p-3 space-y-2 bg-white">
         <div class="flex gap-2"><input id="convSales" class="flex-1 border border-slate-200 rounded-lg px-3 py-2 text-sm" placeholder="Reply as a salesperson (this takes the chat over from the bot)…" onkeydown="if(event.key==='Enter')$('convSend').click()">
           <button id="convSend" class="btn btn-primary" onclick="if($('convSales').value.trim()){run({action:'teams_wa',lead:${l.id},text:$('convSales').value});$('convSales').value=''}">Send</button>

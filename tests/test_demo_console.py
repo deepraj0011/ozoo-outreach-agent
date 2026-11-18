@@ -53,3 +53,73 @@ def test_actions_are_whitelisted():
                 {"action": "email_reply", "lead": 1}):
         with pytest.raises(ValueError):
             build_argv(bad)
+
+
+def test_console_answers_only_on_this_computer():
+    """Through a tunnel the console must not be reachable; tracked links still work."""
+    from fastapi.testclient import TestClient
+    from outreach.app import create_app
+    from outreach.botfilter import Scanners
+    from tests.conftest import NOW
+    from tests.fakes import make_app_engine, make_deps, make_settings
+
+    settings = make_settings(app_env="local")
+    app = create_app(settings, deps=make_deps(), engine=make_app_engine(), clock=lambda: NOW,
+                     scanners=Scanners(ua_substrings=(), cidrs=(), apple_proxy_cidrs=()))
+    client = TestClient(app, raise_server_exceptions=False, follow_redirects=False)
+    assert client.get("/demo/api/state").status_code == 200
+    for header in ("CF-Connecting-IP", "X-Forwarded-For", "CF-Ray"):
+        for path in ("/", "/demo", "/demo/api/state"):
+            assert client.get(path, headers={header: "198.51.100.9"}).status_code == 404
+        assert client.post("/demo/api/run", json={"action": "tick"},
+                           headers={header: "198.51.100.9"}).status_code == 404
+    assert client.get("/r/not-a-token", headers={"CF-Connecting-IP": "198.51.100.9"}).status_code == 302
+
+
+# ---------------------------------------------------------------- WhatsApp phone preview
+from types import SimpleNamespace
+
+from outreach.demo_console import chat_view, wa_preview
+from outreach.whatsapp.sender import load_wa_templates
+
+
+def _lead(**kw):
+    d = dict(id=7, name="Priya Shah", company="Northwind Finance", phone="+919876543210",
+             consent_whatsapp=True, active_channel="whatsapp", state="in_sequence", wa_template_sent_at=None)
+    d.update(kw)
+    return SimpleNamespace(**d)
+
+
+def _msg(text, direction="out", author="bot"):
+    return SimpleNamespace(id=1, direction=direction, author=author, text=text, created_at=None)
+
+
+def test_template_message_shows_its_text_and_tappable_buttons():
+    t = load_wa_templates()
+    (m,) = chat_view(_lead(), [_msg("[template:ozoo_intro]")], t)
+    v = m["view"]
+    assert v["kind"] == "template" and "Priya" in v["text"] and "Northwind Finance" in v["text"]
+    assert "{{" not in v["text"]
+    assert [b["payload"] for b in v["buttons"]] == ["BOOK_DEMO", "ASK_QUESTION"]
+    assert [b["label"] for b in v["buttons"]] == ["Book a demo", "Ask a question"]
+
+
+def test_booking_link_text_shows_its_link_button():
+    t = load_wa_templates()
+    text = t["texts"]["booking_link"].format(first_name="Priya", company="Northwind Finance", booking_link="")
+    (m,) = chat_view(_lead(), [_msg(text)], t)
+    assert m["view"] == {"kind": "cta", "text": text, "cta": t["buttons"]["booking_link"]}
+
+
+def test_plain_text_and_lead_messages_pass_through():
+    (m,) = chat_view(_lead(), [_msg("Hello there", "in", "lead")], load_wa_templates())
+    assert m["view"] == {"kind": "text", "text": "Hello there"}
+
+
+def test_preview_before_anything_is_sent():
+    t = load_wa_templates()
+    p = wa_preview(_lead(), t)
+    assert p["will_send"] is True and p["message"]["kind"] == "template" and "Priya" in p["message"]["text"]
+    assert wa_preview(_lead(consent_whatsapp=False), t)["will_send"] is False
+    assert wa_preview(_lead(active_channel="email"), t)["will_send"] is False
+    assert wa_preview(_lead(phone=None), t) is None

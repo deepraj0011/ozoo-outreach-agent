@@ -76,7 +76,8 @@ def _find_existing(session: Session, email: Optional[str], phone: Optional[str])
 
 def intake_lead(session: Session, payload: dict, verifier, now: datetime,
                 primary_when_both: str = "whatsapp", eu_email_approved: bool = False, *,
-                tz_groups: Optional[Iterable[str]] = None, default_tz_group: Optional[str] = None) -> IntakeResult:
+                tz_groups: Optional[Iterable[str]] = None, default_tz_group: Optional[str] = None,
+                default_phone_region: Optional[str] = None) -> IntakeResult:
     """tz_groups: the configured campaign groups (CAMPAIGN_IDS keys). An unknown timezone_group falls
     back to default_tz_group (the given value is recorded in variant_flags), or is rejected when
     there is no default. None skips the check."""
@@ -96,7 +97,7 @@ def intake_lead(session: Session, payload: dict, verifier, now: datetime,
     email: Optional[str] = p.email.lower() if p.email else None
     if email and not _EMAIL_RE.match(email):
         email = None
-    phone = normalize_phone(p.phone, p.country) if p.phone else None
+    phone = normalize_phone(p.phone, p.country, default_phone_region) if p.phone else None
     if not (p.email or p.phone):
         return _rejected("missing contact: email or phone")
     if not email and not phone:

@@ -23,21 +23,37 @@ _NAMES = {
     "romania": "RO", "slovakia": "SK", "slovenia": "SI", "spain": "ES", "sweden": "SE",
     "iceland": "IS", "liechtenstein": "LI", "norway": "NO",
 }
+# other countries leads commonly come from (names only; any ISO 3166 two-letter code also works)
+_OTHER_NAMES = {
+    "india": "IN", "bharat": "IN", "united states": "US", "united states of america": "US",
+    "usa": "US", "us": "US", "america": "US", "united kingdom": "GB", "uk": "GB",
+    "great britain": "GB", "england": "GB", "canada": "CA", "switzerland": "CH",
+    "united arab emirates": "AE", "uae": "AE", "singapore": "SG", "australia": "AU",
+    "saudi arabia": "SA", "qatar": "QA", "oman": "OM", "kuwait": "KW", "bahrain": "BH",
+    "nepal": "NP", "bangladesh": "BD", "sri lanka": "LK", "south africa": "ZA",
+}
+_ALIASES = {"UK": "GB"}  # common but not ISO
+
 # email country domains; Greece uses .gr, plus the shared .eu domain
 _TLDS = {code.lower() for code in EU_EEA} | {"eu"}
 
 
-def _country_code(country: Optional[str]) -> Optional[str]:
+def country_code(country: Optional[str]) -> Optional[str]:
+    """ISO 3166 two-letter code from a code ("in", "UK") or a common English name ("India"), else None."""
     if not country:
         return None
     c = country.strip()
-    if len(c) == 2:
-        return c.upper()
-    return _NAMES.get(c.lower())
+    name = c.lower()
+    if name in _NAMES or name in _OTHER_NAMES:
+        return _NAMES.get(name) or _OTHER_NAMES[name]
+    if len(c) == 2 and c.isalpha():
+        code = _ALIASES.get(c.upper(), c.upper())
+        return code if code in phonenumbers.SUPPORTED_REGIONS else None
+    return None
 
 
 def is_eu(country: Optional[str], email: Optional[str], phone_e164: Optional[str]) -> bool:
-    if _country_code(country) in EU_EEA:
+    if country_code(country) in EU_EEA:
         return True
     if email and "@" in email:
         tld = email.rsplit(".", 1)[-1].lower()

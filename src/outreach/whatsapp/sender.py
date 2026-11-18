@@ -65,6 +65,15 @@ def validate_wa_templates(data: Any) -> Dict[str, Any]:
         qr = t.get("quick_replies", [])
         if not isinstance(qr, list) or not all(isinstance(x, str) and x.strip() for x in qr):
             raise ValueError(f"template {name}: quick_replies must be a list of payload strings")
+        pv = t.get("preview")  # optional: local display copy of the Meta template
+        if pv is not None:
+            labels = pv.get("buttons", []) if isinstance(pv, dict) else None
+            if not isinstance(pv, dict) or not isinstance(pv.get("body"), str) or not pv["body"].strip():
+                raise ValueError(f"template {name}: preview needs a body")
+            if not isinstance(labels, list) or not all(isinstance(x, str) and 0 < len(x) <= BUTTON_MAX for x in labels):
+                raise ValueError(f"template {name}: preview buttons must be 1..{BUTTON_MAX} characters")
+            if len(labels) != len(qr):
+                raise ValueError(f"template {name}: preview needs one button label per quick reply")
     for key in TEXT_KEYS:
         text = texts.get(key)
         if not isinstance(text, str) or not text.strip():
@@ -88,6 +97,20 @@ def load_wa_templates(path: Optional[str] = None) -> Dict[str, Any]:
         with open(p, encoding="utf-8") as fh:
             _cache[p] = validate_wa_templates(yaml.safe_load(fh))
     return _cache[p]
+
+
+def _safe(field: str, value: str) -> str:
+    low = value.lower()
+    if any(m in low for m in _VALUE_URL_MARKERS):
+        return VARIABLE_FALLBACK[field]
+    return value
+
+
+def template_values(lead: Any) -> Dict[str, str]:
+    """first_name / company exactly as the sender inserts them (a link-like value is replaced)."""
+    name = _clean(lead.name)
+    first = name.split(" ")[0] if name else ""
+    return {"first_name": _safe("first_name", first), "company": _safe("company", _clean(lead.company))}
 
 
 def window_open(lead: Lead, now: datetime) -> bool:
@@ -137,18 +160,8 @@ class WhatsAppSender:
     def _booking_url(self, lead: Lead) -> str:
         return make_link(lead.id, lead.step_sent or 0, "booking", "whatsapp", settings=self.settings)
 
-    @staticmethod
-    def _safe(field: str, value: str) -> str:
-        low = value.lower()
-        if any(m in low for m in _VALUE_URL_MARKERS):
-            return VARIABLE_FALLBACK[field]
-        return value
-
     def _values(self, lead: Lead) -> Dict[str, str]:
-        name = _clean(lead.name)
-        first = name.split(" ")[0] if name else ""
-        return {"first_name": self._safe("first_name", first),
-                "company": self._safe("company", _clean(lead.company))}
+        return template_values(lead)
 
     def _require_window(self, lead: Lead, now: datetime) -> None:
         if not window_open(lead, now):
