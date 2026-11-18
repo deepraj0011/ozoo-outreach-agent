@@ -40,7 +40,9 @@ reputation** and from whether the email **looks like one person writing to anoth
 
 What the agent does already:
 
-- All four emails are designed but letter-like (email 1 too, since task 23): white, left-aligned, no banner, no hidden preheader,
+- Emails 1 and 2 (the ones a stranger judges you by) have no product picture: just the letter,
+  a use-case box, the purple button and the signature with the Ozoo mark (task 24).
+- All four emails are designed but letter-like: white, left-aligned, no banner, no hidden preheader,
   one picture, one button, one text link besides Unsubscribe. A plain-text copy always goes too.
 - Follow-ups are replies in email 1's thread ("Re: …"), sent from the same mailbox, inside working
   hours, with per-mailbox daily caps (`EMAIL_MODE=mailbox`).
@@ -59,6 +61,8 @@ What you must set up (no code can do this):
 6. **Clean lists:** verify addresses first (`VERIFY_MODE=real`); bounces above 2% hurt everything.
 7. Watch **Google Postmaster Tools**: spam rate must stay under 0.3%.
 
-If email 1 lands in Promotions on a warmed-up domain, the first thing to try is a version without
-`[[image]]`: Duplicate it in the Templates screen, remove the picture, approve it, switch the
-original off.
+No open-tracking image unless `EMAIL_OPEN_PIXEL` is turned on (it is off by default; keep it off).
+
+Even with all of this, no sender can guarantee Primary on every platform: Gmail, Outlook, Yahoo and
+company gateways decide per recipient. Measure before launch with a seed test (mail-tester.com,
+GlockApps) and watch Google Postmaster Tools after.

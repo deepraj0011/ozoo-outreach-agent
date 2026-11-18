@@ -94,9 +94,24 @@ def test_every_email_is_designed(session):
 
 def test_angle_picks_the_image_and_product_page(session):
     tpl = load_templates()
-    coll = render_step(make_lead(session, role="Head of Collections"), 2, templates=tpl, settings=ST)["html_2"]
-    qa = render_step(make_lead(session, role="VP Quality"), 2, templates=tpl, settings=ST)["html_2"]
-    assert "compliance-checks.jpg" in coll and "qa-scorecard.jpg" in qa
+    def docs(role):  # several leads: one email 3 version has no picture
+        return " ".join(render_step(make_lead(session, role=role, name=f"Lead {i}"), 3, templates=tpl,
+                                    settings=ST)["html_3"] for i in range(8))
+    coll, qa = docs("Head of Collections"), docs("VP Quality")
+    assert "compliance-checks.jpg" in coll and "qa-scorecard.jpg" not in coll
+    assert "qa-scorecard.jpg" in qa and "compliance-checks.jpg" not in qa
+
+
+def test_emails_1_and_2_have_no_picture_for_the_primary_inbox(session):
+    tpl = load_templates()
+    for role in ("Head of Collections", "CTO", "VP Quality", "Managing Director"):
+        lead = make_lead(session, name="Asha Rao", company="Acme", role=role)
+        for variants in ([], ["case_study"], ["product"], ["booking_slots"]):
+            lead.variant_flags = {"variants": variants}
+            for step in (1, 2):
+                doc = render_step(lead, step, templates=tpl, settings=ST)[f"html_{step}"]
+                assert doc.count("<img") == 1 and "ozoo-mark.png" in doc  # only the logo by the signature
+                assert "#7a00d9" in doc  # the purple button is still there
 
 
 def test_every_template_image_exists():

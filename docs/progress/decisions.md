@@ -201,3 +201,10 @@ Verdict: safe for local testing. Real sending is blocked until Instantly is veri
 | Decision | Why | Cost if wrong |
 |---|---|---|
 | Email 1 gets the same letter-like design as emails 2-4 (role's product screen, demo button, signature with the Ozoo mark); a plain-text copy still goes with it. Supersedes "email 1 stays plain" from task 22. | The user: a plain first email doesn't look good, and first impressions decide interest. | A first cold email with a picture is more likely to land in Promotions. Remedy without a deploy: duplicate the version without `[[image]]` in the Templates screen. |
+
+## Task 24: personal look for the Primary inbox (2026-11-18)
+
+| Decision | Why | Cost if wrong |
+|---|---|---|
+| Emails 1 and 2 keep the design (use-case box, purple button, signature with the Ozoo mark) but have no product picture; pictures only in email 3 (email 4 never had one). Chosen by the user ("personal look") after asking for every email in Primary. | A picture in a cold email from an unknown sender is the strongest content signal for Promotions we control; the first emails are the ones judged hardest. | Less visual first impression. A custom version with a picture can still be approved in the Templates screen. |
+| Told the user plainly: Primary on every platform can't be guaranteed by any sender; it depends on domain reputation, authentication, warm-up and each recipient's history. | Honesty about what code can do. | none |

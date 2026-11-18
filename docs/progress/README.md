@@ -40,8 +40,9 @@ Branch: `feat/outreach-agent-v1`. Plan: `docs/plan/implementation-plan-v1.md`. S
 | 21 | Designed follow-ups: emails 2-4 get an HTML version (Ozoo header, a clickable product screen per role, a "book a demo" button, footer with product links; plain text always sent too), images served at `/img/` from `static/email/`; new link tags voice / chat / trial; verified visits pick the next email's version; automatic answers see the email the lead replied to; Microsoft Bookings links keep their flags | done | [task-21](tasks/task-21-designed-emails.md) |
 | 22 | Primary-first polished emails (letter-like design: use-case box, one product screen, purple button, signature with the Ozoo mark; no banner, one text link) with role use cases from the KB; **Templates screen** in the web app: preview as any role on desktop/phone, write and edit with live preview, approve / switch off with the approver passcode, send an approved template by hand to up to 25 leads (in-thread); fixed: designed `html_N` now reaches the email tool on enrolment | done | [task-22](tasks/task-22-templates-screen.md) |
 | 23 | Email 1 designed too (the user's call): same letter design as 2-4 with the role's product screen, a use-case box in one version and the demo button; the editor allows a picture and button in email 1 | done | [task-23](tasks/task-23-designed-first-email.md) |
+| 24 | For the Primary inbox (the user's call, "personal look"): no product picture in emails 1-2 (design, use-case box, button and signature stay); pictures only in email 3; open-tracking image off in the live test | done | [task-24](tasks/task-24-primary-personal-look.md) |
 
-**Tests now:** 1838 passing (`.venv/bin/pytest -q`).
+**Tests now:** 1839 passing (`.venv/bin/pytest -q`).
 
 **What's next:** test locally with [docs/guides/local-testing.md](../guides/local-testing.md). Before any real sending: verify Instantly on a trial account (sent-event step, stop/block/find endpoints, bounce type, pause), Cal.com and Teams payloads, pick the AI provider, have marketing review `kb/ozoo_kb.md` and the WhatsApp template previews, add DB migrations. See [go-live-checklist.md](go-live-checklist.md).
 

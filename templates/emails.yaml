@@ -7,7 +7,8 @@
 #   lead, different across leads), so two people at the same bank don't get the same email.
 # - Every email must make sense on its own: most people see only one of the four.
 # - All four emails have a designed HTML version that still reads like a personal email (task 22;
-#   email 1 designed too since task 23, the user's call): [[image]] = one product screen (rich.image: a file in static/email, or
+#   email 1 designed too since task 23). Task 24, for the Primary inbox: emails 1-2 have NO picture
+#   (button, use-case box and signature only); pictures only in emails 3-4: [[image]] = one product screen (rich.image: a file in static/email, or
 #   `angle`), [[button]] = the purple booking button (in the plain text: "<button>: <link>"),
 #   "> " paragraph = a use-case callout, "- " lines = a list. Keep to ONE text link besides
 #   Unsubscribe: every extra link makes Gmail's Promotions tab more likely.
@@ -141,9 +142,6 @@ steps:
     standard:
       subject: ["{topic}", "Question about {topic}", "{first_name}, a thought on {topic}"]
       rich: &rich_first
-        image: angle
-        image_alt: "Ozoo.ai product screen (illustrative data)"
-        caption: "Ozoo.ai, illustrative data. Click the image to see how it works."
         button: "Book a 30-minute demo"
       body:
         - |-
@@ -152,8 +150,6 @@ steps:
           {hook}
 
           {value}
-
-          [[image]]
 
           {ask}
 
@@ -169,8 +165,6 @@ steps:
 
           > {usecase}
 
-          [[image]]
-
           {ask} A one-line reply is plenty.
 
           [[button]]
@@ -183,9 +177,6 @@ steps:
     case_study:
       subject: ["How one lender reviewed every call", "{topic}: one example"]
       rich:
-        image: angle
-        image_alt: "Ozoo.ai product screen (illustrative data)"
-        caption: "Ozoo.ai, illustrative data. Click the image to see the product."
         button: "Walk me through it"
       body: |-
         Hi {first_name},
@@ -193,8 +184,6 @@ steps:
         {hook}
 
         > {proof}
-
-        [[image]]
 
         {ask}
 
@@ -214,8 +203,6 @@ steps:
 
         > {usecase}
 
-        [[image]]
-
         {ask}
 
         [[button]]
@@ -227,16 +214,11 @@ steps:
     booking_slots:
       subject: ["A time to talk about {topic}?", "30 minutes on {topic}"]
       rich:
-        image: angle
-        image_alt: "Ozoo.ai product screen (illustrative data)"
-        caption: "Ozoo.ai, illustrative data."
         button: "Choose a 30-minute slot"
       body: |-
         Hi {first_name},
 
         {value}
-
-        [[image]]
 
         If a short conversation would help, there are open slots this week and next; choose whichever suits you.
 
@@ -249,9 +231,6 @@ steps:
     standard:
       subject: ["A real example on {topic}", "What one NBFC found in its calls", "{company} and {topic}"]
       rich: &rich_screen
-        image: angle
-        image_alt: "Ozoo.ai product screen (illustrative data)"
-        caption: "Ozoo.ai, illustrative data. Click the image to see the product."
         button: "Book a 30-minute demo"
       body:
         - |-
@@ -260,8 +239,6 @@ steps:
           {hook}
 
           > {usecase}
-
-          [[image]]
 
           {ask}
 
@@ -280,8 +257,6 @@ steps:
 
           {value}
 
-          [[image]]
-
           {ask} A one-line reply is plenty.
 
           [[button]]
@@ -295,8 +270,6 @@ steps:
           Hi {first_name},
 
           {proof}
-
-          [[image]]
 
           What that could look like at {company}:
           - every recorded call reviewed, not a 2 to 5% sample
@@ -314,10 +287,6 @@ steps:
     case_study:
       subject: ["The NBFC example, in more detail", "How the NBFC pilot was set up"]
       rich:
-        image: compliance-checks
-        image_link: case_study
-        image_alt: "Compliance checks in Ozoo.ai Post-Call Analytics (illustrative data)"
-        caption: "Compliance checks on every call, illustrative data. Click for the case study."
         button: "Walk me through it"
       body: |-
         Hi {first_name},
@@ -325,8 +294,6 @@ steps:
         Here is the example in a little more detail.
 
         > Result: an Indian NBFC handling about 1,500 recovery and service calls a day had every recorded call in scope analysed, against a 2 to 5% sample before. The first pass found 18 compliance flags the sample had missed, 300 long-pending cases and 150 upsell and retention signals.
-
-        [[image]]
 
         These are counts from the proof of concept, not audited business results. {ask}
 
@@ -346,8 +313,6 @@ steps:
 
         > {usecase}
 
-        [[image]]
-
         {ask}
 
         [[button]]
@@ -359,9 +324,6 @@ steps:
     booking_slots:
       subject: ["Open slots this week", "A time that suits you"]
       rich:
-        image: angle
-        image_alt: "Ozoo.ai product screen (illustrative data)"
-        caption: "Ozoo.ai, illustrative data."
         button: "Choose a 30-minute slot"
       body: |-
         Hi {first_name},

@@ -84,7 +84,7 @@ scripts/                 ← local_setup, run_local, start_demo
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
-.venv/bin/pytest -q              # expect: 1838 passed
+.venv/bin/pytest -q              # expect: 1839 passed
 scripts/local_setup              # creates .env.local with fake services + local.db
 scripts/run_local                # app on http://127.0.0.1:8000
 ```
