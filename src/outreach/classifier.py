@@ -22,7 +22,7 @@ from .actions import (
 from .intake import FREE_MAIL_DOMAINS
 from .chatbot import kb_prices, load_kb
 from .email_answer import answer_question
-from .sequencer import has_reply
+from .sequencer import has_reply, render_step
 from .llm import LLMClient, LLMError, LLMTruncated, make_llm
 from .models import Event, Lead
 from .states import ALLOWED, LeadState
@@ -436,6 +436,17 @@ def actions_for_class(rc: ReplyClass, lead: Lead, event: Event, now: datetime,
 
 # ------------------------------------------------------------------ Deps.classify
 
+def _last_email(lead: Lead, settings: Any) -> str:
+    """The text of the sequence email the lead is answering (links removed), for the answer's
+    context. Empty if it can't be rendered."""
+    step = lead.step_sent or 1
+    try:
+        body = render_step(lead, min(max(step, 1), 4), settings=settings)[f"body_{min(max(step, 1), 4)}"]
+    except Exception:  # noqa: BLE001 - context is optional
+        return ""
+    return re.sub(r"https?://\S+", "", body)
+
+
 def make_classifier(settings: Any, llm: Optional[LLMClient] = None
                     ) -> Callable[[Session, Lead, Event, datetime], List[Action]]:
     """Build Deps.classify. Without `llm`, the configured provider (make_llm(settings))."""
@@ -456,7 +467,8 @@ def make_classifier(settings: Any, llm: Optional[LLMClient] = None
         if (rc.label == "question" and event.channel == "email" and lead.active_channel == "email"
                 and (event.data or {}).get("matched_by") != "domain"):
             answer = answer_question(strip_quoted(str(data.get("text") or "")), kb, llm, model=chat_model,
-                                     today=now.date(), lead_id=lead.id, kb_price_set=kb_price_set)
+                                     today=now.date(), lead_id=lead.id, kb_price_set=kb_price_set,
+                                     context=_last_email(lead, settings))
         return actions_for_class(rc, lead, event, now, answer=answer)
 
     return classify

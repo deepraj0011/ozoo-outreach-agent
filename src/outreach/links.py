@@ -16,7 +16,9 @@ logger = logging.getLogger(__name__)
 # "trap": the honeypot link hidden in our HTML emails. No person can see it, so whatever visits
 # it is a security scanner (and its other clicks on that email are scanner clicks too).
 TRAP_TAG = "trap"
-VALID_TAGS = frozenset({"booking", "pricing", "case_study", "product", "homepage", "unsubscribe", TRAP_TAG})
+# voice / chat = the two other product pages, trial = the free trial (AWS Marketplace), task 21
+VALID_TAGS = frozenset({"booking", "pricing", "case_study", "product", "voice", "chat", "trial", "homepage",
+                        "unsubscribe", TRAP_TAG})
 VALID_CHANNELS = frozenset({"email", "whatsapp"})
 SIG_LEN = 16
 
@@ -165,7 +167,7 @@ def make_unsubscribe_url(lead_id: int, step: int, *, settings: Optional[Settings
 # decodes as a visit token. It rides on the website URL (?oz_v=...) after a tracked click; the
 # site's visits.js snippet sends it back with the reading stats (outreach.visits).
 VISIT_PREFIX = "V."
-VISIT_TAGS = frozenset({"pricing", "case_study", "product", "homepage"})  # our own site's pages
+VISIT_TAGS = frozenset({"pricing", "case_study", "product", "voice", "chat", "homepage"})  # our own site's pages
 VISIT_PARAM = "oz_v"
 VISIT_TOKEN_MAX = 160
 VISIT_TOKEN_TTL = timedelta(days=2)  # the beacon comes minutes after the click; a leaked token soon dies

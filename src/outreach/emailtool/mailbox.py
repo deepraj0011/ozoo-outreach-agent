@@ -289,7 +289,8 @@ class MailboxEmailTool(MailpitEmailTool):
     # ------------------------------------------------------------------ SMTP
     def _smtp_send(self, to: str, subject: str, body: str, in_reply_to: Optional[str] = None,
                    pixel_url: Optional[str] = None, unsubscribe_url: Optional[str] = None,
-                   trap_url: Optional[str] = None, mailbox: Optional[str] = None) -> str:
+                   trap_url: Optional[str] = None, mailbox: Optional[str] = None,
+                   html_body: Optional[str] = None) -> str:
         box = self._boxes.get((mailbox or "").lower()) or self._boxes[self._order[0]]
         msg = EmailMessage()
         msg["From"] = formataddr((box.from_name, box.address))
@@ -302,7 +303,7 @@ class MailboxEmailTool(MailpitEmailTool):
             msg["In-Reply-To"] = in_reply_to
             msg["References"] = in_reply_to
         set_unsubscribe_headers(msg, unsubscribe_url)
-        set_body(msg, body, pixel_url, trap_url)
+        set_body(msg, body, pixel_url, trap_url, html_body)
         if self._custom_smtp or box.smtp_port == 465:
             smtp = self._smtp_factory(box.smtp_host, box.smtp_port, timeout=SMTP_TIMEOUT_S)
         else:  # 587 / 25: plain connect, then STARTTLS before the password goes over the wire

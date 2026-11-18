@@ -71,9 +71,13 @@ class CliError(Exception):
 # ====================================================================== setup
 
 def _local_values(db: Path, clock: Optional[Path]) -> Dict[str, str]:
-    targets = {"homepage": "https://example.com/", "booking": "https://example.com/book",
-               "pricing": "https://example.com/pricing", "case_study": "https://example.com/case-study",
-               "product": "https://example.com/product"}
+    targets = {"homepage": "https://ozoo.ai/", "booking": "https://ozoo.ai/contact/",
+               "pricing": "https://ozoo.ai/pricing/",
+               "case_study": "https://ozoo.ai/case-studies/nbfc-collections-28cr-roi/",
+               "product": "https://ozoo.ai/products/post-call-analytics/",
+               "voice": "https://ozoo.ai/products/voice-ai-agents/",
+               "chat": "https://ozoo.ai/products/conversation-ai-agents/",
+               "trial": "https://aws.amazon.com/marketplace/pp/prodview-hnvh2cpk4epr6"}
     return {
         "APP_ENV": "local",
         "EMAIL_MODE": "fake", "WHATSAPP_MODE": "fake", "LLM_MODE": "fake", "ALERTS_MODE": "fake",

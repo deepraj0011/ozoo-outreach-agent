@@ -47,25 +47,35 @@ question. Leave text out.
 <kb>
 {kb}
 </kb>
-
+{context}
 Today is {today}."""
 
+CONTEXT = """
+The prospect is replying to this email we sent them (for context only: answer their question from \
+the <kb>, and keep to the topic of this email where it fits):
+<our_email>
+{email}
+</our_email>
+"""
+MAX_CONTEXT = 3000
 
-def build_system(kb: str, today: date) -> str:
-    return SYSTEM_PROMPT.format(guardrails="\n".join(f"- {g}" for g in GUARDRAILS), kb=kb,
+
+def build_system(kb: str, today: date, context: str = "") -> str:
+    ctx = CONTEXT.format(email=context.strip()[:MAX_CONTEXT]) if context.strip() else ""
+    return SYSTEM_PROMPT.format(guardrails="\n".join(f"- {g}" for g in GUARDRAILS), kb=kb, context=ctx,
                                 today=today.isoformat())
 
 
 def answer_question(question: str, kb: str, llm: LLMClient, *, model: str, today: date,
                     lead_id: Optional[int] = None,
-                    kb_price_set: Optional[FrozenSet[Price]] = None) -> Optional[str]:
+                    kb_price_set: Optional[FrozenSet[Price]] = None, context: str = "") -> Optional[str]:
     """The answer text, or None when a person should answer. Never raises."""
     text = (question or "").strip()[:MAX_QUESTION]
     if not text:
         return None
     try:
         raw = llm.structured(
-            system=build_system(kb, today),
+            system=build_system(kb, today, context),
             messages=[{"role": "user", "content": f"The prospect's email:\n{text}"}],
             tool_name=BOT_TOOL_NAME, tool_description=BOT_TOOL_DESCRIPTION, schema=BOT_SCHEMA,
             max_tokens=MAX_TOKENS, model=model,

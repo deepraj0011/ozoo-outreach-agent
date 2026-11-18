@@ -17,7 +17,7 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Callable, Dict, Iterator, List, Optional, Tuple
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, quote, unquote, urlencode, urlsplit, urlunsplit
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
@@ -53,6 +53,7 @@ from .outreach import (
     FAILED_SUFFIX, INTRO_ATTEMPT, REMINDER_ATTEMPT, TRANSIENT_SUFFIX, WA_RETRY_AFTER, Outreach,
 )
 from .states import ALLOWED, TERMINAL_VALUES, LeadState
+from .richmail import IMAGE_RE, STATIC_DIR
 from .visits import register_visit_routes
 from .unsubscribe_page import CONFIRM_HTML, DONE_HTML, ERROR_HTML, HEADERS as PAGE_HEADERS, NOT_FOUND_HTML
 from .verify import make_verifier
@@ -275,9 +276,11 @@ def with_lead_token(target: str, lead_id: int, settings: Settings) -> str:
     """The configured booking URL plus metadata[lead]=<signed lead token>. Only the query changes
     (scheme / host / path come from config), so this can never become an open redirect."""
     parts = urlsplit(target)
-    query = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if k != BOOKING_LEAD_PARAM]
-    query.append((BOOKING_LEAD_PARAM, lead_token(lead_id, settings=settings)))
-    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+    # keep the configured query byte for byte (Microsoft Bookings uses bare flags like ?anonymous&ep=…)
+    ours = (BOOKING_LEAD_PARAM, quote(BOOKING_LEAD_PARAM, safe=""))
+    kept = [p for p in parts.query.split("&") if p and unquote(p.split("=", 1)[0]) not in ours]
+    kept.append(urlencode([(BOOKING_LEAD_PARAM, lead_token(lead_id, settings=settings))]))
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, "&".join(kept), parts.fragment))
 
 
 def _client_ip(request: Request, trust_proxy: bool = False) -> Optional[str]:
@@ -582,6 +585,16 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
         return Response(status_code=204, headers=NO_STORE)
 
     # ------------------------------------------------------------ real visits (site snippet beacon)
+    @app.get("/img/{name}")
+    def email_image(name: str) -> Response:
+        """Images for the designed emails (static/email, task 21). Public and cacheable; only file
+        names matching IMAGE_RE are served, so no path can leave that folder."""
+        if not IMAGE_RE.match(name) or not (STATIC_DIR / name).is_file():
+            return PlainTextResponse("not found", status_code=404)
+        media = "image/png" if name.endswith(".png") else "image/jpeg"
+        return Response((STATIC_DIR / name).read_bytes(), media_type=media,
+                        headers={"Cache-Control": "public, max-age=604800", "X-Content-Type-Options": "nosniff"})
+
     register_visit_routes(app, settings=settings, clock=clock, session_factory=session_factory, deps=deps,
                           scanners=scanners, client_ip=_client_ip)
 

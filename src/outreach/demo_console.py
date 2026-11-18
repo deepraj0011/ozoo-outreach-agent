@@ -215,7 +215,7 @@ def build_argv(body: Dict[str, Any]) -> List[str]:
         return [_SIM, "email-bounce", "--lead", need_lead(), "--hard"]
     if action == "click":
         tag = body.get("tag")
-        if tag not in ("pricing", "case_study", "product", "homepage", "booking"):
+        if tag not in ("pricing", "case_study", "product", "voice", "chat", "trial", "homepage", "booking"):
             raise ValueError("bad link")
         return [_SIM, "click", "--lead", need_lead(), "--tag", tag]
     if action == "scanner_click":

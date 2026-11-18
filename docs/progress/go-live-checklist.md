@@ -88,3 +88,9 @@ Before the first batch of real leads:
 - [ ] **Email copy (marketing):** each follow-up must make sense on its own (most leads see only one of the four: no "as I said in my last email"), end with a question that is easy to answer in one line, and match the Ozoo positioning (call QA, voice and chat agents for lenders). Today's `templates/emails.yaml` still says "automating outreach".
 - [ ] **Access logs:** the production server and any proxy in front must not log request paths of `/r/`, `/o/`, `/u/` and `/v/` (they carry tokens). Locally `run_local` already passes `--no-access-log`.
 - [ ] **Measure what counts:** report reply rate, verified visits and meetings booked per 100 leads. Do not report open rate.
+
+Added 2026-11-18 (task 21):
+
+- [ ] **Booking link and its webhook:** if `LINK_TARGETS.booking` is the Microsoft Bookings page (today's "book a demo" calendar on ozoo.ai), bookings there are **not** detected by the agent (no webhook): the lead keeps getting follow-ups until sales marks it. Either use Cal.com for the scoping call (the `/webhooks/cal` flow) or add a Microsoft Graph / Power Automate hook before volume.
+- [ ] **Designed follow-ups:** send emails 2-4 to the test inboxes and check them in Gmail (web + phone), Outlook (web + desktop, images blocked by default) and Apple Mail: header, product image and button show, and the alt text reads well with images off. Check that they still reach Primary on the warmed-up domain; if not, remove the `rich:` block of step 2 first.
+- [ ] **Image rights:** the screens in `static/email/` are ozoo.ai's own product screenshots with illustrative data; marketing confirms they may go in emails.

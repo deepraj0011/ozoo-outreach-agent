@@ -12,7 +12,10 @@ SCORE_POINTS = {
     "homepage": 2,
     "case_study": 5,
     "product": 5,
+    "voice": 5,
+    "chat": 5,
     "pricing": 10,
+    "trial": 10,
     "booking": 10,
     "unsubscribe": 0,
 }
@@ -23,6 +26,8 @@ VISIT_POINTS = {
     "homepage": 3,
     "case_study": 5,
     "product": 5,
+    "voice": 5,
+    "chat": 5,
     "pricing": 10,
 }
 DECAY_AFTER = timedelta(days=30)

@@ -16,6 +16,7 @@ from .actions import Action, Alert, SetState, ToolStop
 from .config import Settings, get_settings
 from .links import make_link, make_open_pixel, make_trap_url, make_unsubscribe_url
 from .models import Lead
+from .richmail import MARKERS, image_file, rich_parts, validate_rich
 from .score import band
 from .states import LeadState
 
@@ -29,13 +30,16 @@ STEP_VARIANTS = ("standard", "case_study", "product", "booking_slots")
 ANGLE_FIELDS = ("topic", "hook", "value", "proof", "ask")
 ALLOWED_PLACEHOLDERS = frozenset({
     "first_name", "company", "booking_link", "unsubscribe_link", "pricing_link",
-    "case_study_link", "product_link", "homepage_link", "signature", *ANGLE_FIELDS,
+    "case_study_link", "product_link", "voice_link", "chat_link", "trial_link", "homepage_link", "signature",
+    "angle_link",  # the product page that fits the lead's angle (angles.<name>.page)
+    *ANGLE_FIELDS,
     "answer", "follow_up_when",  # replies only (question_answer, not_now_ack)
 })
 # Replies with a booking link (and so an unsubscribe link); the courtesy replies carry neither.
 REPLY_KEYS = ("booking_link", "booking_slots", "reschedule", "question_answer", "question_ack")
 COURTESY_REPLY_KEYS = ("not_now_ack", "not_interested_ack", "referral_thanks", "who_is_right")
 DEFAULT_ANGLE = "general"
+ANGLE_PAGES = ("product", "voice", "chat", "pricing", "case_study", "homepage")
 MAX_VALUE_LEN = 80
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_TEMPLATES = REPO_ROOT / "templates" / "emails.yaml"
@@ -90,6 +94,10 @@ def _validate_angles(data: Dict[str, Any]) -> None:
     for name, angle in angles.items():
         if not isinstance(angle, dict):
             raise ValueError(f"angle {name} must be a mapping")
+        if angle.get("page", "product") not in ANGLE_PAGES:
+            raise ValueError(f"angle {name}: page must be one of {', '.join(ANGLE_PAGES)}")
+        if "image" in angle and image_file(str(angle["image"])) is None:
+            raise ValueError(f"angle {name}: no static/email/{angle['image']} image")
         match = angle.get("match", [])
         if not isinstance(match, list) or not all(isinstance(m, str) and m.strip() for m in match):
             raise ValueError(f"angle {name}: match must be a list of words")
@@ -113,6 +121,11 @@ def _validate(data: Any) -> Dict[str, Any]:
                 raise ValueError(f"missing variant {v} in step {step}")
             _check_any(f"steps.{step}.{v}.subject", block[v].get("subject"), False)
             _check_any(f"steps.{step}.{v}.body", block[v].get("body"), True)
+            rich = block[v].get("rich")
+            if rich is not None:
+                validate_rich(f"steps.{step}.{v}", rich)
+            elif any(m in t for t in _alternatives("", block[v].get("body")) for m in MARKERS):
+                raise ValueError(f"steps.{step}.{v}: [[image]] / [[button]] need a rich: block")
             used = {f for t in _alternatives("", block[v].get("body")) + _alternatives("", block[v].get("subject"))
                     for f in _fields(t)}
             if used & set(ANGLE_FIELDS) and "angles" not in data:
@@ -173,6 +186,9 @@ def _values(lead: Lead, step: int, settings: Settings,
         "pricing_link": link("pricing"),
         "case_study_link": link("case_study"),
         "product_link": link("product"),
+        "voice_link": link("voice"),
+        "chat_link": link("chat"),
+        "trial_link": link("trial"),
         "homepage_link": link("homepage"),
         "signature": getattr(settings, "email_signature", "") or "The Ozoo.ai team",
         "answer": "",
@@ -182,6 +198,7 @@ def _values(lead: Lead, step: int, settings: Settings,
     if angles:
         name_ = angle_for(lead, templates or {})
         angle = angles[name_]
+        vals["angle_link"] = vals[f"{angle.get('page', 'product')}_link"]
         for f in ANGLE_FIELDS:
             vals[f] = _pick(angle[f], lead, step, name_, f).format_map(vals)
     return vals
@@ -204,7 +221,16 @@ def render_step(
     subject = _clean(_pick(variant["subject"], lead, step, v, "subject").format_map(vals))  # one line
     subject = subject[:1].upper() + subject[1:]  # "{topic}" subjects start lower-case
     body = _pick(variant["body"], lead, step, v, "body").format_map(vals)
-    return {f"subject_{step}": subject, f"body_{step}": body}
+    rich = dict(variant["rich"]) if variant.get("rich") else None
+    if rich and rich.get("image") == "angle":  # the screen that fits the lead's angle
+        angle = (t.get("angles") or {}).get(angle_for(lead, t), {})
+        rich["image"] = angle.get("image", "call-analysis")
+        rich.setdefault("image_link", angle.get("page", "product"))
+    parts = rich_parts(body, rich, vals, s.link_base_url, preheader=vals.get("hook", ""))
+    out = {f"subject_{step}": subject, f"body_{step}": parts["text"]}
+    if parts["html"]:
+        out[f"html_{step}"] = parts["html"]  # the designed version (task 21); the text always goes too
+    return out
 
 
 def has_reply(key: str, templates: Optional[Dict[str, Any]] = None) -> bool:

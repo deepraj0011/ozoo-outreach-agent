@@ -28,6 +28,9 @@ LINK_TARGETS = {
     "pricing": "https://ozoo.ai/pricing",
     "case_study": "https://ozoo.ai/case",
     "product": "https://ozoo.ai/product",
+    "voice": "https://ozoo.ai/voice",
+    "chat": "https://ozoo.ai/chat",
+    "trial": "https://aws.example/trial",
 }
 
 

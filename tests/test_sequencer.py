@@ -39,12 +39,15 @@ def _all_text(tpl):
     for step, blocks in tpl["steps"].items():
         for v, d in blocks.items():
             for k, t in d.items():
-                yield from _alts(t)
+                if k == "rich":  # the designed version's captions and button text
+                    yield from (x for x in t.values() if isinstance(x, str))
+                else:
+                    yield from _alts(t)
     for d in tpl["replies"].values():
         yield from _alts(d["body"])
     for angle in (tpl.get("angles") or {}).values():
         for k, t in angle.items():
-            if k != "match":
+            if k not in ("match", "page", "image"):
                 yield from _alts(t)
 
 
@@ -76,7 +79,7 @@ def test_no_spying_phrases(tpl):
 def test_render_uses_tracked_links(session, st, tpl):
     lead = make_lead(session, name="Asha Rao", company="Acme")
     out = render_step(lead, 2, templates=tpl, settings=st)
-    assert set(out) == {"subject_2", "body_2"}
+    assert set(out) == {"subject_2", "body_2", "html_2"}  # email 2 has a designed version (task 21)
     body = out["body_2"]
     assert "{" not in body
     tokens = [w.rsplit("/r/", 1)[1] for w in body.split() if "/r/" in w]

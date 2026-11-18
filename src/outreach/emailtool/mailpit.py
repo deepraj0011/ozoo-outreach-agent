@@ -27,6 +27,7 @@ from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional
 
 from .base import NormalizedEvent
 from .instantly import parse_instantly_webhook
+from ..richmail import with_tracking
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +89,12 @@ def body_html(body: str, pixel_url: Optional[str] = None, trap_url: Optional[str
         pos = m.start() + len(raw)
     out.append(html.escape(body[pos:]))
     text = "".join(out).replace("\r\n", "\n").replace("\n", "<br>\n")
+    return (f'<!doctype html><html><body><div style="font-family:Arial,sans-serif;font-size:14px;'
+            f'line-height:1.5">{text}</div>{tracking_extras(pixel_url, trap_url)}</body></html>')
+
+
+def tracking_extras(pixel_url: Optional[str], trap_url: Optional[str]) -> str:
+    """Our 1x1 open-tracking image and / or the hidden honeypot link (ours, signed)."""
     extra = ""
     if trap_url:  # invisible to a reader; security scanners follow every href
         extra += (f'<a href="{html.escape(trap_url, quote=True)}" style="display:none" aria-hidden="true" '
@@ -95,8 +102,7 @@ def body_html(body: str, pixel_url: Optional[str] = None, trap_url: Optional[str
     if pixel_url:
         extra += (f'<img src="{html.escape(pixel_url, quote=True)}" width="1" height="1" alt="" '
                   f'style="border:0;width:1px;height:1px">')
-    return (f'<!doctype html><html><body><div style="font-family:Arial,sans-serif;font-size:14px;'
-            f'line-height:1.5">{text}</div>{extra}</body></html>')
+    return extra
 
 
 def html_with_pixel(body: str, pixel_url: str) -> str:
@@ -119,10 +125,14 @@ def set_unsubscribe_headers(msg: EmailMessage, unsubscribe_url: Optional[str]) -
         msg["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
 
 
-def set_body(msg: EmailMessage, body: str, pixel_url: Optional[str], trap_url: Optional[str] = None) -> None:
-    """Plain text always; an HTML alternative when there is a pixel or a honeypot link to carry."""
+def set_body(msg: EmailMessage, body: str, pixel_url: Optional[str], trap_url: Optional[str] = None,
+             html_body: Optional[str] = None) -> None:
+    """Plain text always; an HTML alternative: the designed one (task 21), else a simple one when
+    there is a pixel or a honeypot link to carry."""
     msg.set_content(body)
-    if pixel_url or trap_url:
+    if html_body:
+        msg.add_alternative(with_tracking(html_body, tracking_extras(pixel_url, trap_url)), subtype="html")
+    elif pixel_url or trap_url:
         msg.add_alternative(body_html(body, pixel_url, trap_url), subtype="html")
 
 
@@ -305,7 +315,8 @@ class MailpitEmailTool:
     # ------------------------------------------------------------------ sending (used by the sender)
     def _smtp_send(self, to: str, subject: str, body: str, in_reply_to: Optional[str] = None,
                    pixel_url: Optional[str] = None, unsubscribe_url: Optional[str] = None,
-                   trap_url: Optional[str] = None, mailbox: Optional[str] = None) -> str:
+                   trap_url: Optional[str] = None, mailbox: Optional[str] = None,
+                   html_body: Optional[str] = None) -> str:
         msg = EmailMessage()
         msg["From"] = FROM_ADDR
         msg["To"] = to
@@ -317,7 +328,7 @@ class MailpitEmailTool:
             msg["In-Reply-To"] = in_reply_to
             msg["References"] = in_reply_to
         set_unsubscribe_headers(msg, unsubscribe_url)
-        set_body(msg, body, pixel_url, trap_url)
+        set_body(msg, body, pixel_url, trap_url, html_body)
         smtp = self._smtp_factory(self.smtp_host, self.smtp_port)
         try:
             smtp.send_message(msg)
@@ -383,7 +394,8 @@ class MailpitEmailTool:
                                          pixel_url=variables.get(f"open_pixel_{step}") or None,
                                          unsubscribe_url=variables.get(f"unsubscribe_url_{step}") or None,
                                          trap_url=variables.get(f"trap_url_{step}") or None,
-                                         mailbox=mailbox or None)
+                                         mailbox=mailbox or None,
+                                         html_body=variables.get(f"html_{step}") or None)
                 status = "done" if step >= LAST_STEP else "active"
                 db.execute("UPDATE mp_lead SET last_step = ?, last_subject = ?, last_message_id = ?, status = ?, "
                            "mailbox = ? WHERE tool_lead_id = ?", (step, subject, msg_id, status, mailbox or None, tid))

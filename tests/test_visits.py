@@ -15,7 +15,7 @@ from outreach.botfilter import Scanners, classify_event
 from outreach.links import (VISIT_PARAM, make_link, parse_lead_token, parse_open_token, parse_token,
                             parse_visit_token, visit_token, with_visit_token)
 from outreach.models import Event
-from outreach.rules import AddScore, Alert, SetFlag, decide
+from outreach.rules import AddScore, Alert, SetFlag, SetVariant, decide
 from outreach.states import LeadState as S
 from outreach.visits import VISIT_JS, VisitStats, is_engaged, parse_beacon
 from tests.conftest import NOW
@@ -115,8 +115,13 @@ def test_engaged_pricing_visit_is_a_verified_hot_lead_even_while_clicks_need_a_c
 
 
 def test_visit_scores_once_per_page():
-    lead = lead_snap(score=5, flags={"visits_scored": ["case_study"]})
+    lead = lead_snap(score=5, flags={"visits_scored": ["case_study"], "variants": ["case_study"]})
     assert decide(lead, visit("case_study"), NOW) == [SetFlag("verified_visit", True)]
+
+
+def test_a_verified_visit_picks_the_next_emails_version():
+    out = decide(lead_snap(score=0), visit("voice"), NOW)
+    assert SetVariant("product") in out
 
 
 def test_visit_crossing_hot_alerts_once():

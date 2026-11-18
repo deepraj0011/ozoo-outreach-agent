@@ -126,7 +126,11 @@ def _send(lead: LeadSnapshot, key: str) -> List[Action]:
 
 
 def _variant(lead: LeadSnapshot, flag: str) -> List[Action]:
-    return [SetVariant(flag)] if lead.active_channel == "email" else []
+    """Switch the lead's next emails to version `flag` (once: no repeat refresh of the tool lead)."""
+    have = lead.flags.get("variants")
+    if lead.active_channel != "email" or (isinstance(have, (list, tuple)) and flag in have):
+        return []
+    return [SetVariant(flag)]
 
 
 def _wa_code(event: EventSnapshot) -> Optional[int]:
@@ -344,21 +348,27 @@ def _offer_slots(lead: LeadSnapshot, event: EventSnapshot) -> List[Action]:
 def _on_click(lead: LeadSnapshot, event: EventSnapshot) -> List[Action]:
     tag = event.tag
     pts, counted = _click_points(lead, tag)
-    if tag == "pricing":
+    if tag in ("pricing", "trial"):  # buying intent: the price, or the free trial
         out = _score(lead, pts, force_hot_alert=True, from_click=True) + counted
         out += _variant(lead, "booking_slots")
         if _unverified_clicks(lead):
             return out  # the slots go out once a person is seen reading the pricing page (_on_visit)
         return out + _offer_slots(lead, event)
     out = _score(lead, pts, from_click=True) + counted
-    if tag in ("case_study", "product"):
-        out += _variant(lead, tag)
+    if tag in PAGE_VARIANT:
+        out += _variant(lead, PAGE_VARIANT[tag])
     return out
+
+
+# The page a lead looked at decides the next email's version (sequencer.VARIANT_PRIORITY)
+PAGE_VARIANT = {"case_study": "case_study", "product": "product", "voice": "product", "chat": "product",
+                "pricing": "booking_slots", "trial": "booking_slots"}
 
 
 VISITS_SCORED = "visits_scored"  # page tags whose engaged visit already scored (once per tag per lead)
 VERIFIED_VISIT = "verified_visit"
-PAGE_NAMES = {"pricing": "pricing", "case_study": "case study", "product": "product", "homepage": "home"}
+PAGE_NAMES = {"pricing": "pricing", "case_study": "case study", "product": "Post-Call Analytics",
+              "voice": "Voice AI agents", "chat": "Conversation AI agents", "homepage": "home"}
 
 
 def _on_visit(lead: LeadSnapshot, event: EventSnapshot) -> List[Action]:
@@ -378,6 +388,8 @@ def _on_visit(lead: LeadSnapshot, event: EventSnapshot) -> List[Action]:
         how = f" ({secs}s of active reading)" if isinstance(secs, int) else ""
         out += [_alert(lead, "hot_lead", f"verified visit: read the {PAGE_NAMES.get(tag, tag)} page{how}"),
                 SetFlag("hot_alerted", True)]
+    if tag in PAGE_VARIANT:  # what they read decides the next email's version
+        out += _variant(lead, PAGE_VARIANT[tag])
     held = lead.flags.get(BOOKING_NUDGE_HELD)
     if (tag == "pricing" or held) and lead.state in BOOKING_NUDGE_STATES:
         out += _offer_slots(lead, event)  # once per 7 days: no repeat if the pricing click already sent it
