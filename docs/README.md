@@ -8,6 +8,7 @@ Start with **onboarding**, then pick the guide for what you want to do.
 |---|---|
 | [What is this repo?](onboarding/01-what-is-this-repo.md) | What the agent does, the technology, the folder map, running it in 5 minutes, where a reviewer should look first |
 | [How it works](onboarding/02-how-it-works.md) | A lead's journey: intake, email, WhatsApp, AI reply reading, booking, life stages, how the code decides |
+| [Does tracking work?](onboarding/03-tracking-explained.md) | Opens, clicks, unsubscribes and bots (Gmail, Apple, Outlook/Defender, bank gateways): what can be trusted, how bots are filtered, where it can still break, how to check it yourself |
 
 ## 2. Guides (how to do things)
 

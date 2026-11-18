@@ -30,7 +30,7 @@ simulate buttons to act as a lead (reply, click, tap a WhatsApp button, book).
 
 Start at **[docs/README.md](docs/README.md)**. The short path:
 
-1. [What is this repo?](docs/onboarding/01-what-is-this-repo.md) and [How it works](docs/onboarding/02-how-it-works.md)
+1. [What is this repo?](docs/onboarding/01-what-is-this-repo.md), [How it works](docs/onboarding/02-how-it-works.md) and [Does tracking work?](docs/onboarding/03-tracking-explained.md)
 2. [Local testing guide](docs/guides/local-testing.md)
 3. [Status board](docs/progress/README.md) and [go-live checklist](docs/progress/go-live-checklist.md)
 
