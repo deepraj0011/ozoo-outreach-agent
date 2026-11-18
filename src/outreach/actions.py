@@ -192,6 +192,7 @@ class BotReply:
 @dataclass(frozen=True)
 class SendReply:
     template: str
+    values: Tuple[Tuple[str, str], ...] = ()  # answer / follow_up_when for that reply
 
 
 @dataclass(frozen=True)
@@ -273,7 +274,8 @@ class OutreachPort(Protocol):
 
     def refresh_next_step(self, session: Session, lead: Lead) -> Any: ...
 
-    def send_email_text(self, session: Session, lead: Lead, key: str, now: datetime) -> Any: ...
+    def send_email_text(self, session: Session, lead: Lead, key: str, now: datetime,
+                        values: Optional[Dict[str, str]] = None) -> Any: ...
 
 
 class Alerter(Protocol):
@@ -486,8 +488,12 @@ class _Run:
         elif isinstance(a, WaSendTemplate):
             self.external("wa.send_template", deps.wa.send_template, s, lead, a.name, self.now)
         elif isinstance(a, SendReply):
-            sent = self.external("outreach.send_email_text", deps.outreach.send_email_text, s, lead, a.template,
-                                 self.now)
+            if a.values:
+                sent = self.external("outreach.send_email_text", deps.outreach.send_email_text, s, lead,
+                                     a.template, self.now, dict(a.values))
+            else:
+                sent = self.external("outreach.send_email_text", deps.outreach.send_email_text, s, lead,
+                                     a.template, self.now)
             if sent is not _FAILED and sent is not False:
                 self.sent_text(a.template)
         elif isinstance(a, SwitchChannel):

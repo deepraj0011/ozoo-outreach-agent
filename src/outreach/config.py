@@ -203,6 +203,7 @@ class Settings(BaseSettings):
     # study, product, homepage) carry ?oz_v=<signed token>; the site's /v.js snippet reports an
     # engaged visit (15 s of active reading plus scrolling, or a second page). Engaged visits score
     # and count as a confirmed human signal. Needs the snippet on the website.
+    email_signature: str = Field("The Ozoo.ai team", max_length=200)  # {signature} in email copy
     visit_tracking: bool = True
     # Our own sender (mailbox / gmail mode): send only inside this window, follow-ups rotating
     # afternoon / morning (outreach.sendwindow). Unset = Mon-Fri 09:30-17:30 in production, off

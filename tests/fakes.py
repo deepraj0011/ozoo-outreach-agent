@@ -107,8 +107,10 @@ class FakeOutreach(Recorder):
     def refresh_next_step(self, session, lead) -> None:
         self._rec("refresh_next_step", lead.id)
 
-    def send_email_text(self, session, lead, key: str, now: datetime) -> None:
+    def send_email_text(self, session, lead, key: str, now: datetime, values=None) -> None:
         self._rec("send_email_text", lead.id, key)
+        if values:
+            self.reply_values = getattr(self, "reply_values", []) + [(key, dict(values))]
 
 
 class FakeAlerter(Recorder):

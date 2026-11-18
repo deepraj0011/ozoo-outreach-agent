@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Dict, Optional
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -289,7 +289,8 @@ class Outreach:
     def refresh_next_step(self, session: Session, lead: Lead) -> None:
         refresh_next_step(session, lead, self._deps().tool, settings=self.settings)
 
-    def send_email_text(self, session: Session, lead: Lead, key: str, now: datetime) -> bool:
+    def send_email_text(self, session: Session, lead: Lead, key: str, now: datetime,
+                        values: Optional[Dict[str, str]] = None) -> bool:
         """Reply `key` (booking_link / booking_slots / reschedule) in the lead's email thread. If the
         tool cannot (no thread yet, or reply-in-thread unsupported), ask sales to email personally."""
         deps = self._deps()
@@ -299,7 +300,7 @@ class Outreach:
             return False
         sent = False
         if lead.tool_lead_id:
-            body = render_reply(lead, key, settings=self.settings)
+            body = render_reply(lead, key, settings=self.settings, values=values)
             sent = bool(deps.tool.reply(lead.tool_lead_id, body))
         if sent:
             logger.info("lead %s: email reply %s sent", lead.id, key)

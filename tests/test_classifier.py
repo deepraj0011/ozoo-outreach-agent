@@ -224,9 +224,16 @@ def test_state_not_reemitted_when_already_qualifying(session):
 def test_question_email_alert_with_draft(session):
     lead = email_lead(session)
     a = acts(session, lead, rc("question", draft_answer="Ozoo integrates with HubSpot."))
-    assert a == [Alert("question")]
-    assert a[0].text == f"lead {lead.id} asked a question. Draft: Ozoo integrates with HubSpot."
-    assert acts(session, lead, rc("question"))[0].text.endswith("Draft: -")
+    assert a == [SendReply("question_ack"), Alert("question")]  # task 20: the lead hears back at once
+    assert a[1].text == f"lead {lead.id} asked a question. Draft: Ozoo integrates with HubSpot."
+    assert acts(session, lead, rc("question"))[1].text.endswith("Draft: -")
+
+
+def test_question_answered_from_the_kb_is_sent_and_sales_still_told(session):
+    lead = email_lead(session)
+    a = actions_for_class(rc("question"), lead, reply_event(session, lead), NOW, answer="Yes, Hindi too.")
+    assert a == [SendReply("question_answer", (("answer", "Yes, Hindi too."),)), Alert("question")]
+    assert "answered automatically" in a[1].text
 
 
 def test_question_whatsapp_bot_reply(session):
@@ -236,17 +243,25 @@ def test_question_whatsapp_bot_reply(session):
 def test_not_now_nurture_with_later_date(session):
     lead = email_lead(session)
     a = acts(session, lead, rc("not_now", later_date=date(2027, 2, 1)))
-    assert a == [SetState(S.NURTURE, "not_now"),
+    assert a == [SendReply("not_now_ack", (("follow_up_when", "in February 2027"),)), SetState(S.NURTURE, "not_now"),
                  SetNurtureUntil(datetime(2027, 2, 1, 9, 0, tzinfo=timezone.utc))]
 
 
 def test_not_now_default_90_days(session):
     a = acts(session, email_lead(session), rc("not_now"))
-    assert a == [SetState(S.NURTURE, "not_now"), SetNurtureUntil(NOW + timedelta(days=90))]
+    assert a[1:] == [SetState(S.NURTURE, "not_now"), SetNurtureUntil(NOW + timedelta(days=90))]
+    assert a[0] == SendReply("not_now_ack", (("follow_up_when", "in February 2027"),))
 
 
 def test_not_interested_closed(session):
-    assert acts(session, email_lead(session), rc("not_interested")) == [SetState(S.CLOSED, "not_interested")]
+    assert acts(session, email_lead(session), rc("not_interested")) == [
+        SendReply("not_interested_ack"), SetState(S.CLOSED, "not_interested")]  # the reply goes before closing
+
+
+def test_whatsapp_leads_get_no_email_courtesy_replies(session):
+    lead = wa_lead(session)
+    for label in ("not_now", "not_interested", "wrong_person"):
+        assert not any(isinstance(x, SendReply) for x in acts(session, lead, rc(label)))
 
 
 def test_unsubscribe_suppresses_all(session):
@@ -265,9 +280,9 @@ def test_ooo_pauses(session):
 def test_wrong_person_referral_then_closed(session):
     lead = email_lead(session)
     a = acts(session, lead, rc("wrong_person", referral_email="ann@acme.com", referral_name="Ann"))
-    assert a == [IntakeReferral(email="ann@acme.com", phone=None, name="Ann"),
+    assert a == [SendReply("referral_thanks"), IntakeReferral(email="ann@acme.com", phone=None, name="Ann"),
                  SetState(S.CLOSED, "wrong_person")]
-    assert acts(session, lead, rc("wrong_person")) == [SetState(S.CLOSED, "wrong_person")]
+    assert acts(session, lead, rc("wrong_person")) == [SendReply("who_is_right"), SetState(S.CLOSED, "wrong_person")]
 
 
 def test_unsure_email_alert(session):
@@ -330,7 +345,7 @@ def test_classification_stored_on_event(session):
     client = FakeClient(out("not_interested", 0.91))
     fn = make_classifier(make_settings(llm_classifier_model="classifier-test"), llm=client)
     a = fn(session, lead, ev, NOW)
-    assert a == [SetState(S.CLOSED, "not_interested")]
+    assert a == [SendReply("not_interested_ack"), SetState(S.CLOSED, "not_interested")]
     assert ev.data["classification"] == {"label": "not_interested", "confidence": 0.91, "reason": "because"}
     assert ev.data["text"] == "hi"
     assert client.calls[0]["model"] == "classifier-test"
@@ -447,15 +462,15 @@ def test_referral_over_254_chars_dropped():
 def test_referral_other_domain_not_intaken(session):
     lead = email_lead(session, email="bob@acme.com", domain="acme.com")
     a = acts(session, lead, rc("wrong_person", referral_email="ann@evil.com"))
-    assert a == [Alert("unsure"), SetState(S.CLOSED, "wrong_person")]
-    assert "outside the company" in a[0].text
+    assert a == [SendReply("referral_thanks"), Alert("unsure"), SetState(S.CLOSED, "wrong_person")]
+    assert "outside the company" in a[1].text
     assert not any(isinstance(x, IntakeReferral) for x in a)
 
 
 def test_referral_same_domain_intaken(session):
     lead = email_lead(session, email="bob@acme.com", domain="acme.com")
     a = acts(session, lead, rc("wrong_person", referral_email="Ann@ACME.com", referral_name="Ann"))
-    assert a == [IntakeReferral(email="Ann@ACME.com", phone=None, name="Ann"),
+    assert a[1:] == [IntakeReferral(email="Ann@ACME.com", phone=None, name="Ann"),
                  SetState(S.CLOSED, "wrong_person")]
     # domain from lead.domain when the lead has no email (WhatsApp-only)
     lead2 = wa_lead(session, email=None, domain="acme.com")
@@ -465,13 +480,13 @@ def test_referral_same_domain_intaken(session):
 def test_referral_free_mail_domain_not_intaken(session):
     lead = email_lead(session, email="bob@gmail.com", domain="gmail.com")
     a = acts(session, lead, rc("wrong_person", referral_email="ann@gmail.com"))
-    assert a[0] == Alert("unsure")
+    assert a[1] == Alert("unsure") and not any(isinstance(x, IntakeReferral) for x in a)
 
 
 def test_referral_phone_only_needs_human(session):
     lead = email_lead(session)
     a = acts(session, lead, rc("wrong_person", referral_phone="+919800000002"))
-    assert a == [Alert("unsure"), SetState(S.CLOSED, "wrong_person")]
+    assert a == [SendReply("referral_thanks"), Alert("unsure"), SetState(S.CLOSED, "wrong_person")]
 
 
 def test_reply_tags_in_body_neutralised():
@@ -492,7 +507,7 @@ def test_long_ooo_capped_with_alert(session):
 
 def test_nurture_until_capped_at_365_days(session):
     a = acts(session, email_lead(session), rc("not_now", later_date=date(2029, 1, 1)))
-    assert a == [SetState(S.NURTURE, "not_now"), SetNurtureUntil(NOW + timedelta(days=365))]
+    assert a[1:] == [SetState(S.NURTURE, "not_now"), SetNurtureUntil(NOW + timedelta(days=365))]
 
 
 def test_from_line_without_header_block_kept():

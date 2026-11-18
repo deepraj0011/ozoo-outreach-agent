@@ -31,13 +31,21 @@ def tpl():
     return load_templates()
 
 
+def _alts(t):
+    return t if isinstance(t, list) else [t]
+
+
 def _all_text(tpl):
     for step, blocks in tpl["steps"].items():
         for v, d in blocks.items():
             for k, t in d.items():
-                yield t
+                yield from _alts(t)
     for d in tpl["replies"].values():
-        yield d["body"]
+        yield from _alts(d["body"])
+    for angle in (tpl.get("angles") or {}).values():
+        for k, t in angle.items():
+            if k != "match":
+                yield from _alts(t)
 
 
 def test_constants():
@@ -50,12 +58,12 @@ def test_templates_have_all_keys(tpl):
         blocks = tpl["steps"][step]
         assert set(blocks) == set(VARIANTS), step  # no open-driven variants
         for v in VARIANTS:
-            assert blocks[v]["subject"]
-            assert "{booking_link}" in blocks[v]["body"]
-            assert "{unsubscribe_link}" in blocks[v]["body"]
-    for k in ("booking_link", "booking_slots", "reschedule"):
-        body = tpl["replies"][k]["body"]
-        assert "{booking_link}" in body and "{unsubscribe_link}" in body
+            assert all(_alts(blocks[v]["subject"]))
+            for body in _alts(blocks[v]["body"]):
+                assert "{booking_link}" in body and "{unsubscribe_link}" in body
+    for k in ("booking_link", "booking_slots", "reschedule", "question_answer", "question_ack"):
+        for body in _alts(tpl["replies"][k]["body"]):
+            assert "{booking_link}" in body and "{unsubscribe_link}" in body
 
 
 def test_no_spying_phrases(tpl):
@@ -86,18 +94,22 @@ def test_variant_priority(session, st, tpl):
         lead = make_lead(session, variant_flags={"variants": variants})
         return render_step(lead, 1, templates=tpl, settings=st)
 
-    exp = lambda v: tpl["steps"][1][v]["subject"].format(first_name="Test", company="Acme")
-    assert body([])["subject_1"] == exp("standard")
-    assert body(["product"])["subject_1"] == exp("product")
-    assert body(["case_study", "product"])["subject_1"] == exp("case_study")
-    assert body(["booking_slots", "case_study", "product"])["subject_1"] == exp("booking_slots")
+    def subjects(v):  # every way the variant's subject can come out for a lead at Acme
+        topics = [t.format(company="Acme") for a in tpl["angles"].values() for t in _alts(a["topic"])]
+        out = {s.format(first_name="Test", company="Acme", topic=t) for s in _alts(tpl["steps"][1][v]["subject"])
+               for t in topics}
+        return out | {x[:1].upper() + x[1:] for x in out}  # subjects start with a capital
+    assert body([])["subject_1"] in subjects("standard")
+    assert body(["product"])["subject_1"] in subjects("product")
+    assert body(["case_study", "product"])["subject_1"] in subjects("case_study")
+    assert body(["booking_slots", "case_study", "product"])["subject_1"] in subjects("booking_slots")
 
 
 def test_subject_does_not_depend_on_opens(session, st, tpl):
-    opened = make_lead(session, variant_flags={"opened_steps": [1], "human_opens": 3})
-    unopened = make_lead(session, variant_flags={})
-    a = render_step(opened, 2, templates=tpl, settings=st)["subject_2"]
-    assert a == render_step(unopened, 2, templates=tpl, settings=st)["subject_2"] == "Following up, Test"
+    lead = make_lead(session, variant_flags={})
+    before = render_step(lead, 2, templates=tpl, settings=st)
+    lead.variant_flags = {"opened_steps": [1], "human_opens": 3}
+    assert render_step(lead, 2, templates=tpl, settings=st) == before
 
 
 def test_subject_injection_sanitised(session, st, tpl):
@@ -201,7 +213,7 @@ def test_template_validation_names_missing_key(tmp_path, tpl):
     with pytest.raises(ValueError, match="case_study"):
         load_templates(str(p))
     bad2 = copy.deepcopy(tpl)
-    bad2["steps"][1]["standard"]["body"] += " {bogus}"
+    bad2["steps"][1]["standard"]["body"][0] += " {bogus}"
     p2 = tmp_path / "t2.yaml"
     p2.write_text(yaml.safe_dump(bad2))
     with pytest.raises(ValueError, match="bogus"):

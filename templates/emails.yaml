@@ -1,82 +1,495 @@
-# Email copy for the 4-step sequence and canned replies.
-# Placeholders: {first_name} {company} {booking_link} {unsubscribe_link} {pricing_link} {case_study_link} {product_link} {homepage_link}
-# Never mention opens, clicks or reads in any copy.
+# Email copy: the 4-step sequence, its interest variants, and the replies.
+#
+# How a lead's email is put together (task 20):
+# - Each lead gets an ANGLE from its role (then industry): collections, quality, sales, service,
+#   technology, or general. The angle fills {topic} {hook} {value} {proof} {ask}.
+# - A subject or body can be a LIST of alternatives. The agent picks one per lead (stable for that
+#   lead, different across leads), so two people at the same bank don't get the same email.
+# - Every email must make sense on its own: most people see only one of the four.
+# - Facts only from kb/ozoo_kb.md. No prices. Never mention opens, clicks or reads.
+#
+# Placeholders: {first_name} {company} {signature} {booking_link} {unsubscribe_link} {pricing_link}
+#   {case_study_link} {product_link} {homepage_link}; angle: {topic} {hook} {value} {proof} {ask};
+#   replies only: {answer} (question_answer) {follow_up_when} (not_now_ack).
+# Step emails and the booking replies must contain {booking_link} and {unsubscribe_link}.
+# MARKETING / SALES: review every line before go-live.
+
+angles:
+  collections:
+    match: [collect, recover, dpd, delinquen, arrears]
+    topic: ["collections calls", "collections at scale", "EMI reminder calls"]
+    hook:
+      - "Most collections teams I speak with know their callers' promise-to-pay numbers, but can only listen to a small sample of the calls behind them."
+      - "In collections, the calls that cause trouble are rarely the ones in the QA sample: manual review usually covers 2 to 5% of calls."
+    value:
+      - "Ozoo.ai checks every recorded collections call against your own scorecard and compliance rules, in Hindi, Hinglish and English, and our voice agents can take on EMI reminders, capturing promises to pay straight into your CRM."
+      - "We help lenders review every collections call, not a sample, and add AI calling for EMI reminders that respects DND, pacing rules and consent prompts."
+    proof:
+      - "In a proof of concept with an Indian NBFC handling about 1,500 recovery and service calls a day, every recorded call was analysed (against a 2 to 5% sample before), and 18 compliance flags came up that the manual sample had missed."
+    ask:
+      - "Would it be useful to compare that with how {company} reviews collections calls today?"
+      - "Is call quality in collections something you're looking at this year?"
+  quality:
+    match: [qa, quality, complian, risk, audit, grievance]
+    topic: ["call QA coverage", "call compliance", "QA on every call"]
+    hook:
+      - "Manual QA teams typically review 2 to 5% of calls, which leaves most compliance risk unheard."
+      - "A QA sample tells you how the average call goes. It rarely finds the one call that turns into a complaint."
+    value:
+      - "Ozoo.ai's Post-Call Analytics scores every recorded call against your own QA scorecard. Every mark links to the exact moment in the transcript, and your fatal and critical rules get a stricter second check."
+      - "Post-Call Analytics transcribes and scores every recorded call in Hindi, Hinglish and English, against the rules your compliance team defines, with the evidence one click away."
+    proof:
+      - "With one Indian NBFC, the first pass covered every recorded call in scope and surfaced 18 compliance flags the manual sample had missed."
+    ask:
+      - "How does {company} decide which calls get reviewed today?"
+      - "Would a look at full-coverage QA be useful for {company}?"
+  sales:
+    match: [sales, tele, growth, retention, portfolio, cross, upsell, business, revenue, acquisition]
+    topic: ["signals hidden in your calls", "tele-sales calls", "retention calls"]
+    hook:
+      - "Service and collections calls often carry sales signals, such as a top-up, a balance transfer or a new loan, that never reach the sales team."
+      - "Lenders already talk to their borrowers every day. Most of what is said on those calls is never read."
+    value:
+      - "Ozoo.ai's Post-Call Analytics reads every recorded call and flags buying signals, and our voice agents can qualify leads and run renewal calls in Hindi, English and other Indian languages."
+      - "We analyse every recorded call for interest in top-ups, balance transfers or new loans, and can add AI calling for lead qualification and renewals."
+    proof:
+      - "In a proof of concept with an Indian NBFC, the first pass over its calls found 150 upsell and retention signals."
+    ask:
+      - "Would it help to see what that looks like on {company}'s own calls?"
+      - "Is turning existing calls into pipeline on your list this year?"
+  service:
+    match: [cx, customer, service, operation, onboard, contact, call cent, experience, support, kyc]
+    topic: ["borrower conversations", "KYC follow-ups", "service calls and chats"]
+    hook:
+      - "A lot of service and onboarding effort goes into the same conversations: KYC documents, EMI queries, statement requests."
+      - "Borrowers move between calls, WhatsApp and chat, and the context rarely moves with them."
+    value:
+      - "Ozoo.ai's chat agents handle KYC document chasing, EMI queries and statement requests on WhatsApp, web and in-app chat, answering from your own documents, and hand over to a person with the transcript when needed."
+      - "We give lenders AI agents for WhatsApp, chat and voice that share one conversation history, answer from your own policy documents, and pass to your team with the full transcript."
+    proof:
+      - "Most lenders we work with start with Post-Call Analytics on the recordings they already have: with one Indian NBFC, that meant every recorded call reviewed instead of a 2 to 5% sample."
+    ask:
+      - "Which of these conversations takes the most of {company}'s team's time today?"
+      - "Would a short look be useful for {company}'s service team?"
+  technology:
+    match: [cto, cio, cdo, technolog, it, digital, engineering, data, architect, infosec, security]
+    topic: ["call analytics in your own AWS account", "conversation AI for {company}"]
+    hook:
+      - "Most conversation-AI tools ask lenders to send call recordings to someone else's cloud."
+      - "Call analytics usually stalls at the same question: where does the data go?"
+    value:
+      - "Ozoo.ai's Post-Call Analytics installs from AWS Marketplace into your own AWS account in Mumbai, and Habilelabs has no access to the recordings, transcripts or results. The setup itself takes under an hour."
+      - "Our Post-Call Analytics runs inside your own AWS account in Mumbai, masks Aadhaar, PAN and account numbers in transcripts, and the voice agents work with your existing SIP trunks or contact-centre platform."
+    proof:
+      - "Most teams have their scorecards and agents set up within a week, and there is a 30-day trial of the Starter plan with no software charge for buyers in India."
+    ask:
+      - "Would a short technical walkthrough be useful for {company}?"
+      - "Who on your side usually reviews tools like this?"
+  general:
+    match: []
+    topic: ["call quality at {company}", "borrower conversations at {company}", "every call at {company}"]
+    hook:
+      - "Lenders talk to borrowers all day, on calls and on WhatsApp, but usually only check a small sample of those conversations."
+      - "Manual QA teams typically review 2 to 5% of calls. The rest is never heard."
+    value:
+      - "Ozoo.ai is built only for lenders and insurers: Post-Call Analytics checks every recorded call for quality and compliance, and our voice and WhatsApp agents handle EMI reminders, collections and KYC follow-up."
+      - "We help banks, NBFCs and insurers talk to every borrower and check every call, with call analytics, AI calling and WhatsApp agents that share one memory."
+    proof:
+      - "In a proof of concept with an Indian NBFC handling about 1,500 calls a day, every recorded call was analysed, and the first pass found 18 compliance flags the manual sample had missed and 150 upsell and retention signals."
+    ask:
+      - "Is this something {company} is looking at?"
+      - "Would a short conversation be useful?"
+
 steps:
   1:
-    # MARKETING: replace
     standard:
-      subject: "Quick idea for {company}"
-      body: "Hi {first_name},\n\nI work with teams like {company} on automating outreach and follow-up. I think a short demo could be useful.\n\nBook a time: {booking_link}\n\nNot relevant? Unsubscribe: {unsubscribe_link}"
-    # MARKETING: replace
+      subject: ["{topic}", "Question about {topic}", "{first_name}, a thought on {topic}"]
+      body:
+        - |-
+          Hi {first_name},
+
+          {hook}
+
+          {value}
+
+          {ask}
+
+          {signature}
+
+          If you'd rather see it than read about it, pick any 30-minute slot: {booking_link}
+          Not the right time? Reply "no" and I won't follow up. Unsubscribe: {unsubscribe_link}
+        - |-
+          Hi {first_name},
+
+          {hook} {value}
+
+          {ask} If it's easier, you can grab 30 minutes here: {booking_link}
+
+          Best,
+          {signature}
+
+          Prefer not to hear from us? Unsubscribe: {unsubscribe_link}
     case_study:
-      subject: "How a team like {company} got started"
-      body: "Hi {first_name},\n\nI work with teams like {company} on automating outreach and follow-up. I think a short demo could be useful.\n\nHere is a short story from a similar team: {case_study_link}\n\nBook a time: {booking_link}\n\nNot relevant? Unsubscribe: {unsubscribe_link}"
-    # MARKETING: replace
+      subject: ["How one lender reviewed every call", "{topic}: one example"]
+      body: |-
+        Hi {first_name},
+
+        {hook}
+
+        {proof} The short write-up is here: {case_study_link}
+
+        {ask}
+
+        {signature}
+
+        30 minutes to walk through it: {booking_link}
+        Unsubscribe: {unsubscribe_link}
     product:
-      subject: "What Ozoo.ai does for {company}"
-      body: "Hi {first_name},\n\nI work with teams like {company} on automating outreach and follow-up. I think a short demo could be useful.\n\nA two minute overview of the product: {product_link}\n\nBook a time: {booking_link}\n\nNot relevant? Unsubscribe: {unsubscribe_link}"
-    # MARKETING: replace
+      subject: ["What Ozoo.ai does, in two minutes", "{topic}: how it works"]
+      body: |-
+        Hi {first_name},
+
+        {value}
+
+        A two-minute overview: {product_link}
+
+        {ask}
+
+        {signature}
+
+        Happy to show it live: {booking_link}
+        Unsubscribe: {unsubscribe_link}
     booking_slots:
-      subject: "Pick a time that suits you"
-      body: "Hi {first_name},\n\nI work with teams like {company} on automating outreach and follow-up. I think a short demo could be useful.\n\nI have a few slots open this week; choose whichever works best.\n\nBook a time: {booking_link}\n\nNot relevant? Unsubscribe: {unsubscribe_link}"
+      subject: ["A time to talk about {topic}?", "30 minutes on {topic}"]
+      body: |-
+        Hi {first_name},
+
+        {value}
+
+        If a short conversation would help, here are open slots this week and next; choose whichever suits you: {booking_link}
+
+        {signature}
+
+        Unsubscribe: {unsubscribe_link}
   2:
-    # MARKETING: replace
     standard:
-      subject: "Following up, {first_name}"
-      body: "Hi {first_name},\n\nFollowing up on my earlier note. Happy to show how Ozoo.ai could fit how {company} works.\n\nBook a time: {booking_link}\n\nNot relevant? Unsubscribe: {unsubscribe_link}"
-    # MARKETING: replace
+      subject: ["What one NBFC found in its calls", "An example on {topic}", "{company} and {topic}"]
+      body:
+        - |-
+          Hi {first_name},
+
+          One example that may be relevant to {company}.
+
+          {proof}
+
+          {ask}
+
+          {signature}
+
+          30 minutes to go through it: {booking_link}
+          Unsubscribe: {unsubscribe_link}
+        - |-
+          Hi {first_name},
+
+          A short example rather than a pitch: {proof}
+
+          {value}
+
+          {ask}
+
+          Best,
+          {signature}
+
+          Pick a time if useful: {booking_link}
+          Unsubscribe: {unsubscribe_link}
     case_study:
-      subject: "How a team like {company} got started"
-      body: "Hi {first_name},\n\nFollowing up on my earlier note. Happy to show how Ozoo.ai could fit how {company} works.\n\nHere is a short story from a similar team: {case_study_link}\n\nBook a time: {booking_link}\n\nNot relevant? Unsubscribe: {unsubscribe_link}"
-    # MARKETING: replace
+      subject: ["The NBFC example, in more detail"]
+      body: |-
+        Hi {first_name},
+
+        {proof}
+
+        The write-up covers how the first pass was set up and what came out of it: {case_study_link}
+
+        {ask}
+
+        {signature}
+
+        Pick a time: {booking_link}
+        Unsubscribe: {unsubscribe_link}
     product:
-      subject: "What Ozoo.ai does for {company}"
-      body: "Hi {first_name},\n\nFollowing up on my earlier note. Happy to show how Ozoo.ai could fit how {company} works.\n\nA two minute overview of the product: {product_link}\n\nBook a time: {booking_link}\n\nNot relevant? Unsubscribe: {unsubscribe_link}"
-    # MARKETING: replace
+      subject: ["How it would work at {company}"]
+      body: |-
+        Hi {first_name},
+
+        In short: {value}
+
+        The product overview: {product_link}
+
+        {ask}
+
+        {signature}
+
+        30 minutes, live: {booking_link}
+        Unsubscribe: {unsubscribe_link}
     booking_slots:
-      subject: "Pick a time that suits you"
-      body: "Hi {first_name},\n\nFollowing up on my earlier note. Happy to show how Ozoo.ai could fit how {company} works.\n\nI have a few slots open this week; choose whichever works best.\n\nBook a time: {booking_link}\n\nNot relevant? Unsubscribe: {unsubscribe_link}"
+      subject: ["Open slots this week"]
+      body: |-
+        Hi {first_name},
+
+        {proof}
+
+        If it's worth a conversation, here are a few open slots; choose whichever works: {booking_link}
+
+        {signature}
+
+        Unsubscribe: {unsubscribe_link}
   3:
-    # MARKETING: replace
     standard:
-      subject: "One more thought for {company}"
-      body: "Hi {first_name},\n\nA quick note in case my earlier emails got buried. Glad to keep it to 15 minutes.\n\nBook a time: {booking_link}\n\nNot relevant? Unsubscribe: {unsubscribe_link}"
-    # MARKETING: replace
+      subject: ["Starting small", "A low-effort way to test {topic}", "One portfolio, one month"]
+      body:
+        - |-
+          Hi {first_name},
+
+          {hook}
+
+          Most lenders start small: Post-Call Analytics on the call recordings they already have. It installs into your own AWS account in Mumbai in under an hour, and there is a 30-day trial of the Starter plan with no software charge for buyers in India.
+
+          {ask}
+
+          {signature}
+
+          30 minutes to scope it: {booking_link}
+          Unsubscribe: {unsubscribe_link}
+        - |-
+          Hi {first_name},
+
+          If {topic} is on your list, the easiest way to judge it is on your own data. A pilot starts with a 30-minute scoping call, then a written plan for one portfolio, one DPD bucket or one journey, with success metrics agreed up front.
+
+          {ask}
+
+          Best,
+          {signature}
+
+          Pick a time: {booking_link}
+          Unsubscribe: {unsubscribe_link}
     case_study:
-      subject: "How a team like {company} got started"
-      body: "Hi {first_name},\n\nA quick note in case my earlier emails got buried. Glad to keep it to 15 minutes.\n\nHere is a short story from a similar team: {case_study_link}\n\nBook a time: {booking_link}\n\nNot relevant? Unsubscribe: {unsubscribe_link}"
-    # MARKETING: replace
+      subject: ["From a 2 to 5% sample to every call"]
+      body: |-
+        Hi {first_name},
+
+        {proof}
+
+        A pilot like that starts with a 30-minute scoping call and one portfolio or journey. The example: {case_study_link}
+
+        {ask}
+
+        {signature}
+
+        Pick a time: {booking_link}
+        Unsubscribe: {unsubscribe_link}
     product:
-      subject: "What Ozoo.ai does for {company}"
-      body: "Hi {first_name},\n\nA quick note in case my earlier emails got buried. Glad to keep it to 15 minutes.\n\nA two minute overview of the product: {product_link}\n\nBook a time: {booking_link}\n\nNot relevant? Unsubscribe: {unsubscribe_link}"
-    # MARKETING: replace
+      subject: ["Trying it on your own calls"]
+      body: |-
+        Hi {first_name},
+
+        {value}
+
+        There is a 30-day trial of the Starter plan with no software charge for buyers in India, and the setup takes under an hour. Overview: {product_link}
+
+        {signature}
+
+        Happy to help set it up: {booking_link}
+        Unsubscribe: {unsubscribe_link}
     booking_slots:
-      subject: "Pick a time that suits you"
-      body: "Hi {first_name},\n\nA quick note in case my earlier emails got buried. Glad to keep it to 15 minutes.\n\nI have a few slots open this week; choose whichever works best.\n\nBook a time: {booking_link}\n\nNot relevant? Unsubscribe: {unsubscribe_link}"
+      subject: ["30 minutes to scope a pilot"]
+      body: |-
+        Hi {first_name},
+
+        A pilot starts with a 30-minute scoping call; then we write a plan for one portfolio or journey, with success metrics agreed up front.
+
+        Choose any open slot: {booking_link}
+
+        {signature}
+
+        Unsubscribe: {unsubscribe_link}
   4:
-    # MARKETING: replace
     standard:
-      subject: "Closing the loop"
-      body: "Hi {first_name},\n\nThis is my last note for now. If the timing is wrong, no problem at all.\n\nBook a time: {booking_link}\n\nNot relevant? Unsubscribe: {unsubscribe_link}"
-    # MARKETING: replace
+      subject: ["Should I close the loop?", "Last note on {topic}", "{first_name}, one last question"]
+      body:
+        - |-
+          Hi {first_name},
+
+          I haven't heard back, so I'll assume the timing isn't right and stop here.
+
+          If it helps, a one-word reply is plenty:
+          1 - interested, let's talk
+          2 - not now, try me later
+          3 - not me, it's someone else at {company}
+
+          {signature}
+
+          Or pick a time directly: {booking_link}
+          Unsubscribe: {unsubscribe_link}
+        - |-
+          Hi {first_name},
+
+          This is my last note on {topic}. {value}
+
+          If it's ever useful, reply here and it reaches me directly. If someone else at {company} looks after this, I'd be grateful for a name.
+
+          Best,
+          {signature}
+
+          30 minutes, any time: {booking_link}
+          Unsubscribe: {unsubscribe_link}
     case_study:
-      subject: "How a team like {company} got started"
-      body: "Hi {first_name},\n\nThis is my last note for now. If the timing is wrong, no problem at all.\n\nHere is a short story from a similar team: {case_study_link}\n\nBook a time: {booking_link}\n\nNot relevant? Unsubscribe: {unsubscribe_link}"
-    # MARKETING: replace
+      subject: ["Closing the loop"]
+      body: |-
+        Hi {first_name},
+
+        Last note from me. The NBFC example is here if it's useful later: {case_study_link}
+
+        A one-word reply is plenty: 1 - let's talk, 2 - later, 3 - someone else at {company}.
+
+        {signature}
+
+        Pick a time: {booking_link}
+        Unsubscribe: {unsubscribe_link}
     product:
-      subject: "What Ozoo.ai does for {company}"
-      body: "Hi {first_name},\n\nThis is my last note for now. If the timing is wrong, no problem at all.\n\nA two minute overview of the product: {product_link}\n\nBook a time: {booking_link}\n\nNot relevant? Unsubscribe: {unsubscribe_link}"
-    # MARKETING: replace
+      subject: ["Closing the loop"]
+      body: |-
+        Hi {first_name},
+
+        Last note from me. The overview stays here if it's useful later: {product_link}
+
+        A one-word reply is plenty: 1 - let's talk, 2 - later, 3 - someone else at {company}.
+
+        {signature}
+
+        Pick a time: {booking_link}
+        Unsubscribe: {unsubscribe_link}
     booking_slots:
-      subject: "Pick a time that suits you"
-      body: "Hi {first_name},\n\nThis is my last note for now. If the timing is wrong, no problem at all.\n\nI have a few slots open this week; choose whichever works best.\n\nBook a time: {booking_link}\n\nNot relevant? Unsubscribe: {unsubscribe_link}"
+      subject: ["Still happy to find a time"]
+      body: |-
+        Hi {first_name},
+
+        Last note from me. If a conversation about {topic} would still help, any open slot works: {booking_link}
+
+        {signature}
+
+        Unsubscribe: {unsubscribe_link}
+
 replies:
-  # MARKETING: replace
+  # interested
   booking_link:
-    body: "Hi {first_name},\n\nThanks for your reply. You can pick a time here: {booking_link}\n\nUnsubscribe: {unsubscribe_link}"
-  # MARKETING: replace
+    body:
+      - |-
+        Hi {first_name},
+
+        Thank you, glad this is of interest. You can pick any 30-minute slot that suits you here: {booking_link}
+
+        If none of the times work, reply with two or three that do and we'll make one of them work.
+
+        {signature}
+
+        Unsubscribe: {unsubscribe_link}
+      - |-
+        Hi {first_name},
+
+        Thanks for getting back to me. Here's a link to choose a 30-minute slot: {booking_link}
+
+        It helps to know which part matters most for {company} (call QA, voice agents or WhatsApp), so we can tailor the conversation. A line in reply is plenty.
+
+        {signature}
+
+        Unsubscribe: {unsubscribe_link}
   booking_slots:
-    body: "Hi {first_name},\n\nHappy to find a time. Choose any open slot here: {booking_link}\n\nUnsubscribe: {unsubscribe_link}"
-  # MARKETING: replace
+    body: |-
+      Hi {first_name},
+
+      Happy to find a time. Choose any open slot here: {booking_link}
+
+      {signature}
+
+      Unsubscribe: {unsubscribe_link}
   reschedule:
-    body: "Hi {first_name},\n\nNo problem, let's find a new time: {booking_link}\n\nUnsubscribe: {unsubscribe_link}"
+    body: |-
+      Hi {first_name},
+
+      No problem at all. Let's find a new time: {booking_link}
+
+      {signature}
+
+      Unsubscribe: {unsubscribe_link}
+  # a question the knowledge base answers ({answer} is checked: KB facts only, no links, no prices)
+  question_answer:
+    body:
+      - |-
+        Hi {first_name},
+
+        Thanks for the question.
+
+        {answer}
+
+        If it's easier to go through it with your own use case in mind, pick any 30-minute slot: {booking_link}
+
+        {signature}
+
+        Unsubscribe: {unsubscribe_link}
+      - |-
+        Hi {first_name},
+
+        Good question. {answer}
+
+        Happy to go deeper on a short call if useful: {booking_link}
+
+        {signature}
+
+        Unsubscribe: {unsubscribe_link}
+  # a question the knowledge base can't answer: a person replies (sales get the alert)
+  question_ack:
+    body: |-
+      Hi {first_name},
+
+      Thanks for the question. I'd rather give you an accurate answer than a quick one, so I've passed it to a colleague who works on this; you'll hear back within one business day.
+
+      If a conversation is easier, you can also pick a 30-minute slot: {booking_link}
+
+      {signature}
+
+      Unsubscribe: {unsubscribe_link}
+  # not now
+  not_now_ack:
+    body: |-
+      Hi {first_name},
+
+      Thanks for letting me know, completely understood. I'll check back {follow_up_when}. If anything changes before then, just reply here.
+
+      {signature}
+  # not interested
+  not_interested_ack:
+    body: |-
+      Hi {first_name},
+
+      Thank you for the reply, and understood. I won't follow up.
+
+      If call quality, collections calling or borrower chat ever comes onto your list, a reply to this email will reach us.
+
+      {signature}
+  # wrong person, and they named someone
+  referral_thanks:
+    body: |-
+      Hi {first_name},
+
+      Thank you, that's really helpful. I'll reach out to them directly and won't write to you about this again.
+
+      {signature}
+  # wrong person, nobody named
+  who_is_right:
+    body: |-
+      Hi {first_name},
+
+      Thanks for letting me know, and sorry for the misdirected note. Who would be the right person at {company} for call quality or borrower conversations? A name is plenty; I'll take it from there.
+
+      {signature}

@@ -20,6 +20,9 @@ from .actions import (
     Suppress, SuppressAllChannels, ToolPause, WaSendText,
 )
 from .intake import FREE_MAIL_DOMAINS
+from .chatbot import kb_prices, load_kb
+from .email_answer import answer_question
+from .sequencer import has_reply
 from .llm import LLMClient, LLMError, LLMTruncated, make_llm
 from .models import Event, Lead
 from .states import ALLOWED, LeadState
@@ -327,8 +330,31 @@ def _sent_within(lead: Lead, key: str, now: datetime, window: timedelta) -> bool
     return now - at < window
 
 
-def actions_for_class(rc: ReplyClass, lead: Lead, event: Event, now: datetime) -> List[Action]:
-    """Pure: the actions for one classified reply."""
+def _courtesy(key: str, email: bool, **values: str) -> List[Action]:
+    """A short reply in the thread for an email lead (task 20), if the templates define it."""
+    if not email or not has_reply(key):
+        return []
+    return [SendReply(key, tuple(values.items()))]
+
+
+def _follow_up_when(later: Optional[date], now: datetime) -> str:
+    if later is None:
+        return "in a few months"
+    if later.year == now.year:
+        return f"in {later.strftime('%B')}"
+    return f"in {later.strftime('%B %Y')}"
+
+
+def actions_for_class(rc: ReplyClass, lead: Lead, event: Event, now: datetime,
+                      answer: Optional[str] = None) -> List[Action]:
+    """Pure: the actions for one classified reply. `answer`: the knowledge-base answer to an emailed
+    question (email_answer.py), if one was found.
+
+    Email replies (task 20): interested -> booking link; question -> the answer (or "a colleague will
+    reply") plus the sales alert; not now -> "I'll check back in <month>"; not interested -> a
+    courteous close; wrong person -> thanks (a named colleague) or "who is the right person?".
+    Out-of-office and opt-outs get nothing: an auto-reply needs no answer, and an opt-out means no
+    more email. The courtesy reply goes before the state change (a closed lead gets no email)."""
     if (event.data or {}).get("matched_by") == "domain":
         return _colleague(rc, lead, event)
 
@@ -363,18 +389,24 @@ def actions_for_class(rc: ReplyClass, lead: Lead, event: Event, now: datetime) -
                                      "in the last 24 h — follow up personally if useful")]
         return [*moved, send("booking_link")]
     if label == "question":
-        if email:
-            return [Alert("question", f"lead {lead.id} asked a question. Draft: {rc.draft_answer or '-'}")]
-        return [BotReply()]
+        if not email:
+            return [BotReply()]
+        if answer:
+            return [SendReply("question_answer", (("answer", answer),)),
+                    Alert("question", f"lead {lead.id} asked a question; answered automatically from the "
+                                      f"knowledge base: {answer}")]
+        return [*_courtesy("question_ack", email),
+                Alert("question", f"lead {lead.id} asked a question. Draft: {rc.draft_answer or '-'}")]
     if label == "not_now":
         moved = move(S.NURTURE, "not_now")
         if moved is None:
             return review(S.NURTURE)
-        until = _at_send_hour(rc.later_date) if rc.later_date else now + NURTURE_DEFAULT
-        return [*moved, SetNurtureUntil(min(until, now + NURTURE_MAX))]
+        until = min(_at_send_hour(rc.later_date) if rc.later_date else now + NURTURE_DEFAULT, now + NURTURE_MAX)
+        return [*_courtesy("not_now_ack", email, follow_up_when=_follow_up_when(until.date(), now)),
+                *moved, SetNurtureUntil(until)]
     if label == "not_interested":
         moved = move(S.CLOSED, "not_interested")
-        return review(S.CLOSED) if moved is None else moved
+        return review(S.CLOSED) if moved is None else [*_courtesy("not_interested_ack", email), *moved]
     if label == "unsubscribe":
         moved = move(S.SUPPRESSED, "reply_unsubscribe")
         return [SuppressAllChannels("reply_unsubscribe"), StopAllOutreach(),
@@ -391,7 +423,10 @@ def actions_for_class(rc: ReplyClass, lead: Lead, event: Event, now: datetime) -
         return [*moved, ToolPause(until)]
     if label == "wrong_person":
         moved = move(S.CLOSED, "wrong_person")
-        return _referral(rc, lead) + (review(S.CLOSED) if moved is None else moved)
+        if moved is None:
+            return _referral(rc, lead) + review(S.CLOSED)
+        named = bool(rc.referral_email or rc.referral_phone or rc.referral_name)
+        return [*_courtesy("referral_thanks" if named else "who_is_right", email), *_referral(rc, lead), *moved]
     # unsure (and anything unexpected)
     if not email:
         # WhatsApp: a person takes over (alert with transcript + handoff notice if the window is open)
@@ -407,6 +442,9 @@ def make_classifier(settings: Any, llm: Optional[LLMClient] = None
     if llm is None:
         llm = make_llm(settings)
     model = settings.llm_classifier_model
+    chat_model = getattr(settings, "llm_chat_model", None) or model
+    kb = load_kb(getattr(settings, "kb_path", None) or None)
+    kb_price_set = kb_prices(kb)
 
     def classify(session: Session, lead: Lead, event: Event, now: datetime) -> List[Action]:
         data = dict(event.data or {})
@@ -414,6 +452,11 @@ def make_classifier(settings: Any, llm: Optional[LLMClient] = None
         data["classification"] = {"label": rc.label, "confidence": rc.confidence, "reason": rc.reason}
         event.data = data  # reassign so the JSON column is marked dirty
         logger.info("lead %s: event %s classified %s (%.2f)", lead.id, event.id, rc.label, rc.confidence)
-        return actions_for_class(rc, lead, event, now)
+        answer = None
+        if (rc.label == "question" and event.channel == "email" and lead.active_channel == "email"
+                and (event.data or {}).get("matched_by") != "domain"):
+            answer = answer_question(strip_quoted(str(data.get("text") or "")), kb, llm, model=chat_model,
+                                     today=now.date(), lead_id=lead.id, kb_price_set=kb_price_set)
+        return actions_for_class(rc, lead, event, now, answer=answer)
 
     return classify

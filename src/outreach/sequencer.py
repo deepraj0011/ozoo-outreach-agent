@@ -1,6 +1,7 @@
 """Email sequencer: template rendering with tracked links, tool enrolment, end-of-sequence routing."""
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 import string
@@ -24,11 +25,17 @@ SCHEDULE_DAYS = {1: 0, 2: 4, 3: 9, 4: 15}
 END_WAIT_DAYS = 5  # = config.DELAY_DEFAULTS_S["end_of_sequence_wait"] (docs only; the worker reads config)
 VARIANT_PRIORITY = ("booking_slots", "case_study", "product")
 STEP_VARIANTS = ("standard", "case_study", "product", "booking_slots")
+# Per-lead angle texts (templates `angles:`), chosen from the lead's role / industry (task 20).
+ANGLE_FIELDS = ("topic", "hook", "value", "proof", "ask")
 ALLOWED_PLACEHOLDERS = frozenset({
     "first_name", "company", "booking_link", "unsubscribe_link", "pricing_link",
-    "case_study_link", "product_link", "homepage_link",
+    "case_study_link", "product_link", "homepage_link", "signature", *ANGLE_FIELDS,
+    "answer", "follow_up_when",  # replies only (question_answer, not_now_ack)
 })
-REPLY_KEYS = ("booking_link", "booking_slots", "reschedule")
+# Replies with a booking link (and so an unsubscribe link); the courtesy replies carry neither.
+REPLY_KEYS = ("booking_link", "booking_slots", "reschedule", "question_answer", "question_ack")
+COURTESY_REPLY_KEYS = ("not_now_ack", "not_interested_ack", "referral_thanks", "who_is_right")
+DEFAULT_ANGLE = "general"
 MAX_VALUE_LEN = 80
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_TEMPLATES = REPO_ROOT / "templates" / "emails.yaml"
@@ -61,6 +68,38 @@ def _check_text(where: str, text: Any, need_links: bool) -> None:
                 raise ValueError(f"template {where} must contain {{{req}}}")
 
 
+def _alternatives(where: str, value: Any) -> List[str]:
+    """A text, or a list of alternative texts (one is picked per lead)."""
+    items = value if isinstance(value, list) else [value]
+    if not items:
+        raise ValueError(f"template {where} has an empty list")
+    return items
+
+
+def _check_any(where: str, value: Any, need_links: bool) -> None:
+    for i, text in enumerate(_alternatives(where, value)):
+        _check_text(f"{where}[{i}]", text, need_links)
+
+
+def _validate_angles(data: Dict[str, Any]) -> None:
+    angles = data.get("angles")
+    if angles is None:
+        return
+    if not isinstance(angles, dict) or DEFAULT_ANGLE not in angles:
+        raise ValueError(f"angles must be a mapping with a '{DEFAULT_ANGLE}' angle")
+    for name, angle in angles.items():
+        if not isinstance(angle, dict):
+            raise ValueError(f"angle {name} must be a mapping")
+        match = angle.get("match", [])
+        if not isinstance(match, list) or not all(isinstance(m, str) and m.strip() for m in match):
+            raise ValueError(f"angle {name}: match must be a list of words")
+        for f in ANGLE_FIELDS:
+            for i, text in enumerate(_alternatives(f"angles.{name}.{f}", angle.get(f))):
+                _check_text(f"angles.{name}.{f}[{i}]", text, False)
+                if set(_fields(text)) & (set(ANGLE_FIELDS) | {"answer", "follow_up_when"}):
+                    raise ValueError(f"angles.{name}.{f} cannot use angle or reply placeholders")
+
+
 def _validate(data: Any) -> Dict[str, Any]:
     if not isinstance(data, dict) or "steps" not in data or "replies" not in data:
         raise ValueError("templates need 'steps' and 'replies'")
@@ -72,12 +111,20 @@ def _validate(data: Any) -> Dict[str, Any]:
         for v in STEP_VARIANTS:
             if not isinstance(block, dict) or v not in block:
                 raise ValueError(f"missing variant {v} in step {step}")
-            _check_text(f"steps.{step}.{v}.subject", block[v].get("subject"), False)
-            _check_text(f"steps.{step}.{v}.body", block[v].get("body"), True)
+            _check_any(f"steps.{step}.{v}.subject", block[v].get("subject"), False)
+            _check_any(f"steps.{step}.{v}.body", block[v].get("body"), True)
+            used = {f for t in _alternatives("", block[v].get("body")) + _alternatives("", block[v].get("subject"))
+                    for f in _fields(t)}
+            if used & set(ANGLE_FIELDS) and "angles" not in data:
+                raise ValueError(f"steps.{step}.{v} uses angle placeholders but there are no angles")
     for key in REPLY_KEYS:
         if key not in data["replies"]:
             raise ValueError(f"missing reply {key}")
-        _check_text(f"replies.{key}.body", data["replies"][key].get("body"), True)
+        _check_any(f"replies.{key}.body", data["replies"][key].get("body"), True)
+    for key in COURTESY_REPLY_KEYS:  # optional: without one, that reply simply isn't sent
+        if key in data["replies"]:
+            _check_any(f"replies.{key}.body", data["replies"][key].get("body"), False)
+    _validate_angles(data)
     return data
 
 
@@ -93,12 +140,32 @@ def _clean(value: Optional[str]) -> str:
     return _WS.sub(" ", value or "").strip()[:MAX_VALUE_LEN].strip()
 
 
-def _values(lead: Lead, step: int, settings: Settings) -> Dict[str, str]:
+def _pick(options: Any, lead: Lead, *salt: object) -> str:
+    """One of the alternatives, the same for this lead every time (stable across restarts), but
+    different across leads: no two prospects at a bank get the same email word for word."""
+    items = options if isinstance(options, list) else [options]
+    key = ":".join(str(x) for x in (lead.id, *salt)).encode()
+    return items[int(hashlib.sha256(key).hexdigest()[:8], 16) % len(items)]
+
+
+def angle_for(lead: Lead, templates: Dict[str, Any]) -> str:
+    """The lead's angle: the first angle whose match words appear in its role (then industry)."""
+    angles = templates.get("angles") or {}
+    for text in (lead.role or "", getattr(lead, "industry", None) or ""):
+        words = text.lower()
+        for name, angle in angles.items():
+            if any(re.search(rf"\b{re.escape(m.lower())}", words) for m in angle.get("match", [])):
+                return name
+    return DEFAULT_ANGLE
+
+
+def _values(lead: Lead, step: int, settings: Settings,
+            templates: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
     def link(tag: str) -> str:
         return make_link(lead.id, step, tag, "email", settings=settings)
 
     name = _clean(lead.name)
-    return {
+    vals = {
         "first_name": name.split(" ")[0] if name else "",
         "company": _clean(lead.company),
         "booking_link": link("booking"),
@@ -107,7 +174,17 @@ def _values(lead: Lead, step: int, settings: Settings) -> Dict[str, str]:
         "case_study_link": link("case_study"),
         "product_link": link("product"),
         "homepage_link": link("homepage"),
+        "signature": getattr(settings, "email_signature", "") or "The Ozoo.ai team",
+        "answer": "",
+        "follow_up_when": "in a few months",
     }
+    angles = (templates or {}).get("angles") or {}
+    if angles:
+        name_ = angle_for(lead, templates or {})
+        angle = angles[name_]
+        for f in ANGLE_FIELDS:
+            vals[f] = _pick(angle[f], lead, step, name_, f).format_map(vals)
+    return vals
 
 
 def _variant(lead: Lead) -> str:
@@ -121,18 +198,32 @@ def render_step(
     t = templates or load_templates()
     s = settings or get_settings()
     block = t["steps"][step]
-    variant = block[_variant(lead)]
-    vals = _values(lead, step, s)
-    subject = _clean(variant["subject"].format_map(vals))  # single line by construction
-    return {f"subject_{step}": subject, f"body_{step}": variant["body"].format_map(vals)}
+    v = _variant(lead)
+    variant = block[v]
+    vals = _values(lead, step, s, t)
+    subject = _clean(_pick(variant["subject"], lead, step, v, "subject").format_map(vals))  # one line
+    subject = subject[:1].upper() + subject[1:]  # "{topic}" subjects start lower-case
+    body = _pick(variant["body"], lead, step, v, "body").format_map(vals)
+    return {f"subject_{step}": subject, f"body_{step}": body}
+
+
+def has_reply(key: str, templates: Optional[Dict[str, Any]] = None) -> bool:
+    return key in (templates or load_templates())["replies"]
 
 
 def render_reply(
-    lead: Lead, key: str, *, templates: Optional[Dict[str, Any]] = None, settings: Optional[Settings] = None
+    lead: Lead, key: str, *, templates: Optional[Dict[str, Any]] = None, settings: Optional[Settings] = None,
+    values: Optional[Dict[str, str]] = None,
 ) -> str:
+    """Reply `key`; `values` fills answer / follow_up_when (plain text, not a template)."""
     t = templates or load_templates()
     s = settings or get_settings()
-    return t["replies"][key]["body"].format_map(_values(lead, lead.step_sent, s))
+    vals = _values(lead, lead.step_sent, s, t)
+    for k, v in (values or {}).items():
+        if k in ("answer", "follow_up_when"):
+            vals[k] = str(v)
+    body = _pick(t["replies"][key]["body"], lead, "reply", key).format_map(vals)
+    return body
 
 
 def _tracking_vars(lead: Lead, campaign_step: int, real: int, s: Settings) -> Dict[str, str]:
