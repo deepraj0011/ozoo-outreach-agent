@@ -153,7 +153,7 @@ def test_email_open_is_logged_only(env):
 def test_email_pricing_click_hot_lead_alert(env):
     lid = env.started_email()
     r = env.send(devsim.click(env.settings, env.sim_lead(lid), tag="pricing"))
-    assert r.status_code == 200 and devsim.click_target(r.text) == env.settings.link_targets["pricing"]
+    assert r.status_code == 200 and devsim.click_target(r.text).startswith(env.settings.link_targets["pricing"] + "?oz_v=")
     assert env.send(devsim.click_confirm(r.text)).status_code == 204  # the browser's script ran
     env.advance(minutes=1)
     env.tick()  # the click settles: human, +10, booking slots reply, click_check alert (task 18)

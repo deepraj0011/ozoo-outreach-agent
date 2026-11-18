@@ -30,6 +30,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from . import devsim
+from .links import VISIT_TAGS
 from .config import Settings
 from .db import init_db, make_engine
 from .localclock import DEFAULT_CLOCK_FILE, LocalClock, clock_file
@@ -59,7 +60,7 @@ SEED_LEADS: List[Dict[str, Any]] = [
      "role": "CFO", "email": "dan@nomailbox.example.com", "country": "US"},
 ]
 
-SCENARIOS = ("email-sent", "email-reply", "email-bounce", "email-unsub", "email-open", "click", "unsub-link",
+SCENARIOS = ("email-sent", "email-reply", "email-bounce", "email-unsub", "email-open", "click", "visit", "unsub-link",
              "wa-button", "wa-text", "wa-status", *devsim.CAL_TRIGGERS, "teams")
 
 
@@ -367,6 +368,10 @@ def _build(args: argparse.Namespace, settings: Settings, lead: Optional[devsim.S
     if sc == "click":
         return devsim.click(settings, lead, tag=args.tag or "homepage", step=args.step, channel=args.channel,
                             scanner=args.scanner)
+    if sc == "visit":
+        tag = args.tag if args.tag in VISIT_TAGS else "pricing"
+        return devsim.visit(settings, lead, now=now, tag=tag, step=args.step, channel=args.channel,
+                            active_s=args.seconds, scroll_pct=args.scroll)
     if sc == "unsub-link":
         return devsim.unsubscribe_link(settings, lead, step=args.step, channel=args.channel or "email")
     if sc == "wa-button":
@@ -478,6 +483,8 @@ def _parser() -> argparse.ArgumentParser:
     sm.add_argument("--tag", choices=sorted(devsim_tags()), help="click: link purpose")
     sm.add_argument("--channel", choices=("email", "whatsapp"), help="click: channel in the link")
     sm.add_argument("--scanner", action="store_true", help="click: a security scanner's user agent")
+    sm.add_argument("--seconds", type=int, default=30, help="visit: active reading time (engaged from 15)")
+    sm.add_argument("--scroll", type=int, default=60, help="visit: how far the page was scrolled, %% (engaged from 40)")
     sm.add_argument("--id", choices=sorted(devsim.WA_BUTTONS), help="wa-button: which button")
     sm.add_argument("--status", choices=("sent", "delivered", "read", "failed"), help="wa-status")
     sm.add_argument("--code", type=int, help="wa-status failed: Meta error code (131026 = not on WhatsApp)")

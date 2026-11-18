@@ -224,11 +224,13 @@ def end_of_sequence_route(lead: Lead, human_clicks: int, *,
     """After Email 4 + 5 days with no reply. Opens are not used (unreliable), and there is
     no WhatsApp step here: opted-in leads already got WhatsApp on day 1. The tool lead is stopped
     first (its campaign has nothing left to send; a failed stop is retried by the worker).
-    A hot score here comes from clicks (no reply): with clicks_need_check it is a click_check alert."""
+    A hot score here comes from clicks and visits (no reply): with clicks_need_check and no verified
+    page visit (a person read the page, task 19) it is a click_check alert."""
     if band(lead.score) == "hot":
+        verified = bool((lead.variant_flags or {}).get("verified_visit"))
         alert = (Alert("click_check", "Finished the sequence without replying; hot score from "
                        "link clicks only, which may be a company security scanner. Check before contacting")
-                 if clicks_need_check else
+                 if clicks_need_check and not verified else
                  Alert("hot_no_reply", "Hot lead finished the sequence without replying"))
         return "sales_personal", [ToolStop(), SetState(LeadState.NURTURE, "end_hot"), alert]
     if human_clicks > 0:

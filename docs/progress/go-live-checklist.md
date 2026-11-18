@@ -73,3 +73,18 @@ Nothing below is done yet. Do not send to real prospects until all boxes are tic
 - [ ] Add database migrations (Alembic) before the first production database.
 - [ ] Production: disable or redact the uvicorn access log (it contains `/r/` and `/u/` tokens). Set `TRUST_PROXY_HEADERS=1` only behind a trusted proxy.
 - [ ] A lead paused because a colleague engaged needs a re-enrol path when it resumes, because Instantly has no resume.
+
+## Added 2026-11-18 (task 19: real leads, real tracking)
+
+Before the first batch of real leads:
+
+- [ ] **Run the realistic simulation** and keep the report with the review: `python -m outreach.world --leads 100 --out run.md`. Every outcome must be as expected and "hot-lead alerts / wrong" must be 0.
+- [ ] **Website snippet for verified visits:** the web team adds `<script src="https://<tracking host>/v.js" async></script>` to the home, pricing, case-study and product pages, and allows the host in the site's CSP (`script-src`, `connect-src`). See [guides/visit-tracking.md](../guides/visit-tracking.md). This is the "website tracking script" approval in section A: get the privacy sign-off and add the line to the privacy notice first. Until then set `VISIT_TRACKING=false`.
+- [ ] **`LINK_TARGETS`** point at the real pages (home, pricing, case study, product, booking). Visits are only measured on pages that carry the snippet.
+- [ ] **Keep `CLICK_ALERTS_NEED_CHECK=true`** for the first weeks: clicks alone send a "check first" alert and never email the lead. Review every `click_check` alert's events (`dev show <id> --mask`) and add any scanner range you find to `config/scanners.yaml` (verify ownership on rdap.arin.net first).
+- [ ] **Send window** (`EMAIL_MODE=mailbox`): leave `EMAIL_SEND_WINDOW` unset (Mon-Fri 09:30-17:30) and `EMAIL_SEND_TZ` unset (BUSINESS_TZ, Asia/Kolkata) for Indian leads. A different market needs its own zone.
+- [ ] **Inbox placement before volume:** sending domain separate from `ozoo.ai`; SPF, DKIM and DMARC (`p=none` to start) pass on a test email (Gmail "Show original" shows PASS for all three); Google Postmaster Tools and Microsoft SNDS set up for the sending domain; warm-up done (the mailbox caps ramp 10 → 30 a day by themselves).
+- [ ] **Test the real inboxes** listed in onboarding/03 section 6 (Gmail, Outlook.com, Microsoft 365 with Defender, iCloud, one address behind Proofpoint or Mimecast): untouched for an hour = zero `human` events; one real click + 20 s of reading = a `visit` event, verdict `human`.
+- [ ] **Email copy (marketing):** each follow-up must make sense on its own (most leads see only one of the four: no "as I said in my last email"), end with a question that is easy to answer in one line, and match the Ozoo positioning (call QA, voice and chat agents for lenders). Today's `templates/emails.yaml` still says "automating outreach".
+- [ ] **Access logs:** the production server and any proxy in front must not log request paths of `/r/`, `/o/`, `/u/` and `/v/` (they carry tokens). Locally `run_local` already passes `--no-access-log`.
+- [ ] **Measure what counts:** report reply rate, verified visits and meetings booked per 100 leads. Do not report open rate.

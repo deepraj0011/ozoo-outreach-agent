@@ -180,7 +180,7 @@ def test_booking_redirect_appends_metadata(env):
     assert parse_lead_token(q["metadata[lead]"][0], settings=SETTINGS) == lead.id
     # other tags are untouched
     tok = make_link(lead.id, 1, "pricing", settings=SETTINGS).rsplit("/", 1)[1]
-    assert _loc(client.get(f"/r/{tok}")) == LINK_TARGETS["pricing"]
+    assert _loc(client.get(f"/r/{tok}")).startswith(LINK_TARGETS["pricing"] + "?oz_v=")
 
 
 def test_booking_redirect_keeps_existing_query():

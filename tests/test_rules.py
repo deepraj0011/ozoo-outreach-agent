@@ -679,11 +679,39 @@ def checked(**kw) -> LeadSnapshot:
     return lead_snap(clicks_need_check=True, **kw)
 
 
-def test_click_check_pricing_click_alerts_check_not_sales():
+def test_click_check_pricing_click_alerts_check_not_sales_and_emails_nobody():
+    """Task 19: a clicks-only lead may be a scanner: no slots email until a person reads the page."""
     out = run(checked(), click("pricing"))
     assert out == [AddScore(10), Alert("click_check"), SetFlag("click_check_alerted", True),
-                   SetVariant("booking_slots"), SendReply("booking_slots"), SetFlag("booking_slots_at", NOW_ISO)]
-    assert "hot_lead" not in [a.kind for a in out if isinstance(a, Alert)]
+                   SetVariant("booking_slots")]
+
+
+def test_click_check_pricing_click_after_verified_visit_offers_slots():
+    out = run(checked(flags={"verified_visit": True}), click("pricing"))
+    assert SendReply("booking_slots") in out
+
+
+def test_verified_pricing_visit_offers_slots_once():
+    visit = ev("visit", tag="pricing", data={"active_s": 30})
+    out = decide(checked(score=10), visit, NOW)
+    assert SendReply("booking_slots") in out
+    later = decide(checked(score=20, flags={"booking_slots_at": NOW_ISO, "hot_alerted": True}), visit, NOW)
+    assert SendReply("booking_slots") not in later
+
+
+def test_held_booking_nudge_goes_out_on_the_first_verified_visit():
+    """Review fix: the nudge is held, not lost, while a booking click is unconfirmed."""
+    visit = ev("visit", tag="case_study", data={"active_s": 30})
+    out = decide(checked(flags={"booking_nudge_held": True}), visit, NOW)
+    assert SendReply("booking_slots") in out and out[-1] == SetFlag("booking_nudge_held", False)
+    assert SendReply("booking_slots") not in decide(checked(), visit, NOW)  # nothing held, not pricing
+
+
+def test_booking_click_not_booked_waits_for_a_verified_person():
+    nudge = ev("booking_click_not_booked")
+    assert decide(checked(), nudge, NOW) == [SetFlag("booking_nudge_held", True)]
+    assert decide(checked(flags={"verified_visit": True}), nudge, NOW) == [SendReply("booking_slots")]
+    assert decide(checked(state=S.ENGAGED), nudge, NOW) == [SendReply("booking_slots")]
 
 
 def test_click_check_score_crossing_alerts_check_once():

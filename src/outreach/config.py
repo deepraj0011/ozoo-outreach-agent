@@ -199,6 +199,16 @@ class Settings(BaseSettings):
     # hot_lead sales alert. Bank security sandboxes can click links like a person. Set false once
     # real data shows the click filter holds.
     click_alerts_need_check: bool = True
+    # Real-visit tracking (outreach.visits): tracked links to our own site pages (pricing, case
+    # study, product, homepage) carry ?oz_v=<signed token>; the site's /v.js snippet reports an
+    # engaged visit (15 s of active reading plus scrolling, or a second page). Engaged visits score
+    # and count as a confirmed human signal. Needs the snippet on the website.
+    visit_tracking: bool = True
+    # Our own sender (mailbox / gmail mode): send only inside this window, follow-ups rotating
+    # afternoon / morning (outreach.sendwindow). Unset = Mon-Fri 09:30-17:30 in production, off
+    # locally; "" = off. Zone: EMAIL_SEND_TZ, else BUSINESS_TZ (the leads' market).
+    email_send_window: Optional[str] = None
+    email_send_tz: Optional[str] = None
     tool_webhook_secret: str
     campaign_ids: Dict[str, str]
     default_tz_group: str
@@ -381,6 +391,24 @@ class Settings(BaseSettings):
 
         business_zone(v.strip())
         return v.strip()
+
+    @field_validator("email_send_window")
+    @classmethod
+    def _send_window_valid(cls, v: Optional[str]) -> Optional[str]:
+        from .hours import parse_business_hours
+
+        if v is not None and v.strip():
+            parse_business_hours(v)
+        return v
+
+    @field_validator("email_send_tz")
+    @classmethod
+    def _send_tz_known(cls, v: Optional[str]) -> Optional[str]:
+        from .hours import business_zone
+
+        if v is not None and v.strip():
+            business_zone(v.strip())
+        return v.strip() if v else None
 
     @field_validator("business_hours")
     @classmethod

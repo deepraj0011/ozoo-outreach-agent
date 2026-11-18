@@ -17,6 +17,14 @@ SCORE_POINTS = {
     "unsubscribe": 0,
 }
 WA_READ_POINTS = 1
+# an engaged visit (outreach.visits: a person read the page) is worth as much as the click, again:
+# it confirms the click was a person, not a security scanner
+VISIT_POINTS = {
+    "homepage": 3,
+    "case_study": 5,
+    "product": 5,
+    "pricing": 10,
+}
 DECAY_AFTER = timedelta(days=30)
 COLD_MAX = 4
 WARM_MAX = 14
@@ -27,6 +35,8 @@ def points_for(kind: str, tag: Optional[str], human_opens_so_far: int, wa_read_s
     Email opens are worth 0: they are unreliable and never drive decisions."""
     if kind == "click":
         return SCORE_POINTS.get(tag or "", 0)
+    if kind == "visit":
+        return VISIT_POINTS.get(tag or "", 0)
     if kind == "wa_read":
         return 0 if wa_read_scored else WA_READ_POINTS
     return 0

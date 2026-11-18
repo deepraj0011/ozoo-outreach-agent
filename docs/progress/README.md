@@ -35,8 +35,9 @@ Branch: `feat/outreach-agent-v1`. Plan: `docs/plan/implementation-plan-v1.md`. S
 | 17 | Free, accurate email layer: `EMAIL_MODE=mailbox` (several SMTP / IMAP mailboxes, daily caps + warm-up, IMAP IDLE replies), Reacher verification, honeypot link, JavaScript-confirmed clicks, auto-reply filter, thread-header reply matching, open pixel off by default | ✅ Done | see git log | 50 | [task-17](tasks/task-17-mailbox-mode.md) |
 | R2 | Repo ready for git hosting: `docs/` split into onboarding / guides / plan / reference / samples with an index, front-page README, onboarding docs fixed, architecture doc brought up to date, `.gitignore` covers SQLite WAL files, tool state, editors, scratch notes | ✅ Done | see git log | 0 | [docs index](../README.md) |
 | 18 | Trial safety: clicks alone (no reply / booking) send a `click_check` alert instead of `hot_lead` to sales (`CLICK_ALERTS_NEED_CHECK`, default on) | ✅ Done | see git log | 6 | [task-18](tasks/task-18-click-check-alerts.md) |
+| 19 | Real leads, real tracking: verified page visits (`/v.js` + `/v/<token>`), clicks alone never email the lead while a check is needed, send windows + time-of-day rotation for our sender, realistic lead simulation (`python -m outreach.world`) | ✅ Done (story 15/15, 100-lead mix 100/100, 0 wrong hot alerts) | see git log | 83 | [task-19](tasks/task-19-real-leads-real-tracking.md) · [visit tracking guide](../guides/visit-tracking.md) |
 
-**Tests now:** 1654 passing (`.venv/bin/pytest -q`).
+**Tests now:** 1737 passing (`.venv/bin/pytest -q`).
 
 **What's next:** test locally with [docs/guides/local-testing.md](../guides/local-testing.md). Before any real sending: verify Instantly on a trial account (sent-event step, stop/block/find endpoints, bounce type, pause), Cal.com and Teams payloads, pick the AI provider, have marketing review `kb/ozoo_kb.md` and the WhatsApp template previews, add DB migrations. See [go-live-checklist.md](go-live-checklist.md).
 

@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 WA_WINDOW = timedelta(hours=24)
 WA_INBOUND_KINDS = frozenset({"wa_text", "wa_button"})
 HUMAN_KINDS = frozenset({"reply", "wa_read"}) | WA_INBOUND_KINDS
-SETTLED_KINDS = frozenset({"click", "open"})  # judged by the worker after the settle window
+SETTLED_KINDS = frozenset({"click", "open", "visit"})  # judged by the worker after the settle window
 UNMATCHED_ALERTS = {"reply": "unmatched_reply", "wa_text": "unmatched_inbound", "wa_button": "unmatched_inbound",
                     "booking_created": "unmatched_booking", "form_submitted": "unmatched_form"}
 # only a promising stranger is worth a person's time: low-fit forms are stored, never alerted

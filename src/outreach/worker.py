@@ -65,6 +65,7 @@ from .actions import (
     record_integration_error, tool_retry_delay, tool_stop_failed_text,
 )
 from .botfilter import TRAP_TAG, Scanners, classify_event, load_scanners
+from .ingest import SETTLED_KINDS
 from .chatbot import takeover_active
 from .config import DELAY_DEFAULTS_S, Settings
 from .health import check_mailboxes
@@ -350,7 +351,7 @@ def _siblings(session: Session, ev: Event) -> List[Event]:
 
 def _process_settled_clicks(ctx: Ctx, session: Session) -> int:
     rows = list(session.scalars(select(Event).where(
-        Event.kind.in_(("click", "open")), Event.processed.is_(False),
+        Event.kind.in_(SETTLED_KINDS), Event.processed.is_(False),
         Event.received_at <= ctx.now - _delay(ctx, "click_settle"))
         .order_by(Event.received_at, Event.id).limit(ctx.batch)))
     rows = [ev for ev in rows if not (ev.data or {}).get("js_check")
@@ -416,8 +417,8 @@ def _booking_click_not_booked(ctx: Ctx, session: Session) -> int:
         session.commit()  # once per lead, even if the send below dies half way
         if booked:
             return False
-        actions = decide(LeadSnapshot.from_lead(lead, ctx.now),
-                         _synthetic("booking_click_not_booked", ctx.now, click_event_id=ev.id), ctx.now)
+        snap = LeadSnapshot.from_lead(lead, ctx.now, clicks_need_check=ctx.settings.click_alerts_need_check)
+        actions = decide(snap, _synthetic("booking_click_not_booked", ctx.now, click_event_id=ev.id), ctx.now)
         execute(session, lead, actions, ctx.deps, ctx.now)
         logger.info("lead %s: booking click not booked, %s action(s)", lead.id, len(actions))
         return bool(actions)

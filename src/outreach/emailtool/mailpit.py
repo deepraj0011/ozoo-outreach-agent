@@ -151,6 +151,9 @@ class MailpitEmailTool:
     # the Gmail subclass (emailtool/gmail.py) sends to Gmail's SMTP instead of a loopback one
     LOOPBACK_ONLY = True
     LABEL = "mailpit"
+    # outreach.sendwindow.SendWindow: working days / hours + time-of-day rotation (set by make_tool
+    # for mailbox / gmail mode). None = send the moment a step is due.
+    send_window: Any = None
 
     def __init__(self, webhook_secret: str, *, state_file: Optional[Path] = None,
                  smtp_host: str = DEFAULT_SMTP_HOST, smtp_port: int = DEFAULT_SMTP_PORT,
@@ -337,8 +340,11 @@ class MailpitEmailTool:
                 (LAST_STEP,))]
 
     def due_at(self, enrolled_at: datetime, step: int, schedule_days: Mapping[int, int],
-               time_scale: float = 1.0) -> datetime:
-        return enrolled_at + timedelta(days=schedule_days[step]) / time_scale
+               time_scale: float = 1.0, key: str = "") -> datetime:
+        due = enrolled_at + timedelta(days=schedule_days[step]) / time_scale
+        if self.send_window is not None and time_scale == 1.0:  # a sped-up local clock skips windows
+            return self.send_window.slot(due, step, key)
+        return due
 
     def send_due(self, schedule_days: Mapping[int, int], time_scale: float = 1.0) -> List[Dict[str, Any]]:
         """Send every step that is due now. State is re-checked inside the same write transaction
@@ -356,7 +362,7 @@ class MailpitEmailTool:
                     db.execute("UPDATE mp_lead SET status = 'stopped' WHERE tool_lead_id = ?", (tid,))
                     continue
                 step = row["last_step"] + 1
-                if self.due_at(_parse(row["enrolled_at"]), step, schedule_days, time_scale) > now:
+                if self.due_at(_parse(row["enrolled_at"]), step, schedule_days, time_scale, key=tid) > now:
                     continue
                 variables = json.loads(row["variables"])
                 subject = variables.get(f"subject_{step}")

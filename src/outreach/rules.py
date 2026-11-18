@@ -30,7 +30,7 @@ S = LeadState
 
 WA_OPTOUT_KEYWORDS = frozenset({"stop", "unsubscribe", "opt out", "optout", "remove me"})
 SOFT_BOUNCES_AS_HARD = 3
-HINT_KINDS = frozenset({"open", "click", "wa_read"})
+HINT_KINDS = frozenset({"open", "click", "visit", "wa_read"})
 
 WA_NOT_ON_WHATSAPP = 131026
 WA_UNDELIVERABLE_REASONS = {131026: "wa_undeliverable", 131049: "wa_marketing_limit"}
@@ -320,23 +320,69 @@ def _click_points(lead: LeadSnapshot, tag: Optional[str]) -> Tuple[int, List[Act
     return pts, [SetFlag(CLICK_POINTS, {**counts, tag or "": n + 1})]
 
 
+BOOKING_NUDGE_HELD = "booking_nudge_held"  # a booking click's nudge, waiting for a verified person
+
+
+def _unverified_clicks(lead: LeadSnapshot) -> bool:
+    """Trial safety (task 18/19): while clicks need a check, a lead still in outreach with no reply,
+    booking or verified page visit may be a bank's security scanner. Its clicks score and alert
+    "check first", but trigger no automatic email to the lead."""
+    return lead.clicks_need_check and lead.state in OUTREACH_STATES and not lead.flags.get(VERIFIED_VISIT)
+
+
+def _offer_slots(lead: LeadSnapshot, event: EventSnapshot) -> List[Action]:
+    """The booking-slots message after pricing interest, at most once per BOOKING_SLOTS_EVERY."""
+    if not _slots_due(lead, event.occurred_at):
+        return []
+    if lead.active_channel == "email":
+        return [SendReply("booking_slots"), SetFlag(BOOKING_SLOTS_AT, event.occurred_at.isoformat())]
+    if lead.active_channel == "whatsapp" and lead.wa_window_open:
+        return [WaSendText("booking_slots"), SetFlag(BOOKING_SLOTS_AT, event.occurred_at.isoformat())]
+    return []  # WA window closed: the alert / score is enough (ruling E)
+
+
 def _on_click(lead: LeadSnapshot, event: EventSnapshot) -> List[Action]:
     tag = event.tag
     pts, counted = _click_points(lead, tag)
     if tag == "pricing":
         out = _score(lead, pts, force_hot_alert=True, from_click=True) + counted
         out += _variant(lead, "booking_slots")
-        if not _slots_due(lead, event.occurred_at):
-            return out
-        if lead.active_channel == "email":
-            out += [SendReply("booking_slots"), SetFlag(BOOKING_SLOTS_AT, event.occurred_at.isoformat())]
-        elif lead.active_channel == "whatsapp" and lead.wa_window_open:
-            out += [WaSendText("booking_slots"), SetFlag(BOOKING_SLOTS_AT, event.occurred_at.isoformat())]
-        # WA window closed: the hot_lead alert / score is enough (ruling E)
-        return out
+        if _unverified_clicks(lead):
+            return out  # the slots go out once a person is seen reading the pricing page (_on_visit)
+        return out + _offer_slots(lead, event)
     out = _score(lead, pts, from_click=True) + counted
     if tag in ("case_study", "product"):
         out += _variant(lead, tag)
+    return out
+
+
+VISITS_SCORED = "visits_scored"  # page tags whose engaged visit already scored (once per tag per lead)
+VERIFIED_VISIT = "verified_visit"
+PAGE_NAMES = {"pricing": "pricing", "case_study": "case study", "product": "product", "homepage": "home"}
+
+
+def _on_visit(lead: LeadSnapshot, event: EventSnapshot) -> List[Action]:
+    """A person read the page an email link led to (outreach.visits). Unlike a click this cannot
+    be a link scanner, so it may alert sales (hot_lead) even while clicks alone need a check."""
+    tag = event.tag or ""
+    raw = lead.flags.get(VISITS_SCORED)
+    done = set(raw) if isinstance(raw, (list, tuple)) else set()
+    pts = 0 if tag in done else points_for("visit", tag, 0, False)
+    out: List[Action] = []
+    if pts > 0:
+        out += [AddScore(pts), SetFlag(VISITS_SCORED, sorted(done | {tag}))]
+    out.append(SetFlag(VERIFIED_VISIT, True))
+    hot = tag == "pricing" or band(lead.score + pts) == "hot"
+    if hot and not lead.flags.get("hot_alerted"):
+        secs = event.data.get("active_s")
+        how = f" ({secs}s of active reading)" if isinstance(secs, int) else ""
+        out += [_alert(lead, "hot_lead", f"verified visit: read the {PAGE_NAMES.get(tag, tag)} page{how}"),
+                SetFlag("hot_alerted", True)]
+    held = lead.flags.get(BOOKING_NUDGE_HELD)
+    if (tag == "pricing" or held) and lead.state in BOOKING_NUDGE_STATES:
+        out += _offer_slots(lead, event)  # once per 7 days: no repeat if the pricing click already sent it
+    if held:
+        out.append(SetFlag(BOOKING_NUDGE_HELD, False))
     return out
 
 
@@ -494,6 +540,8 @@ def _on_booking_click_not_booked(lead: LeadSnapshot, event: EventSnapshot) -> Li
     is not messaged; a booked one needs nothing."""
     if lead.state not in BOOKING_NUDGE_STATES:
         return []
+    if _unverified_clicks(lead):
+        return [SetFlag(BOOKING_NUDGE_HELD, True)]  # sent once a person is seen reading (_on_visit)
     return _send(lead, "booking_slots")
 
 
@@ -507,6 +555,7 @@ _HANDLERS: Dict[str, Handler] = {
     "sent": _on_sent,
     "open": _on_open,
     "click": _on_click,
+    "visit": _on_visit,
     "reply": _on_reply,
     "wa_sent": _nothing,
     "wa_delivered": _nothing,

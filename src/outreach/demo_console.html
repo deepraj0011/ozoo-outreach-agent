@@ -93,7 +93,7 @@ const STATE = {
 };
 const GROUPS = ['All','Outreach','Responding','Booked','Handed off','Nurture','Stopped'];
 const KIND = {
-  state_change:'Status changed', sent:'Email sent', reply:'Email reply', click:'Link clicked', open:'Email opened',
+  state_change:'Status changed', sent:'Email sent', reply:'Email reply', click:'Link clicked', open:'Email opened', visit:'Page read (verified visit)',
   bounce_hard:'Email bounced', bounce_soft:'Soft bounce', unsubscribe:'Unsubscribed', wa_text:'WhatsApp message', wa_button:'WhatsApp button tapped',
   wa_sent:'WhatsApp sent', wa_delivered:'WhatsApp delivered', wa_read:'WhatsApp read', wa_failed:'WhatsApp failed', booking_created:'Meeting booked',
   booking_cancelled:'Meeting cancelled', booking_rescheduled:'Meeting rescheduled', meeting_ended:'Meeting held', no_show:'No-show', form_submitted:'Booking form answered',
@@ -133,7 +133,7 @@ const evTitle = e => e.kind !== 'click' ? (KIND[e.kind] || e.kind)
   : /(^|· )link: trap( ·|$)/.test(e.summary || '') ? 'Hidden trap link visited' : (KIND[e.kind] || e.kind);
 const evTag = e => {
   const t = e.verdict === 'bot' ? 'security scanner, ignored' : e.verdict === 'machine' ? 'automatic (Apple Mail), ignored'
-    : (e.verdict == null && (e.kind === 'click' || e.kind === 'open')) ? 'checking…' : '';
+    : (e.verdict == null && ['click','open','visit'].includes(e.kind)) ? 'checking…' : '';
   return t ? ` <span class="text-[10px] bg-slate-100 text-slate-500 rounded px-1.5 font-normal">${t}</span>` : '';
 };
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));

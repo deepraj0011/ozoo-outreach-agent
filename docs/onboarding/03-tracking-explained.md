@@ -4,9 +4,11 @@
 > and click the links to check them."
 >
 > **Short answer:** This is **true for opens** and **partly true for clicks**. That's why this agent
-> makes its decisions on the signals bots can't fake: replies, bookings, bounces and unsubscribe
-> button presses. Opens are switched off by default and score 0 points. Clicks are counted only after
-> a bot filter checks them, and that filter has known gaps, listed below.
+> makes its decisions on the signals bots can't fake: replies, bookings, bounces, unsubscribe button
+> presses and, new, a **verified page visit** (a person actually read the page the email linked to).
+> Opens are switched off by default and score 0 points. Clicks are counted only after a bot filter
+> checks them; on their own they never alert sales or email the lead. The filter's known gaps are
+> listed below, and a realistic simulation of 100 leads shows what happens in practice (section 4).
 
 ---
 
@@ -19,18 +21,24 @@
 | **Booking (Cal.com)** | ✅ Yes | A person has to pick a time slot and submit a form. |
 | **Unsubscribe** | ✅ Yes | Opening the link only shows a "Confirm" page. Only **pressing the button** (a POST request) unsubscribes. Bots open links but don't press buttons. Gmail's and Outlook's own "Unsubscribe" button (RFC 8058 one-click) is a real person's action. |
 | **WhatsApp delivered / read / replies** | ✅ Yes | They come from Meta's servers. Link previews from WhatsApp itself are filtered as bot. |
-| **Link click** | ⚠️ Mostly | A 6-check bot filter removes most scanners. Some delayed "sandbox" scanners can still get through (section 5). |
+| **Verified page visit** (new) | ✅ Yes | The person stayed 15+ seconds on the page, scrolling or moving, or opened a second page. Scanners fetch a page and leave. Needs one line on the website ([guide](../guides/visit-tracking.md)). |
+| **Link click** | ⚠️ Mostly | A 6-check bot filter removes most scanners. Some delayed "sandbox" scanners can still get through (section 5), so a click alone is a hint, not proof. |
 | **Open** | ❌ No | Apple marks everyone as having opened, Outlook hides real readers, and Gmail shows only the first open. **Off by default** (`EMAIL_OPEN_PIXEL=false`). Even when on, it scores 0 and is only a note on the lead (`human_opens`). |
 
 **Rule of thumb:** a lead becomes "hot" only on 15+ points (pricing and booking clicks are 10 each,
-case study / product 5, homepage 2). A reply or a booking moves a lead forward directly, with no
-points needed.
+case study / product 5, homepage 2; a verified visit adds the same again, once per page). A reply or
+a booking moves a lead forward directly, with no points needed.
 
 **Safety switch for the first real leads (`CLICK_ALERTS_NEED_CHECK`, on by default):** while a lead
-hasn't replied or booked, clicks never send the "hot lead" alert to sales. They send a
-**`click_check`** alert instead: "link clicks only, may be a company security scanner, check before
-contacting". The points still count, and a later reply or booking works exactly as usual. Turn it
-off once a few weeks of real data show the click filter holds.
+hasn't replied, booked or been seen reading a page, clicks alone:
+
+- never send the "hot lead" alert to sales. They send a **`click_check`** alert instead: "link
+  clicks only, may be a company security scanner, check before contacting";
+- never trigger an automatic email to the lead (the "pick a time" email after a pricing or booking
+  click waits until a person is confirmed).
+
+The points still count. A verified visit, a reply or a booking works exactly as usual and does reach
+sales. Turn the switch off once a few weeks of real data show the click filter holds.
 
 ---
 
@@ -72,6 +80,37 @@ to the unsubscribe link is never acted on: only the button on the confirm page u
 **Opens** (when switched on) wait 30 s in the same way and go through checks 2, 3 and 4. Opens
 through Apple's proxy are marked `machine`.
 
+### 3b. The upgrade: did a person actually read the page?
+
+A scanner can click. It does not **read**. So when a tracked link forwards to one of our own pages
+(home, pricing, case study, product), the address carries a signed token, and a small script on the
+website (`/v.js`, [install guide](../guides/visit-tracking.md)) measures **active** reading: time
+with the tab visible *and* the reader scrolling, moving or touching in the last 30 seconds.
+
+| What the visitor did | Counted as |
+|---|---|
+| 15+ s of active reading and scrolled 40 % of the page (or 3+ interactions) | **verified visit** |
+| Went on to a second page of the site, 8+ s active | **verified visit** |
+| Opened the page and left within seconds | nothing (a glance or a scanner) |
+| A scanner fetched the page, even running JavaScript, without scrolling or input | nothing |
+
+A verified visit goes through the same bot filter (scanner IP ranges, the scanner's network), then
+counts as a confirmed human signal: points, a **"verified visit: read the pricing page (70s of
+active reading)"** hot-lead alert for sales, and for the pricing page the booking-slots email.
+
+### 3c. Real leads don't read every email
+
+Most people see one or two of the four emails, many see none. Two things raise the odds that the one
+they see is ours (our own sender, `EMAIL_MODE=mailbox`; Instantly has its own schedule):
+
+- **Send windows:** emails go out only on working days, 09:30–17:30 India time (`EMAIL_SEND_WINDOW`,
+  `EMAIL_SEND_TZ`), never at 2 a.m. or on a Sunday, where they are buried by Monday morning.
+- **Time-of-day rotation:** email 1 goes at the first slot, the follow-ups alternate afternoon /
+  morning / afternoon (15:00, 10:30, 15:30, plus a per-lead offset of up to 40 minutes), so someone
+  who only clears email after lunch still meets one of them.
+
+Answers to a person who just replied are never held: they go out at once.
+
 ---
 
 ## 4. Proof that it works (what has been tested)
@@ -82,9 +121,34 @@ through Apple's proxy are marked `machine`.
 |---|---|---|
 | `tests/test_botfilter.py` | 12 | Every filter check above |
 | `tests/test_click_confirm.py` | 22 | Confirm script, trap link, Defender-style bursts, opens from scanner networks, Apple opens |
-| `tests/test_open_tracking.py` | 15 | Open pixel: signed token, repeat opens ignored for 5 min, waits for the settle window |
+| `tests/test_open_tracking.py` | 22 | Open pixel: signed token, repeat opens ignored for 5 min, waits for the settle window |
 | `tests/test_redirect.py` | 13 | Signed links, tampered links rejected, unsubscribe confirm page |
-| `tests/test_tracking_accuracy.py` | 9 | Scoring is not inflated by bots |
+| `tests/test_tracking_accuracy.py` | 12 | Scoring is not inflated by bots |
+| `tests/test_visits.py` | 51 | Visit tokens, the beacon, the engagement rule, scanner visits marked bot, click then reading = verified hot lead |
+| `tests/test_sendwindow.py` | 14 | Working-hours slots, weekend and night hold, time-of-day rotation |
+| `tests/test_world.py` | 11 | The realistic simulation below reaches the right outcome for each kind of lead |
+
+**Realistic simulation (`python -m outreach.world`).** Simulated leads go through the **real** agent
+(intake, our own sender with its send window, tracked links, open image, visit beacon, webhooks,
+worker, AI reply reading). Each lead behaves like a real person: most never read, some read one email
+late, a few reply. Each inbox brings its own machines: Apple loads every image, Microsoft Defender
+opens every link within a minute, bank sandboxes click links minutes later. Result for a realistic
+mix of 100 leads (`--leads 100`, seed 7):
+
+| | |
+|---|---|
+| Emails sent / really read by a person | 367 / 57 (25 of 100 people read anything) |
+| Opens logged / counted as a person | 272 / 57 (215 were Apple, Defender or sandboxes) |
+| Link clicks by people / by machines | 5 / 537 |
+| Clicks the filter let through as "a person" | 17 (12 of them a smart bank sandbox: the known gap) |
+| Verified page visits | 4, all real people |
+| Hot-lead alerts to sales / wrong ones | 2 / **0** |
+| "Check first" alerts / on machines only | 6 / 3 |
+| Really interested leads caught | **4 of 4** (2 booked a demo, 2 verified hot) |
+| Outcome as expected | 100 of 100 |
+
+The story version (each kind of lead once, with timelines) is in
+[docs/samples/realistic-run.md](../samples/realistic-run.md).
 
 **Live demo on a real Microsoft 365 inbox (2026-11-17):**
 
@@ -106,8 +170,10 @@ through Apple's proxy are marked `machine`.
    email for a few minutes, check 4 (60 s) misses it. The sandbox runs JavaScript, so check 6 misses
    it too. If it also skips the hidden link and comes from an unknown IP, the click counts as human.
    A single *pricing* click is enough to make a lead look hot. **Limited by the safety switch:**
-   while the lead hasn't replied or booked, sales get a `click_check` alert ("check first"), not a
-   hot-lead alert.
+   while the lead hasn't replied, booked or been seen reading, sales get a `click_check` alert
+   ("check first"), not a hot-lead alert, and the lead gets no automatic email. In the 100-lead
+   simulation this produced 3 "check first" alerts on machines and **no** wrong hot-lead alert. The
+   scanner's clicks still add points (they halve after 30 quiet days).
 2. **The scanner list is small.** Today it holds 2 Microsoft ranges and 6 browser names. Scanners
    often pretend to be normal Chrome. Defender uses many more Azure ranges than the two we have seen.
 3. **Instantly mode:** Instantly's open events probably don't carry the IP or browser, so only the
@@ -148,6 +214,16 @@ The human click uses a **different lead** on purpose. All simulated visits come 
 (127.0.0.1), so a human click on lead 1 an hour after its scanner visit would correctly be marked
 bot by check 3 (same network as a scanner).
 
+**The realistic simulation (1 minute, nothing leaves the machine):**
+
+```bash
+.venv/bin/python -m outreach.world                          # each kind of lead once, with timelines
+.venv/bin/python -m outreach.world --leads 100 --out run.md # a realistic mix of 100 leads
+```
+
+It runs in its own temporary folder (own database, simulated clock, stand-in mail server) and never
+touches `local.db` or `.env.local`.
+
 **With real inboxes you own (do this before the first real batch):**
 
 1. Send the sequence to your own test addresses on **Gmail, Outlook.com, Microsoft 365 (Defender),
@@ -165,7 +241,9 @@ bot by check 3 (same network as a scanner).
 
 ## 7. In one sentence
 
-> We **don't rely on opens at all**. We trust **replies, bookings, bounces and unsubscribe button
-> presses** completely. We trust **clicks only after a 6-check bot filter**, which reliably catches
-> Microsoft Defender and Apple but can still be fooled by delayed corporate sandbox scanners, so
-> a safety switch makes clicks alone send a "check first" alert instead of a sales alert.
+> We **don't rely on opens at all**. We trust **replies, bookings, bounces, unsubscribe button
+> presses and verified page visits** (a person read the page) completely. We trust **clicks only
+> after a 6-check bot filter**, which reliably catches Microsoft Defender and Apple but can still be
+> fooled by delayed bank sandbox scanners, so clicks alone only send a "check first" alert and never
+> email the lead. A realistic 100-lead simulation caught every interested lead with zero wrong
+> sales alerts.

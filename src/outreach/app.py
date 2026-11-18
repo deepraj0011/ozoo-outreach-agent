@@ -43,7 +43,7 @@ from .handoff import start_takeover
 from .ingest import IP_MAX, UA_MAX, ingest
 from .intake import intake_lead
 from .jobs import JobQueue, run_job
-from .links import TRAP_TAG, lead_token, parse_open_token, parse_token
+from .links import TRAP_TAG, VISIT_TAGS, lead_token, parse_open_token, parse_token, visit_token, with_visit_token
 from .llm import make_llm
 from .llm.local_fake import RuleBasedLLM
 from .localclock import default_clock
@@ -53,6 +53,7 @@ from .outreach import (
     FAILED_SUFFIX, INTRO_ATTEMPT, REMINDER_ATTEMPT, TRANSIENT_SUFFIX, WA_RETRY_AFTER, Outreach,
 )
 from .states import ALLOWED, TERMINAL_VALUES, LeadState
+from .visits import register_visit_routes
 from .unsubscribe_page import CONFIRM_HTML, DONE_HTML, ERROR_HTML, HEADERS as PAGE_HEADERS, NOT_FOUND_HTML
 from .verify import make_verifier
 from .whatsapp.client import WaSendError, WhatsAppClient, WhatsAppNotAllowed, WindowClosed
@@ -550,6 +551,10 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
             target = with_lead_token(settings.link_targets["booking"], lead_id, settings)
         else:
             target = settings.link_targets.get(tag) or home
+            if settings.visit_tracking and tag in VISIT_TAGS and settings.link_targets.get(tag):
+                # the site's /v.js snippet reports whether a person then actually reads the page
+                target = with_visit_token(target, visit_token(lead_id, step, tag, channel, settings=settings,
+                                                             issued_at=clock()))
         if js_check and event_id is not None:
             nonce = base64.b64encode(uuid.uuid4().bytes).decode().rstrip("=")
             return HTMLResponse(_click_page(target, f"/r/{token}/ok?e={event_id}", nonce),
@@ -575,6 +580,10 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
                 session.rollback()
                 logger.error("click confirm failed: %s", type(exc).__name__)
         return Response(status_code=204, headers=NO_STORE)
+
+    # ------------------------------------------------------------ real visits (site snippet beacon)
+    register_visit_routes(app, settings=settings, clock=clock, session_factory=session_factory, deps=deps,
+                          scanners=scanners, client_ip=_client_ip)
 
     # ------------------------------------------------------------ open pixel
     @app.get("/o/{token}")

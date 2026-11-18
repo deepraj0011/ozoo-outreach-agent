@@ -15,7 +15,8 @@ from .test_worker import (  # noqa: F401 - env is a fixture
 
 # short delays are refused in production (Task 12 review): these runs are local
 FAST = make_settings(app_env="local", click_settle_s=5, booking_nudge_after_s=60, wa_reminder_after_s=120,
-                     wa_no_response_after_s=120, end_of_sequence_wait_s=300)
+                     wa_no_response_after_s=120, end_of_sequence_wait_s=300,
+                     click_alerts_need_check=False)
 
 
 def test_reminder_and_no_response_use_settings(env):

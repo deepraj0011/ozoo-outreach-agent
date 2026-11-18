@@ -32,7 +32,7 @@ from urllib.parse import urlsplit
 from .booking import SIGNATURE_HEADER as CAL_SIGNATURE_HEADER
 from .config import Settings
 from .emailtool.instantly import SECRET_HEADER as EMAIL_SECRET_HEADER
-from .links import lead_token, make_link
+from .links import lead_token, make_link, visit_token
 from .whatsapp.webhook import SIGNATURE_HEADER as WA_SIGNATURE_HEADER
 
 BROWSER_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) "
@@ -160,6 +160,20 @@ def click_confirm(page: str, user_agent: str = BROWSER_UA) -> Optional[SimReques
 def click_target(page: str) -> Optional[str]:
     m = _HREF_RE.search(page or "")
     return html.unescape(m.group(1)) if m else None
+
+
+def visit(settings: Settings, lead: SimLead, *, tag: str, step: Optional[int] = None,
+          channel: Optional[str] = None, active_s: int = 30, scroll_pct: int = 60, pages: int = 1,
+          interactions: int = 8, user_agent: str = BROWSER_UA,
+          headers: Optional[Dict[str, str]] = None, now: Optional[datetime] = None) -> SimRequest:
+    """What the website's /v.js snippet sends after a person read the page (outreach.visits). The
+    server stores it only when engaged (15 s active + scroll 40 % or 3 interactions, or 2 pages)."""
+    ch = channel or (lead.active_channel if lead.active_channel in ("email", "whatsapp") else "email")
+    token = visit_token(lead.id, step if step is not None else max(lead.step_sent, 1), tag, ch, settings=settings,
+                        issued_at=now)
+    body = _dumps({"a": active_s, "s": scroll_pct, "p": pages, "i": interactions})
+    return SimRequest("POST", f"/v/{token}", {"Content-Type": "text/plain", "User-Agent": user_agent,
+                                              **(headers or {})}, body)
 
 
 # ====================================================================== WhatsApp (Meta)

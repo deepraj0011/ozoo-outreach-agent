@@ -17,6 +17,7 @@ Start with **onboarding**, then pick the guide for what you want to do.
 | [Local testing](guides/local-testing.md) | Running the agent on your laptop with every service fake; scenarios, dev commands, switching one service to real |
 | [Demo script](guides/demo-script.md) | Giving the 10-minute demo from the web app |
 | [Real demo](guides/real-demo.md) | A free demo with real Gmail, the Meta WhatsApp test number and a real AI model |
+| [Visit tracking](guides/visit-tracking.md) | Installing the one-line reading snippet on the website so the agent sees verified visits (a person read the page) |
 | [Mailbox mode](guides/mailbox-mode.md) | Sending email from our own mailboxes (`EMAIL_MODE=mailbox`): domain, DNS, warm-up, Reacher verification |
 
 ## 3. Plan (what we agreed to build)

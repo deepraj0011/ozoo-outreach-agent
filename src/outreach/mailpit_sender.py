@@ -21,6 +21,7 @@ from typing import Any, Callable, List, Optional
 from . import devsim
 from .emailtool.mailpit import DEFAULT_SMTP_HOST, DEFAULT_SMTP_PORT, MailpitEmailTool
 from .localclock import LocalClock, clock_file
+from .sendwindow import window_from_settings
 from .sequencer import SCHEDULE_DAYS
 
 logger = logging.getLogger("outreach.mailpit_sender")
@@ -38,17 +39,21 @@ def make_tool(settings: Any, now: Optional[Callable[[], Any]] = None, **kw: Any)
                          smtp_host=m.smtp_host, smtp_port=m.smtp_port, imap_host=m.imap_host, imap_port=m.imap_port,
                          from_name=m.from_name, daily_limit=m.daily_limit, warmup_start=m.warmup_start,
                          warmup_step=m.warmup_step, min_gap_s=m.min_gap_s) for m in settings.mailboxes]
-        return MailboxEmailTool(settings.tool_webhook_secret, mailboxes=boxes,
+        tool = MailboxEmailTool(settings.tool_webhook_secret, mailboxes=boxes,
                                 state_file=getattr(settings, "mailbox_state_file", None) or None,
                                 now=now or default_clock(settings), **kw)
+        tool.send_window = window_from_settings(settings)
+        return tool
     if getattr(settings, "email_mode", None) == "gmail":
         from .emailtool.gmail import GmailEmailTool
 
-        return GmailEmailTool(
+        tool = GmailEmailTool(
             settings.tool_webhook_secret, address=settings.gmail_address,
             app_password=settings.gmail_app_password, from_name=settings.gmail_from_name,
             state_file=getattr(settings, "mailpit_state_file", None) or None,
             now=now or LocalClock(clock_file(settings)), **kw)
+        tool.send_window = window_from_settings(settings)
+        return tool
     return MailpitEmailTool(
         settings.tool_webhook_secret,
         state_file=getattr(settings, "mailpit_state_file", None) or None,

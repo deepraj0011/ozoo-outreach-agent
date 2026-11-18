@@ -72,7 +72,7 @@ def test_email_click_gets_confirm_page_not_redirect(app_env):
     assert "script-src 'nonce-" in csp and "default-src 'none'" in csp and r.headers["cache-control"] == "no-store"
     nonce = csp.split("'nonce-", 1)[1].split("'", 1)[0]
     assert f'<script nonce="{nonce}">' in r.text
-    assert devsim.click_target(r.text) == SETTINGS.link_targets["pricing"]
+    assert devsim.click_target(r.text).startswith(SETTINGS.link_targets["pricing"] + "?oz_v=")
     assert ev.data == {"js_check": True} and ev.processed is False
     assert devsim.click_confirm(r.text).path == f"{path(make_link(lead.id, 1, 'pricing', settings=SETTINGS))}/ok?e={ev.id}"
 

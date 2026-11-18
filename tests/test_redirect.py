@@ -44,7 +44,7 @@ def test_redirect_logs_and_302(env):
     r = client.get(f"/r/{token(lead.id, 2, 'pricing')}",
                    headers={"User-Agent": "Mozilla/5.0 Test", "X-Forwarded-For": "198.51.100.9, 10.0.0.1"})
     assert r.status_code == 302
-    assert r.headers["location"] == LINK_TARGETS["pricing"]
+    assert r.headers["location"].startswith(LINK_TARGETS["pricing"] + "?oz_v=")  # visit token (task 19)
     assert r.headers["cache-control"] == "no-store"
     ev = s.scalars(select(Event)).one()
     assert (ev.lead_id, ev.kind, ev.tag, ev.step, ev.channel) == (lead.id, "click", "pricing", 2, "email")

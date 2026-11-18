@@ -229,16 +229,40 @@ def test_click_soon_after_step_send_is_bot(env):
         assert s.scalars(select(Event.verdict).where(Event.kind == "click")).one() == "bot"
 
 
+def no_check(env):
+    """CLICK_ALERTS_NEED_CHECK off: clicks act on their own (the behaviour before the trial safety)."""
+    return env.settings.model_copy(update={"click_alerts_need_check": False})
+
+
 def test_booking_click_not_booked_sends_slots_once(env):
     lid = new_lead(env, verify_status="valid", active_channel="email", tool_lead_id="t-1", step_sent=1,
                    last_sent_at=NOW - timedelta(days=1))
     add(env, click(lid, "booking", NOW))
-    run(env, NOW + timedelta(minutes=1))  # settles the click (+10)
+    run(env, NOW + timedelta(minutes=1), settings=no_check(env))  # settles the click (+10)
     assert get(env, lid).score == 10
-    run(env, NOW + timedelta(minutes=29))
+    run(env, NOW + timedelta(minutes=29), settings=no_check(env))
     assert "reply" not in tool_names(env)
+    run(env, NOW + timedelta(minutes=31), settings=no_check(env))
+    run(env, NOW + timedelta(minutes=45), settings=no_check(env))
+    assert tool_names(env).count("reply") == 1
+
+
+def test_booking_click_alone_sends_no_email_while_clicks_need_a_check(env):
+    """Task 19: a bank sandbox clicking the booking link must not make us email the lead."""
+    lid = new_lead(env, verify_status="valid", active_channel="email", tool_lead_id="t-1", step_sent=1,
+                   last_sent_at=NOW - timedelta(days=1))
+    add(env, click(lid, "booking", NOW))
+    run(env, NOW + timedelta(minutes=1))
     run(env, NOW + timedelta(minutes=31))
-    run(env, NOW + timedelta(minutes=45))
+    assert "reply" not in tool_names(env) and get(env, lid).score == 10
+
+
+def test_booking_click_after_a_verified_visit_still_nudges(env):
+    lid = new_lead(env, verify_status="valid", active_channel="email", tool_lead_id="t-1", step_sent=1,
+                   last_sent_at=NOW - timedelta(days=1), variant_flags={"verified_visit": True})
+    add(env, click(lid, "booking", NOW))
+    run(env, NOW + timedelta(minutes=1))
+    run(env, NOW + timedelta(minutes=31))
     assert tool_names(env).count("reply") == 1
 
 
@@ -257,8 +281,8 @@ def test_booking_click_on_whatsapp_with_closed_window_alerts(env):
     lid = new_lead(env, **wa_kw(wa_template_sent_at=NOW - timedelta(hours=1),
                                 variant_flags={"wa_intro_attempted_at": "x"}))
     add(env, click(lid, "booking", NOW, channel="whatsapp", user_agent="Mozilla/5.0 (iPhone)"))
-    run(env, NOW + timedelta(minutes=1))
-    run(env, NOW + timedelta(minutes=31))
+    run(env, NOW + timedelta(minutes=1), settings=no_check(env))
+    run(env, NOW + timedelta(minutes=31), settings=no_check(env))
     assert len(alerts(env, "wa_human_needed")) == 1
     assert [c for c in env.wa.calls if c[0] != "send_template"] == []
 
@@ -848,3 +872,11 @@ def test_cli_once_runs_a_tick(env):
 def test_cli_requires_a_mode(env):
     with pytest.raises(SystemExit):
         worker.main([], settings=env.settings, deps=env.deps, engine=env.engine)
+
+
+def test_end_of_sequence_verified_visit_alerts_sales_even_with_check_on(env):
+    """Task 19: a hot score backed by a verified page visit is a real person, not a scanner."""
+    lid = new_lead(env, verify_status="valid", active_channel="email", tool_lead_id="t-1", step_sent=4,
+                   last_sent_at=NOW, score=20, last_human_event_at=NOW, variant_flags={"verified_visit": True})
+    run(env, NOW + timedelta(days=5))
+    assert len(alerts(env, "hot_no_reply")) == 1 and alerts(env, "click_check") == []

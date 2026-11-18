@@ -23,6 +23,7 @@ scripts/start_demo [.env.demo] # run_local + Mailpit + opens the web app at /
 # dev CLI (refuses unless APP_ENV=local); reads OUTREACH_ENV_FILE / .env.local
 .venv/bin/python -m outreach.dev seed | show [ID] [--mask] | tick | advance --hours 48 | advance --reset
 .venv/bin/python -m outreach.dev sim SCENARIO --lead ID   # signed webhook to the running server
+.venv/bin/python -m outreach.world [--leads 100]          # realistic lead simulation, own temp dir (no env file)
 ```
 
 No linter/formatter is configured. Code must run on **Python 3.10** (use `class X(str, Enum)`, not `StrEnum`). Schema is created with `Base.metadata.create_all` — there are no migrations yet.
@@ -36,7 +37,9 @@ webhook route in `app.py` (1 MiB cap, constant-time signature/secret check) → 
 
 - `rules.decide()` is **pure**: lead/event snapshots in, ordered list of action dataclasses out. No DB, no I/O. Most behaviour changes belong here and are tested in `test_rules.py`.
 - `actions.execute()` applies actions. State changes go only through `states.transition()` (allowed-transition table in `states.py`). External calls go through the `Deps` ports (Protocols in `actions.py`); a failing port becomes an `integration_error` row and execution continues.
-- Clicks are stored unprocessed and decided by the worker after a 30 s settle window (to catch scanner bursts). Unsubscribe GET only shows a confirm page; the POST opts out.
+- Clicks (and opens, and `visit` events) are stored unprocessed and decided by the worker after a 30 s settle window (to catch scanner bursts). Unsubscribe GET only shows a confirm page; the POST opts out.
+- Verified visits (`visits.py`): clicks to our own site pages forward with `?oz_v=<signed token>`; the site's `/v.js` snippet POSTs `/v/<token>` once a person has actually read the page. With `CLICK_ALERTS_NEED_CHECK` (default on), clicks alone never alert sales (`click_check` instead) nor trigger an email to the lead; a verified visit, reply or booking does.
+- Our own sender (`EMAIL_MODE=mailbox`/`gmail`) sends only inside `sendwindow.py` slots (working hours, follow-ups rotate afternoon/morning); replies to a person go at once.
 - LLM calls (classifier, chatbot) run as background jobs (`jobs.py`), not inside webhook requests.
 
 **Worker** (`worker.py`): `tick()` runs ordered time-driven jobs (start new leads, settled clicks, WhatsApp reminder/no-response, holds, end of sequence, SLA, score decay, due LLM jobs, alert retries, mailbox health, stuck leads…), each in its own transaction, per-lead commits, re-loading each lead with a row lock and re-checking the selection predicate. Every send/alert is guarded by a timestamp or flag written in the same transaction so a repeated tick at the same `now` is idempotent. Only one worker ticks at a time (Postgres advisory lock or `worker_lock` lease row). Locally it runs inside the app (`RUN_WORKER=1`) — never also run `python -m outreach.worker --loop` against the same SQLite DB.
@@ -50,6 +53,8 @@ webhook route in `app.py` (1 MiB cap, constant-time signature/secret check) → 
 - WhatsApp template bodies live in Meta; `templates/whatsapp.yaml` `preview` is a display-only copy for the web app and must match the approved Meta text.
 
 **Phone numbers** (`channels.normalize_phone`): `+`/`00` numbers keep their country; otherwise the lead's country (ISO code or name, `eu.country_code`), else `DEFAULT_PHONE_REGION` (default `IN`). Stored as E.164.
+
+**Realistic simulation** (`world/`): `python -m outreach.world` runs persona leads (most never read; Apple / Defender / bank-sandbox inbox machines; late replies) through the real app, worker and sender in a temp dir with a stand-in SMTP, and reports agent outcome vs truth. `tests/test_world.py` runs a subset; keep every story persona's outcome as expected when changing rules.
 
 **Local web app** (`demo_console.py` + `demo_console.html`, served at `/` and `/demo`, local only): overview, lead import (CSV/Excel), lead panel with simulate buttons, WhatsApp conversations with takeover. Fake clock: `localclock.py` (`dev advance`).
 
