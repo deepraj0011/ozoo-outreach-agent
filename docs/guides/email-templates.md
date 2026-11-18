@@ -40,13 +40,12 @@ reputation** and from whether the email **looks like one person writing to anoth
 
 What the agent does already:
 
-- Email 1 is plain text, short, two links at most: the most "personal" email of all.
-- Emails 2-4 are designed but letter-like: white, left-aligned, no banner, no hidden preheader,
+- All four emails are designed but letter-like (email 1 too, since task 23): white, left-aligned, no banner, no hidden preheader,
   one picture, one button, one text link besides Unsubscribe. A plain-text copy always goes too.
 - Follow-ups are replies in email 1's thread ("Re: …"), sent from the same mailbox, inside working
   hours, with per-mailbox daily caps (`EMAIL_MODE=mailbox`).
 - One-click unsubscribe headers (Gmail and Yahoo require them from bulk senders).
-- The editor refuses a picture or button in email 1 and nudges toward one link.
+- A plain-text copy of every email always goes too.
 
 What you must set up (no code can do this):
 
@@ -60,5 +59,6 @@ What you must set up (no code can do this):
 6. **Clean lists:** verify addresses first (`VERIFY_MODE=real`); bounces above 2% hurt everything.
 7. Watch **Google Postmaster Tools**: spam rate must stay under 0.3%.
 
-If designed follow-ups still land in Promotions on a warmed-up domain, switch the designed versions
-of email 2 off in the Templates screen and duplicate them without `[[image]]` first.
+If email 1 lands in Promotions on a warmed-up domain, the first thing to try is a version without
+`[[image]]`: Duplicate it in the Templates screen, remove the picture, approve it, switch the
+original off.

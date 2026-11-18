@@ -6,11 +6,11 @@
 # - A subject or body can be a LIST of alternatives. The agent picks one per lead (stable for that
 #   lead, different across leads), so two people at the same bank don't get the same email.
 # - Every email must make sense on its own: most people see only one of the four.
-# - Emails 2-4 have a designed HTML version that still reads like a personal email (task 22,
-#   "Primary-first"): [[image]] = one product screen (rich.image: a file in static/email, or
+# - All four emails have a designed HTML version that still reads like a personal email (task 22;
+#   email 1 designed too since task 23, the user's call): [[image]] = one product screen (rich.image: a file in static/email, or
 #   `angle`), [[button]] = the purple booking button (in the plain text: "<button>: <link>"),
 #   "> " paragraph = a use-case callout, "- " lines = a list. Keep to ONE text link besides
-#   Unsubscribe: every extra link makes Gmail's Promotions tab more likely. Email 1 stays plain.
+#   Unsubscribe: every extra link makes Gmail's Promotions tab more likely.
 # - Facts only from kb/ozoo_kb.md. No prices. Never mention opens, clicks or reads.
 #
 # Placeholders: {first_name} {company} {signature} {booking_link} {unsubscribe_link} {pricing_link}
@@ -140,6 +140,11 @@ steps:
   1:
     standard:
       subject: ["{topic}", "Question about {topic}", "{first_name}, a thought on {topic}"]
+      rich: &rich_first
+        image: angle
+        image_alt: "Ozoo.ai product screen (illustrative data)"
+        caption: "Ozoo.ai, illustrative data. Click the image to see how it works."
+        button: "Book a 30-minute demo"
       body:
         - |-
           Hi {first_name},
@@ -148,19 +153,27 @@ steps:
 
           {value}
 
+          [[image]]
+
           {ask}
+
+          [[button]]
 
           {signature}
 
-          See how it works: {angle_link}
-          If you'd rather see it than read about it, pick any 30-minute slot: {booking_link}
           Not the right time? Reply "no" and I won't follow up. Unsubscribe: {unsubscribe_link}
         - |-
           Hi {first_name},
 
-          {hook} {value}
+          {hook}
 
-          {ask} If it's easier, you can grab 30 minutes here: {booking_link}
+          > {usecase}
+
+          [[image]]
+
+          {ask} A one-line reply is plenty.
+
+          [[button]]
 
           Best,
           {signature}
@@ -169,42 +182,65 @@ steps:
           Prefer not to hear from us? Unsubscribe: {unsubscribe_link}
     case_study:
       subject: ["How one lender reviewed every call", "{topic}: one example"]
+      rich:
+        image: angle
+        image_alt: "Ozoo.ai product screen (illustrative data)"
+        caption: "Ozoo.ai, illustrative data. Click the image to see the product."
+        button: "Walk me through it"
       body: |-
         Hi {first_name},
 
         {hook}
 
-        {proof} The short write-up is here: {case_study_link}
+        > {proof}
+
+        [[image]]
 
         {ask}
 
+        [[button]]
+
         {signature}
 
-        30 minutes to walk through it: {booking_link}
+        The short write-up: {case_study_link}
         Unsubscribe: {unsubscribe_link}
     product:
       subject: ["What Ozoo.ai does, in two minutes", "{topic}: how it works"]
+      rich: *rich_first
       body: |-
         Hi {first_name},
 
         {value}
 
-        A two-minute overview: {product_link}
+        > {usecase}
+
+        [[image]]
 
         {ask}
 
+        [[button]]
+
         {signature}
 
-        Happy to show it live: {booking_link}
+        A two-minute overview: {product_link}
         Unsubscribe: {unsubscribe_link}
     booking_slots:
       subject: ["A time to talk about {topic}?", "30 minutes on {topic}"]
+      rich:
+        image: angle
+        image_alt: "Ozoo.ai product screen (illustrative data)"
+        caption: "Ozoo.ai, illustrative data."
+        button: "Choose a 30-minute slot"
       body: |-
         Hi {first_name},
 
         {value}
 
-        If a short conversation would help, here are open slots this week and next; choose whichever suits you: {booking_link}
+        [[image]]
+
+        If a short conversation would help, there are open slots this week and next; choose whichever suits you.
+
+        [[button]]
 
         {signature}
 

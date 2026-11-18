@@ -195,3 +195,9 @@ Verdict: safe for local testing. Real sending is blocked until Instantly is veri
 | Template text is checked on save: only listed placeholders (no attribute access), `{unsubscribe_link}` required, a booking link or button in sequence emails, picture names from `static/email/` only, and a trial render for every role. | A bad template must fail in the editor, never at enrolment. | none |
 | Security review (task 22): the web app now also refuses a request whose `Host` / `Origin` is not a loopback name (DNS rebinding); 5 wrong approver passcodes lock approving and sending for 10 minutes; placeholders must be plain (no format spec or conversion, e.g. `{company:>99999}`); web addresses in a lead's name or company are dropped before they reach an email. | A website the PM visits could otherwise read leads through the local console, or guess the passcode; a spec could exhaust memory; imported data could plant a link. | Open the web app as `127.0.0.1` or `localhost`, not by another host name. |
 | Bug fixed: `enroll` / `refresh_next_step` now pass `html_N` to the email tool (task 21 rendered it but never handed it over). | Designed emails were not actually being sent to newly enrolled leads. | none |
+
+## Task 23: email 1 is designed too (2026-11-18)
+
+| Decision | Why | Cost if wrong |
+|---|---|---|
+| Email 1 gets the same letter-like design as emails 2-4 (role's product screen, demo button, signature with the Ozoo mark); a plain-text copy still goes with it. Supersedes "email 1 stays plain" from task 22. | The user: a plain first email doesn't look good, and first impressions decide interest. | A first cold email with a picture is more likely to land in Promotions. Remedy without a deploy: duplicate the version without `[[image]]` in the Templates screen. |

@@ -13,7 +13,7 @@ mail into Gmail's Promotions tab:
 
 Body markers: a line `[[image]]` or `[[button]]` places that block (the plain text drops them).
 "Label: <url>" lines become a text link "Label →". Every URL comes from the template values (tracked
-/r/ links); every text is HTML-escaped. Email 1 stays plain text (no `rich:`).
+/r/ links); every text is HTML-escaped. A version without `rich:` stays plain text.
 """
 from __future__ import annotations
 

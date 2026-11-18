@@ -10,7 +10,7 @@ const TPL_STATUS = {
   off: ['Switched off', 'bg-slate-100 text-slate-500', 'bg-slate-400'],
 };
 const TPL_STEP_HELP = {
-  1: 'Plain text, like a personal note: the best chance of landing in Primary.',
+  1: 'The first note: short and personal, with the role\'s product screen and the demo button.',
   2: 'A real example or use case, one product screen and a demo button.',
   3: 'A low-effort way to start: free trial or a small pilot.',
   4: 'A short, polite last note that makes replying easy.',
@@ -169,7 +169,7 @@ function tplEdit(i, copy) {
   tplEdOpen();
 }
 function tplEdOpen() {
-  const e = tplEd, d = e.d, o = tplData.options, plain = d.kind === 'sequence' && +d.step === 1;
+  const e = tplEd, d = e.d, o = tplData.options;
   const sel = (id, opts, val) => `<select id="${id}" onchange="tplEdSync()" class="mt-1 w-full border border-slate-200 rounded-lg px-2 py-2 text-sm">${opts.map(([v, l]) => `<option value="${esc(v)}" ${String(val) === String(v) ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
   const field = (label, html, cls = '') => `<label class="block text-xs font-medium text-slate-600 ${cls}">${label}${html}</label>`;
   const img = (d.rich || {}).image || '';
@@ -188,12 +188,11 @@ function tplEdOpen() {
         ${field('Subject', `<input id="ed_subject" value="${esc(d.subject)}" oninput="tplEdSync()" class="mt-1 w-full border border-slate-200 rounded-lg px-3 py-2 text-sm">`)}
         <div class="text-xs font-medium text-slate-600">Email text
           <div class="flex flex-wrap gap-1 my-1.5">${TPL_PH.map(p => `<button type="button" title="${esc(TPL_PH_HELP[p] || '')}" onclick="tplIns('{${p}}')" class="text-[10px] rounded bg-violet-50 text-violet-700 px-1.5 py-0.5 hover:bg-violet-100">{${p}}</button>`).join('')}
-            ${plain ? '' : `<button type="button" onclick="tplIns('\\n[[image]]\\n')" class="text-[10px] rounded bg-brand-50 text-brand-700 px-1.5 py-0.5">[[image]]</button><button type="button" onclick="tplIns('\\n[[button]]\\n')" class="text-[10px] rounded bg-brand-50 text-brand-700 px-1.5 py-0.5">[[button]]</button>`}
+            ${`<button type="button" onclick="tplIns('\\n[[image]]\\n')" class="text-[10px] rounded bg-brand-50 text-brand-700 px-1.5 py-0.5">[[image]]</button><button type="button" onclick="tplIns('\\n[[button]]\\n')" class="text-[10px] rounded bg-brand-50 text-brand-700 px-1.5 py-0.5">[[button]]</button>`}
             <button type="button" onclick="tplIns('\\n> Use case: ')" class="text-[10px] rounded bg-slate-100 text-slate-700 px-1.5 py-0.5">Use-case box</button><button type="button" onclick="tplIns('\\n- ')" class="text-[10px] rounded bg-slate-100 text-slate-700 px-1.5 py-0.5">List item</button></div>
           <textarea id="ed_body" oninput="tplEdSync()" rows="14" class="w-full border border-slate-200 rounded-lg px-3 py-2 text-[13px] leading-relaxed font-mono">${esc(d.body)}</textarea>
           <div class="text-[11px] text-slate-400 mt-1 font-normal">Blank line = new paragraph · "Label: {link}" = a text link · keep to one link besides Unsubscribe for the Primary inbox.</div></div>
-        ${plain ? `<div class="text-xs text-slate-500 bg-slate-50 rounded-lg px-3 py-2">Email 1 stays plain text: no picture, no button. It reads like a personal note, which is what gets a first email into Primary.</div>`
-          : `<div class="space-y-3 rounded-xl border border-slate-200 p-3"><div class="text-xs font-semibold text-slate-700">Design</div>
+        ${`<div class="space-y-3 rounded-xl border border-slate-200 p-3"><div class="text-xs font-semibold text-slate-700">Design</div>
           <div class="text-xs font-medium text-slate-600">Picture (goes where [[image]] is)<div class="grid grid-cols-4 gap-2 mt-1">
             ${thumb('', 'No picture', '')}${thumb('angle', 'The role\'s own screen (recommended)', '')}${o.images.map(n => thumb(n, n.replace(/-/g, ' '), `/img/${n}.jpg`)).join('')}</div></div>
           <div class="grid grid-cols-2 gap-3">

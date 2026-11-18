@@ -48,7 +48,7 @@ webhook route in `app.py` (1 MiB cap, constant-time signature/secret check) → 
 
 **LLM is provider-agnostic**: classifier and chatbot depend only on the port in `llm/base.py`; `llm/factory.py` picks `anthropic`, `openai`, `azure_openai` or `openai_compatible` from `LLM_PROVIDER` + model settings. Don't hard-wire a provider.
 
-**Content/config outside code**: email copy `templates/emails.yaml` (steps 2-4 also render a letter-like designed HTML part via `richmail.py`; images in `static/email/`, served at `/img/`) plus web-app templates in the `email_template` table (`template_library.py`, Templates screen; approved versions join the YAML ones through `templates_for(session)`), WhatsApp templates `templates/whatsapp.yaml`, chatbot knowledge base `kb/ozoo_kb.md`, scanner IP ranges `config/scanners.yaml`.
+**Content/config outside code**: email copy `templates/emails.yaml` (every step also renders a letter-like designed HTML part via `richmail.py`; images in `static/email/`, served at `/img/`) plus web-app templates in the `email_template` table (`template_library.py`, Templates screen; approved versions join the YAML ones through `templates_for(session)`), WhatsApp templates `templates/whatsapp.yaml`, chatbot knowledge base `kb/ozoo_kb.md`, scanner IP ranges `config/scanners.yaml`.
 - The chatbot answers only from `kb/ozoo_kb.md`; its post-check rejects any reply with a URL or a currency amount not written in the KB (the KB deliberately has no amounts).
 - WhatsApp template bodies live in Meta; `templates/whatsapp.yaml` `preview` is a display-only copy for the web app and must match the approved Meta text.
 

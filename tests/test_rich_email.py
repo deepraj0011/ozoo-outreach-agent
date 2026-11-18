@@ -77,14 +77,13 @@ def test_set_body_plain_only_without_html_or_tracking():
 
 
 # ---------------------------------------------------------------- templates
-def test_email_1_stays_plain_and_2_to_4_are_designed(session):
+def test_every_email_is_designed(session):
     tpl = load_templates()
     for role in ("Head of Collections", "CTO", "Head of Customer Service", "Managing Director"):
         lead = make_lead(session, name="Asha Rao", company="Acme", role=role)
         for variants in ([], ["case_study"], ["product"], ["booking_slots"]):
             lead.variant_flags = {"variants": variants}
-            assert "html_1" not in render_step(lead, 1, templates=tpl, settings=ST)
-            for step in (2, 3, 4):
+            for step in (1, 2, 3, 4):
                 out = render_step(lead, step, templates=tpl, settings=ST)
                 doc = out[f"html_{step}"]
                 assert "[[" not in out[f"body_{step}"] and "[[" not in doc

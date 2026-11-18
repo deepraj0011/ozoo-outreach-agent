@@ -44,7 +44,6 @@ def approve(session, key):
     ({"body": "Hi {answer} {unsubscribe_link} [[button]]"}, "automatic replies"),
     ({"body": "Hi {first_name}, no links"}, "booking_link"),
     ({"body": "Hi {first_name} {booking_link}"}, "unsubscribe_link"),
-    ({"step": 1}, "Email 1 stays plain"),
     ({"rich": {"image": "../../secret"}}, "listed pictures"),
     ({"rich": {}}, "choose a picture"),
     ({"rich": {"image": "qa-scorecard", "image_link": "evil"}}, "click on the picture"),
@@ -141,7 +140,7 @@ def test_enrolment_uses_approved_custom_versions(session):
     enroll(session, lead, tool, NOW, settings=ST)
     variables = [c for c in tool.calls if c[0] == "add_lead"][0][3]
     assert "CUSTOM-MARK" in variables["body_2"] and "compliance-checks.jpg" in variables["html_2"]
-    assert variables["html_1"] == ""  # email 1 stays plain
+    assert "<!doctype html>" in variables["html_1"]  # email 1 is designed too
 
 
 # ---------------------------------------------------------------- preview
@@ -154,7 +153,7 @@ def test_preview_uses_real_pages_not_tracked_links(session):
 def test_preview_of_a_builtin_version(session):
     key = lib.list_templates(session)[0]["key"]
     out = lib.preview(session, ST, key=key, role="CTO")
-    assert out["subject"] and out["html"] == ""  # email 1: plain
+    assert out["subject"] and "<!doctype html>" in out["html"]  # email 1: designed
 
 
 # ---------------------------------------------------------------- sending by hand
@@ -296,3 +295,7 @@ def test_console_refuses_other_host_names_dns_rebinding(web, headers):
     client, _, _ = web
     assert client.get("/demo/api/templates", headers=headers).status_code == 404
     assert client.get("/demo/api/templates", headers={"host": "127.0.0.1:8000"}).status_code == 200
+
+
+def test_email_1_can_be_designed():
+    lib.clean_draft({**SEQ, "step": 1}, settings=ST)

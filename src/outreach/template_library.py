@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 STATUSES = ("draft", "approved", "off")
 KINDS = ("sequence", "manual")
-STEP_LABELS = {1: "Email 1: first note (plain text)", 2: "Email 2: a real example", 3: "Email 3: start small",
+STEP_LABELS = {1: "Email 1: first note", 2: "Email 2: a real example", 3: "Email 3: start small",
                4: "Email 4: close the loop"}
 VARIANT_LABELS = {"standard": "Standard", "case_study": "After reading the case study",
                   "product": "After reading a product page", "booking_slots": "After reading pricing"}
@@ -132,9 +132,6 @@ def _clean_rich(data: Dict[str, Any], body: str, step: Optional[int]) -> Optiona
         raise TemplateError("The design settings are not valid.")
     image = str(raw.get("image") or "").strip()
     has_image, has_button = "[[image]]" in body, "[[button]]" in body
-    if step == 1 and (image or has_image or has_button):
-        raise TemplateError("Email 1 stays plain text (no picture, no button): that is what gets a first "
-                            "cold email into the Primary inbox. Use emails 2-4 for the designed version.")
     if image and image != "angle" and image_file(image) is None:
         raise TemplateError("Choose one of the listed pictures.")
     if has_image and not image:
