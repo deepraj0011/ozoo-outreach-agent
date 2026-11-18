@@ -62,8 +62,8 @@ def test_templates_have_all_keys(tpl):
         assert set(blocks) == set(VARIANTS), step  # no open-driven variants
         for v in VARIANTS:
             assert all(_alts(blocks[v]["subject"]))
-            for body in _alts(blocks[v]["body"]):
-                assert "{booking_link}" in body and "{unsubscribe_link}" in body
+            for body in _alts(blocks[v]["body"]):  # the [[button]] is the booking link (task 22)
+                assert ("{booking_link}" in body or "[[button]]" in body) and "{unsubscribe_link}" in body
     for k in ("booking_link", "booking_slots", "reschedule", "question_answer", "question_ack"):
         for body in _alts(tpl["replies"][k]["body"]):
             assert "{booking_link}" in body and "{unsubscribe_link}" in body
@@ -191,7 +191,8 @@ def test_refresh_updates_next_step(session, st, tpl):
     lead = make_lead(session, tool_lead_id="t1", step_sent=1)
     refresh_next_step(session, lead, tool, settings=st, templates=tpl)
     assert tool.calls[0][0] == "update_variables" and tool.calls[0][1] == "t1"
-    assert set(tool.calls[0][2]) == {"subject_2", "body_2", "unsubscribe_url_2", "trap_url_2"}  # pixel off by default
+    # pixel off by default; html_2 = the designed version (task 22: refresh passes it too)
+    assert set(tool.calls[0][2]) == {"subject_2", "body_2", "html_2", "unsubscribe_url_2", "trap_url_2"}
 
 
 def test_refresh_noop_without_tool_id(session, st, tpl):
@@ -300,6 +301,6 @@ def test_refresh_after_resume_targets_the_campaign_step(session, st, tpl):
     unsub = sent.pop("unsubscribe_url_2")
     sent.pop("trap_url_2")
     assert unsub.rsplit("/u/", 1)[1] == make_link(lead.id, 4, "unsubscribe", settings=st).rsplit("/r/", 1)[1]
-    assert sent == {"subject_2": real4["subject_4"], "body_2": real4["body_4"]}
+    assert sent == {"subject_2": real4["subject_4"], "body_2": real4["body_4"], "html_2": real4["html_4"]}
     from outreach.links import parse_open_token
     assert parse_open_token(pixel.rsplit("/o/", 1)[1], settings=st) == (lead.id, 4)  # our step, not the campaign's

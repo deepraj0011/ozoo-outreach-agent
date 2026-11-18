@@ -287,8 +287,9 @@ class MailpitEmailTool:
                              (email.strip().lower(),)).fetchone()
         return row["tool_lead_id"] if row else None
 
-    def reply(self, tool_lead_id: str, body: str) -> bool:
-        """A one-off reply in the lead's thread (booking link, slots, reschedule): sent now."""
+    def reply(self, tool_lead_id: str, body: str, html: Optional[str] = None) -> bool:
+        """A one-off reply in the lead's thread (booking link, slots, reschedule, or a template the
+        product manager sends from the web app, with its designed `html`): sent now."""
         with self._db(immediate=True) as db:
             row = self._row(db, tool_lead_id)
             if self._blocked(db, row["email"]):
@@ -296,7 +297,7 @@ class MailpitEmailTool:
             subject = thread_subject(row["last_subject"] or "Following up")
             unsub = json.loads(row["variables"]).get(f"unsubscribe_url_{max(row['last_step'], 1)}")
             msg_id = self._smtp_send(row["email"], subject, body, in_reply_to=row["last_message_id"],
-                                     unsubscribe_url=unsub or None, mailbox=row["mailbox"])
+                                     unsubscribe_url=unsub or None, mailbox=row["mailbox"], html_body=html)
             db.execute("UPDATE mp_lead SET last_message_id = ? WHERE tool_lead_id = ?", (msg_id, tool_lead_id))
             self._remember_msgid(db, msg_id, tool_lead_id)
         logger.info("%s tool: reply sent for %s", self.LABEL, tool_lead_id)

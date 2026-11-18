@@ -176,3 +176,29 @@ class WorkerMark(Base):
 
     name: Mapped[str] = mapped_column(String(50), primary_key=True)
     at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+
+class EmailTemplate(Base):
+    """Email templates managed in the web app (task 22). Custom rows hold a whole version (a
+    sequence step version or a one-off email); a `builtin` row only switches a version from
+    templates/emails.yaml off or on again (key builtin.s<step>.<variant>.<index>)."""
+    __tablename__ = "email_template"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    key: Mapped[str] = mapped_column(String(80), unique=True)
+    source: Mapped[str] = mapped_column(String(10), default="custom")  # custom|builtin
+    status: Mapped[str] = mapped_column(String(10), default="draft")  # draft|approved|off
+    name: Mapped[str] = mapped_column(String(120), default="")
+    kind: Mapped[str] = mapped_column(String(10), default="sequence")  # sequence|manual
+    step: Mapped[Optional[int]] = mapped_column(Integer)
+    variant: Mapped[str] = mapped_column(String(20), default="standard")
+    angle: Mapped[str] = mapped_column(String(30), default="any")
+    subject: Mapped[str] = mapped_column(Text, default="")
+    body: Mapped[str] = mapped_column(Text, default="")
+    rich: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON)
+    created_by: Mapped[str] = mapped_column(String(80), default="")
+    updated_by: Mapped[str] = mapped_column(String(80), default="")
+    approved_by: Mapped[Optional[str]] = mapped_column(String(80))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    approved_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime)

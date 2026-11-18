@@ -185,8 +185,9 @@ class InstantlyTool:
                 return str(item["id"])
         return None
 
-    def reply(self, tool_lead_id: str, body: str) -> bool:
-        """Reply in thread to the lead's latest email. False if C4 is not usable."""
+    def reply(self, tool_lead_id: str, body: str, html: Optional[str] = None) -> bool:
+        """Reply in thread to the lead's latest email. False if C4 is not usable. `html` (a designed
+        version) is not sent: the reply goes as text."""
         try:
             # UNVERIFIED: GET /emails filter by lead and the item fields (id, eaccount, subject).
             resp = self._call("GET", "/emails", params={"lead": tool_lead_id, "limit": 1})

@@ -75,6 +75,7 @@ tailwind.config = { theme: { extend: {
 <!-- Toast -->
 <div id="toast" class="hidden fixed bottom-5 right-5 z-[60] bg-ink-950 text-white text-sm rounded-xl px-4 py-3 shadow-xl max-w-sm"></div>
 
+<script src="/demo/templates.js"></script>
 <script>
 // ------------------------------------------------------------------ vocabulary (plan-aligned)
 const STATE = {
@@ -97,7 +98,7 @@ const KIND = {
   bounce_hard:'Email bounced', bounce_soft:'Soft bounce', unsubscribe:'Unsubscribed', wa_text:'WhatsApp message', wa_button:'WhatsApp button tapped',
   wa_sent:'WhatsApp sent', wa_delivered:'WhatsApp delivered', wa_read:'WhatsApp read', wa_failed:'WhatsApp failed', booking_created:'Meeting booked',
   booking_cancelled:'Meeting cancelled', booking_rescheduled:'Meeting rescheduled', meeting_ended:'Meeting held', no_show:'No-show', form_submitted:'Booking form answered',
-  teams_command:'Sales action', integration_error:'Integration issue',
+  teams_command:'Sales action', integration_error:'Integration issue', manual_email:'Email sent from a template',
 };
 const ALERT = {
   hot_lead:['Hot lead','bg-rose-50 text-rose-700'], click_check:['Clicks only: check first','bg-amber-50 text-amber-700'], booked:['Meeting booked','bg-emerald-50 text-emerald-700'], handoff:['Handed to sales','bg-green-100 text-green-800'],
@@ -106,6 +107,7 @@ const ALERT = {
 };
 const AI = {interested:'Interested', question:'Has a question', not_now:'Not now', not_interested:'Not interested', unsubscribe:'Unsubscribe', ooo:'Out of office', wrong_person:'Wrong person', unsure:'Unsure'};
 const ICON = {
+  mail:'<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>',
   overview:'<path d="M3 13h8V3H3zM13 21h8V11h-8zM3 21h8v-6H3zM13 3v6h8V3z"/>',
   leads:'<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>',
   chat:'<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
@@ -117,6 +119,7 @@ const PAGES = [
   {id:'overview', label:'Overview', icon:'overview', title:'Overview', sub:'How the agent is doing, at a glance'},
   {id:'leads', label:'Leads', icon:'leads', title:'Leads', sub:'Everyone the agent is following up with'},
   {id:'conversations', label:'Conversations', icon:'chat', title:'WhatsApp conversations', sub:'Chatbot and salesperson chats with leads'},
+  {id:'templates', label:'Email templates', icon:'mail', title:'Email templates', sub:'Preview, write, approve and send the emails the agent uses'},
   {id:'alerts', label:'Sales alerts', icon:'bell', title:'Sales alerts', sub:'What the sales team is told (Microsoft Teams in production)'},
   {id:'how', label:'How it works', icon:'flow', title:'How the agent works', sub:'The outreach plan, step by step'},
   {id:'settings', label:'Settings', icon:'gear', title:'Settings', sub:'Connections, time controls and sample data'},
@@ -192,6 +195,7 @@ function renderShell() {
   const acts = {
     overview: `<button class="btn" onclick="location.hash='#/how'">How it works</button><button class="btn btn-primary" onclick="openImport()">⇪ Import leads</button>`,
     leads: `<button class="btn" onclick="openAdd()">+ Add lead</button><button class="btn btn-primary" onclick="openImport()">⇪ Import CSV / Excel</button>`,
+    templates: `<button class="btn" onclick="tplNew('manual')">+ One-off email</button><button class="btn btn-primary" onclick="tplNew()">+ New template</button>`,
   };
   $('pageActions').innerHTML = acts[page] || '';
 }
@@ -200,7 +204,7 @@ let lastRendered = '';
 function renderPage(fromPoll) {
   renderShell();
   if (!data) { $('page').innerHTML = '<div class="text-sm text-slate-400">Loading…</div>'; return; }
-  const html = ({overview: pOverview, leads: pLeads, conversations: pConversations, alerts: pAlerts, how: pHow, settings: pSettings}[page])();
+  const html = ({overview: pOverview, leads: pLeads, conversations: pConversations, templates: pTemplates, alerts: pAlerts, how: pHow, settings: pSettings}[page])();
   if (fromPoll && html === lastRendered) return;
   // keep typed text and focus across re-renders
   const focused = document.activeElement && document.activeElement.id;
@@ -517,8 +521,10 @@ function pSettings() {
 }
 
 // ------------------------------------------------------------------ modals: import + add lead
-function openModal(html) { $('modal').innerHTML = html; $('modalWrap').classList.remove('hidden'); }
-function closeModal() { $('modalWrap').classList.add('hidden'); }
+function openModal(html, wide) {
+  $('modal').className = `fade bg-white rounded-2xl shadow-2xl w-full ${wide ? 'max-w-7xl h-[92vh]' : 'max-w-4xl max-h-[90vh]'} flex flex-col`;
+  $('modal').innerHTML = html; $('modalWrap').classList.remove('hidden'); }
+function closeModal() { $('modalWrap').classList.add('hidden'); tplPv = null; tplEd = null; }
 $('modalWrap').addEventListener('click', e => { if (e.target === $('modalWrap')) closeModal(); });
 
 let impFile = null;

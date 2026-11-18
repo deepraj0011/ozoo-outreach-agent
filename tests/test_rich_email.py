@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 from outreach.app import create_app, with_lead_token
 from outreach.email_answer import build_system
 from outreach.emailtool.mailpit import set_body
-from outreach.links import VALID_TAGS, VISIT_TAGS
+from outreach.links import VALID_TAGS, VISIT_TAGS, make_link
 from outreach.richmail import build_html, image_file, rich_parts, strip_markers, with_tracking
 from outreach.rules import SetVariant, decide
 from outreach.score import SCORE_POINTS
@@ -35,15 +35,14 @@ def test_plain_text_drops_markers_and_keeps_links():
     assert "See it: https://t/r/prod" in text and "Unsubscribe: https://t/r/unsub" in text
 
 
-def test_html_has_header_image_button_and_footer():
-    doc = build_html(BODY, RICH, VALS, "https://go.ozoo.ai", preheader="the hook")
-    assert 'src="https://go.ozoo.ai/img/header.png"' in doc and 'href="https://t/r/home"' in doc
+def test_html_is_a_personal_letter_with_image_button_and_footer():
+    doc = build_html(BODY, RICH, VALS, "https://go.ozoo.ai")
+    assert "header.png" not in doc and "display:none" not in doc  # no banner, no hidden preheader
     assert 'src="https://go.ozoo.ai/img/call-analysis.jpg"' in doc
     assert re.search(r'href="https://t/r/prod"[^>]*><img src="https://go.ozoo.ai/img/call-analysis', doc)
     assert 'href="https://t/r/book"' in doc and "Book &lt;now&gt;" in doc  # escaped label
-    assert "Intro text &amp; more." in doc and "See it &rarr;" in doc
+    assert "Intro text &amp; more." in doc and "See it&nbsp;&rarr;" in doc
     assert "Unsubscribe</a>" in doc and "Unsubscribe:" not in doc  # moved to the footer
-    assert "Voice AI agents</a>" in doc and "the hook" in doc
     assert "[[" not in doc
 
 
@@ -90,7 +89,8 @@ def test_email_1_stays_plain_and_2_to_4_are_designed(session):
                 doc = out[f"html_{step}"]
                 assert "[[" not in out[f"body_{step}"] and "[[" not in doc
                 assert not re.search(r"\{[a-z_]+\}", doc)
-                assert "/img/header.png" in doc and "Hi Asha," in doc
+                assert "/img/ozoo-mark.png" in doc and "Hi Asha," in doc  # the signature mark
+                assert make_link(lead.id, step, "booking", "email", settings=ST) in out[f"body_{step}"]
 
 
 def test_angle_picks_the_image_and_product_page(session):
@@ -104,7 +104,7 @@ def test_every_template_image_exists():
     tpl = load_templates()
     for a in tpl["angles"].values():
         assert image_file(a["image"])
-    for name in ("header", "call-analysis", "lender-handshake"):
+    for name in ("ozoo-mark", "call-analysis", "lender-handshake"):
         assert image_file(name)
 
 
@@ -193,3 +193,13 @@ def test_classifier_answers_with_the_last_email_as_context(session):
     expected = render_step(lead, 2, settings=ST)["body_2"].split("\n")[2]
     assert "<our_email>" in system and expected[:40] in system
     assert "/r/" not in system.split("<our_email>")[1]  # links stripped
+
+
+def test_callout_label_shows_once_and_text_starts_upper_case():
+    doc = build_html("> Use case: use case: a borrower calls\n\n[[button]]", {"button": "Go"}, VALS, "https://x")
+    assert doc.count("Use case") == 1 and ">A borrower calls<" in doc
+
+
+def test_lists_render_with_an_intro_line():
+    doc = build_html("Three things:\n- one\n- two\n\n[[button]]", {"button": "Go"}, VALS, "https://x")
+    assert "Three things:</p>" in doc and doc.count("&bull;") == 2

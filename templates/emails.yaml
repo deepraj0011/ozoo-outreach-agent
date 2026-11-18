@@ -6,16 +6,18 @@
 # - A subject or body can be a LIST of alternatives. The agent picks one per lead (stable for that
 #   lead, different across leads), so two people at the same bank don't get the same email.
 # - Every email must make sense on its own: most people see only one of the four.
-# - Emails 2-4 have a designed HTML version (rich: header, a clickable product image, a button,
-#   footer links; [[image]] / [[button]] mark the spots). Email 1 stays plain for the inbox.
-#   rich.image: a file in static/email, or `angle` (the angle's image).
+# - Emails 2-4 have a designed HTML version that still reads like a personal email (task 22,
+#   "Primary-first"): [[image]] = one product screen (rich.image: a file in static/email, or
+#   `angle`), [[button]] = the purple booking button (in the plain text: "<button>: <link>"),
+#   "> " paragraph = a use-case callout, "- " lines = a list. Keep to ONE text link besides
+#   Unsubscribe: every extra link makes Gmail's Promotions tab more likely. Email 1 stays plain.
 # - Facts only from kb/ozoo_kb.md. No prices. Never mention opens, clicks or reads.
 #
 # Placeholders: {first_name} {company} {signature} {booking_link} {unsubscribe_link} {pricing_link}
 #   {case_study_link} {product_link} {voice_link} {chat_link} {trial_link} {homepage_link}
-#   {angle_link} (the angle's product page); angle: {topic} {hook} {value} {proof} {ask};
+#   {angle_link} (the angle's product page); angle: {topic} {hook} {value} {proof} {ask} {usecase};
 #   replies only: {answer} (question_answer) {follow_up_when} (not_now_ack).
-# Step emails and the booking replies must contain {booking_link} and {unsubscribe_link}.
+# Step emails and the booking replies must contain {booking_link} (or [[button]]) and {unsubscribe_link}.
 # MARKETING / SALES: review every line before go-live.
 
 angles:
@@ -35,6 +37,9 @@ angles:
     ask:
       - "Would it be useful to compare that with how {company} reviews collections calls today?"
       - "Is call quality in collections something you're looking at this year?"
+    usecase:
+      - "Use case: an Indian NBFC handling about 1,500 recovery and service calls a day put every recorded call through Post-Call Analytics instead of a 2 to 5% sample. The first pass found 18 compliance flags the sample had missed and 300 long-pending cases."
+      - "Use case: your compliance team writes the fatal and critical rules for collections calls once. Every recorded call is checked against them in Hindi, Hinglish or English, each flag links to the moment in the call, and flags get a stricter second check."
   quality:
     match: [qa, quality, complian, risk, audit, grievance]
     page: product            # its product page: {angle_link}
@@ -51,6 +56,9 @@ angles:
     ask:
       - "How does {company} decide which calls get reviewed today?"
       - "Would a look at full-coverage QA be useful for {company}?"
+    usecase:
+      - "Use case: your QA team sets the scorecard and the fatal and critical rules once. Every recorded call is then scored, each mark links to the exact moment in the transcript, and flagged calls get a stricter second check before a reviewer sees them."
+      - "Use case: calls are grouped from fatal to above baseline, with agent leaderboards, so coaching starts from the calls that matter instead of a random 2 to 5% sample."
   sales:
     match: [sales, tele, growth, retention, portfolio, cross, upsell, business, revenue, acquisition]
     page: product            # its product page: {angle_link}
@@ -67,6 +75,9 @@ angles:
     ask:
       - "Would it help to see what that looks like on {company}'s own calls?"
       - "Is turning existing calls into pipeline on your list this year?"
+    usecase:
+      - "Use case: on a service call, a borrower asks about a top-up loan. Post-Call Analytics flags it as a buying signal, so it reaches your sales team instead of staying in a recording. With one NBFC, the first pass found 150 upsell and retention signals."
+      - "Use case: interest in a balance transfer or a new loan, mentioned on a collections or service call, is flagged as a buying signal, so your sales team can call back while the borrower is still interested."
   service:
     match: [cx, customer, service, operation, onboard, contact, call cent, experience, support, kyc]
     page: chat            # its product page: {angle_link}
@@ -83,6 +94,9 @@ angles:
     ask:
       - "Which of these conversations takes the most of {company}'s team's time today?"
       - "Would a short look be useful for {company}'s service team?"
+    usecase:
+      - "Use case: a borrower sends KYC documents on WhatsApp, asks about an EMI in web chat, and calls a week later. The chat agent answers from your own policy documents, keeps one history across channels, and hands over to your team with the transcript when needed."
+      - "Use case: statement requests and EMI queries on WhatsApp are answered from your own FAQs and policy PDFs, day and night, and anything unusual goes to a person with the full conversation attached."
   technology:
     match: [cto, cio, cdo, technolog, it, digital, engineering, data, architect, infosec, security]
     page: product            # its product page: {angle_link}
@@ -99,6 +113,9 @@ angles:
     ask:
       - "Would a short technical walkthrough be useful for {company}?"
       - "Who on your side usually reviews tools like this?"
+    usecase:
+      - "Use case: Post-Call Analytics is bought on AWS Marketplace and installed into your own AWS account in Mumbai in under an hour. Transcripts mask Aadhaar, PAN, account numbers and dates of birth, and Habilelabs has no access to the data."
+      - "Use case: role-based access, an audit trail of QA overrides and admin changes, and data retention you set from 30 days to four years, all inside your own AWS account in Mumbai."
   general:
     match: []
     page: homepage            # its product page: {angle_link}
@@ -115,6 +132,9 @@ angles:
     ask:
       - "Is this something {company} is looking at?"
       - "Would a short conversation be useful?"
+    usecase:
+      - "Use case: an Indian NBFC handling about 1,500 calls a day analysed every recorded call in its first pass: 18 compliance flags the manual sample had missed, 300 long-pending cases and 150 upsell and retention signals."
+      - "Use case: a lender starts with Post-Call Analytics on the recordings it already has, adds one voice journey such as EMI reminders, then WhatsApp, and all three share one memory of each borrower."
 
 steps:
   1:
@@ -191,19 +211,19 @@ steps:
         Unsubscribe: {unsubscribe_link}
   2:
     standard:
-      subject: ["What one NBFC found in its calls", "An example on {topic}", "{company} and {topic}"]
-      rich: &rich_proof
+      subject: ["A real example on {topic}", "What one NBFC found in its calls", "{company} and {topic}"]
+      rich: &rich_screen
         image: angle
         image_alt: "Ozoo.ai product screen (illustrative data)"
-        caption: "Ozoo.ai product screen, illustrative data. Click to see the product."
+        caption: "Ozoo.ai, illustrative data. Click the image to see the product."
         button: "Book a 30-minute demo"
       body:
         - |-
           Hi {first_name},
 
-          One example that may be relevant to {company}.
+          {hook}
 
-          {proof}
+          > {usecase}
 
           [[image]]
 
@@ -211,36 +231,18 @@ steps:
 
           [[button]]
 
-          {signature}
-
-          The full case study: {case_study_link}
-          Pick a time: {booking_link}
-          Unsubscribe: {unsubscribe_link}
-        - |-
-          Hi {first_name},
-
-          A short example rather than a pitch: {proof}
-
-          [[image]]
-
-          {value}
-
-          {ask}
-
-          [[button]]
-
-          Best,
           {signature}
 
           See how it works: {angle_link}
-          Pick a time if useful: {booking_link}
           Unsubscribe: {unsubscribe_link}
         - |-
           Hi {first_name},
 
-          {hook}
+          A short example rather than a pitch.
 
-          Here is what that looks like in practice. {proof}
+          > {usecase}
+
+          {value}
 
           [[image]]
 
@@ -248,10 +250,30 @@ steps:
 
           [[button]]
 
+          Best,
+          {signature}
+
+          The case study: {case_study_link}
+          Unsubscribe: {unsubscribe_link}
+        - |-
+          Hi {first_name},
+
+          {proof}
+
+          [[image]]
+
+          What that could look like at {company}:
+          - every recorded call reviewed, not a 2 to 5% sample
+          - the evidence for each flag one click away in the transcript
+          - buying signals and long-pending cases found in calls you already have
+
+          {ask}
+
+          [[button]]
+
           {signature}
 
           Read the case study: {case_study_link}
-          30 minutes, live: {booking_link}
           Unsubscribe: {unsubscribe_link}
     case_study:
       subject: ["The NBFC example, in more detail", "How the NBFC pilot was set up"]
@@ -259,37 +281,34 @@ steps:
         image: compliance-checks
         image_link: case_study
         image_alt: "Compliance checks in Ozoo.ai Post-Call Analytics (illustrative data)"
-        caption: "Compliance checks on every call. Click for the case study."
+        caption: "Compliance checks on every call, illustrative data. Click for the case study."
         button: "Walk me through it"
       body: |-
         Hi {first_name},
 
-        {proof}
+        Here is the example in a little more detail.
+
+        > Result: an Indian NBFC handling about 1,500 recovery and service calls a day had every recorded call in scope analysed, against a 2 to 5% sample before. The first pass found 18 compliance flags the sample had missed, 300 long-pending cases and 150 upsell and retention signals.
 
         [[image]]
 
-        The write-up covers how the first pass was set up and what came out of it.
-
-        {ask}
+        These are counts from the proof of concept, not audited business results. {ask}
 
         [[button]]
 
         {signature}
 
         The case study: {case_study_link}
-        Pick a time: {booking_link}
         Unsubscribe: {unsubscribe_link}
     product:
       subject: ["How it would work at {company}", "A closer look at {topic}"]
-      rich:
-        image: angle
-        image_alt: "Ozoo.ai product screen (illustrative data)"
-        caption: "Click to see the product page."
-        button: "See it live, 30 minutes"
+      rich: *rich_screen
       body: |-
         Hi {first_name},
 
         In short: {value}
+
+        > {usecase}
 
         [[image]]
 
@@ -300,29 +319,29 @@ steps:
         {signature}
 
         Product page: {angle_link}
-        Pick a time: {booking_link}
         Unsubscribe: {unsubscribe_link}
     booking_slots:
       subject: ["Open slots this week", "A time that suits you"]
       rich:
         image: angle
         image_alt: "Ozoo.ai product screen (illustrative data)"
-        button: "Choose a slot"
+        caption: "Ozoo.ai, illustrative data."
+        button: "Choose a 30-minute slot"
       body: |-
         Hi {first_name},
 
-        {proof}
-
-        [[image]]
-
-        If it's worth a conversation, here are a few open slots; choose whichever works.
+        If a conversation about {topic} would help, here are open slots this week and next; choose whichever suits you.
 
         [[button]]
 
+        In 30 minutes we can cover:
+        - how {company} reviews calls today, and what full coverage would change
+        - where voice or WhatsApp agents could take on routine conversations
+        - what a pilot for one portfolio or journey would look like
+
         {signature}
 
-        Pricing and plans: {pricing_link}
-        Pick a time: {booking_link}
+        Plans: {pricing_link}
         Unsubscribe: {unsubscribe_link}
   3:
     standard:
@@ -330,15 +349,16 @@ steps:
       rich: &rich_trial
         image: angle
         image_alt: "Ozoo.ai product screen (illustrative data)"
-        caption: "Runs in your own AWS account in Mumbai. Click to see the product."
+        caption: "Click the image to see the product."
         button: "Scope a pilot in 30 minutes"
       body:
         - |-
           Hi {first_name},
 
-          {hook}
-
-          Most lenders start small: Post-Call Analytics on the call recordings they already have. It installs into your own AWS account in Mumbai in under an hour, and there is a 30-day trial of the Starter plan with no software charge for buyers in India.
+          If {topic} is on the list at {company}, the easiest way to judge Ozoo.ai is on your own data:
+          - Post-Call Analytics installs into your own AWS account in Mumbai in under an hour
+          - 30 days of the Starter plan with no software charge, for buyers in India
+          - or a pilot for one portfolio, one DPD bucket or one journey, with success metrics agreed up front
 
           [[image]]
 
@@ -348,42 +368,38 @@ steps:
 
           {signature}
 
-          Start the free trial on AWS Marketplace: {trial_link}
-          Plans: {pricing_link}
-          30 minutes to scope it: {booking_link}
+          Start the free trial: {trial_link}
           Unsubscribe: {unsubscribe_link}
         - |-
           Hi {first_name},
 
-          If {topic} is on your list, the easiest way to judge it is on your own data. A pilot starts with a 30-minute scoping call, then a written plan for one portfolio, one DPD bucket or one journey, with success metrics agreed up front.
+          {hook}
 
-          [[image]]
+          Most lenders start small: Post-Call Analytics on the recordings they already have, then one voice journey, then chat. A pilot begins with a 30-minute scoping call, and we then write a plan with success metrics agreed up front.
 
-          {ask}
+          > {usecase}
 
           [[button]]
 
           Best,
           {signature}
 
-          See how it works: {angle_link}
-          Pick a time: {booking_link}
+          How it works: {angle_link}
           Unsubscribe: {unsubscribe_link}
         - |-
           Hi {first_name},
 
-          A practical note rather than a pitch: you can try Post-Call Analytics on {company}'s own recordings for 30 days with no software charge (Starter plan, buyers in India). Your data stays in your own AWS account in Mumbai, and Habilelabs has no access to it.
+          A practical note: you can try Post-Call Analytics on {company}'s own recordings for 30 days with no software charge (Starter plan, buyers in India). The data stays in your own AWS account in Mumbai, and Habilelabs has no access to it.
 
           [[image]]
 
-          If you'd like a hand setting it up, or want to scope a voice or WhatsApp pilot instead, 30 minutes is enough.
+          If you'd rather scope a voice or WhatsApp pilot instead, 30 minutes is enough to start.
 
           [[button]]
 
           {signature}
 
           The free trial: {trial_link}
-          Pick a time: {booking_link}
           Unsubscribe: {unsubscribe_link}
     case_study:
       subject: ["From a 2 to 5% sample to every call"]
@@ -395,14 +411,13 @@ steps:
 
         [[image]]
 
-        A pilot like that starts with a 30-minute scoping call and one portfolio or journey.
+        A pilot like that starts with a 30-minute scoping call, then a written plan for one portfolio or journey, with success metrics agreed up front.
 
         [[button]]
 
         {signature}
 
         The case study: {case_study_link}
-        Pick a time: {booking_link}
         Unsubscribe: {unsubscribe_link}
     product:
       subject: ["Trying it on your own calls"]
@@ -414,15 +429,13 @@ steps:
 
         [[image]]
 
-        There is a 30-day trial of the Starter plan with no software charge for buyers in India, and the setup takes under an hour.
+        There is a 30-day trial of the Starter plan with no software charge for buyers in India. The setup takes under an hour, and most teams have their scorecards and agents ready within a week.
 
         [[button]]
 
         {signature}
 
         Start the free trial: {trial_link}
-        Product page: {angle_link}
-        Pick a time: {booking_link}
         Unsubscribe: {unsubscribe_link}
     booking_slots:
       subject: ["30 minutes to scope a pilot"]
@@ -430,24 +443,18 @@ steps:
       body: |-
         Hi {first_name},
 
-        A pilot starts with a 30-minute scoping call; then we write a plan for one portfolio or journey, with success metrics agreed up front.
-
-        [[image]]
+        A pilot starts with a 30-minute scoping call. We then write a plan for one portfolio, one DPD bucket or one journey, with success metrics agreed up front.
 
         [[button]]
 
         {signature}
 
         Plans: {pricing_link}
-        Pick a time: {booking_link}
         Unsubscribe: {unsubscribe_link}
   4:
     standard:
       subject: ["Should I close the loop?", "Last note on {topic}", "{first_name}, one last question"]
       rich: &rich_last
-        image: lender-handshake
-        image_link: homepage
-        image_alt: "Ozoo.ai"
         button: "Yes, let's talk"
       body:
         - |-
@@ -456,15 +463,14 @@ steps:
           I haven't heard back, so I'll assume the timing isn't right and stop here.
 
           If it helps, a one-word reply is plenty:
-          1 - interested, let's talk
-          2 - not now, try me later
-          3 - not me, it's someone else at {company}
+          - 1: interested, let's talk
+          - 2: not now, try me later
+          - 3: not me, it's someone else at {company}
 
           [[button]]
 
           {signature}
 
-          Or pick a time directly: {booking_link}
           Unsubscribe: {unsubscribe_link}
         - |-
           Hi {first_name},
@@ -479,18 +485,14 @@ steps:
           {signature}
 
           Everything in one place: {homepage_link}
-          30 minutes, any time: {booking_link}
           Unsubscribe: {unsubscribe_link}
         - |-
           Hi {first_name},
 
           Closing the loop on {topic}. Three things you can use even if we never speak:
-
-          - Manual QA typically reviews 2 to 5% of calls; full coverage is now practical.
+          - Manual QA typically reviews 2 to 5% of calls; reviewing every call is now practical.
           - Post-Call Analytics has a 30-day trial with no software charge for buyers in India.
           - Voice and WhatsApp agents can take on EMI reminders and KYC follow-up, with DND and consent rules built in.
-
-          [[image]]
 
           If any of it becomes a priority, reply here or pick a time.
 
@@ -499,7 +501,6 @@ steps:
           {signature}
 
           Free trial: {trial_link}
-          Pick a time: {booking_link}
           Unsubscribe: {unsubscribe_link}
     case_study:
       subject: ["Closing the loop"]
@@ -507,16 +508,14 @@ steps:
       body: |-
         Hi {first_name},
 
-        Last note from me. The NBFC example stays here if it's useful later.
+        Last note from me. The NBFC example stays here if it's useful later: {case_study_link}
 
-        A one-word reply is plenty: 1 - let's talk, 2 - later, 3 - someone else at {company}.
+        A one-word reply is plenty: 1, let's talk; 2, later; 3, someone else at {company}.
 
         [[button]]
 
         {signature}
 
-        The case study: {case_study_link}
-        Pick a time: {booking_link}
         Unsubscribe: {unsubscribe_link}
     product:
       subject: ["Closing the loop"]
@@ -524,16 +523,14 @@ steps:
       body: |-
         Hi {first_name},
 
-        Last note from me. The product page stays here if it's useful later.
+        Last note from me. The product page stays here if it's useful later: {angle_link}
 
-        A one-word reply is plenty: 1 - let's talk, 2 - later, 3 - someone else at {company}.
+        A one-word reply is plenty: 1, let's talk; 2, later; 3, someone else at {company}.
 
         [[button]]
 
         {signature}
 
-        Product page: {angle_link}
-        Pick a time: {booking_link}
         Unsubscribe: {unsubscribe_link}
     booking_slots:
       subject: ["Still happy to find a time"]
@@ -547,7 +544,6 @@ steps:
 
         {signature}
 
-        Pick a time: {booking_link}
         Unsubscribe: {unsubscribe_link}
 
 replies:

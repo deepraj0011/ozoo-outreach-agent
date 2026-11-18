@@ -129,7 +129,7 @@ def test_angle_validation(tmp_path, tpl):
         p.write_text(yaml.safe_dump(t))
         with pytest.raises(ValueError):
             load_templates(str(p))
-    assert set(ANGLE_FIELDS) == {"topic", "hook", "value", "proof", "ask"} and "standard" in STEP_VARIANTS
+    assert set(ANGLE_FIELDS) == {"topic", "hook", "value", "proof", "ask", "usecase"} and "standard" in STEP_VARIANTS
 
 
 # ---------------------------------------------------------------- answering a question

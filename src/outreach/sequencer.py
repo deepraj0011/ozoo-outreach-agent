@@ -27,7 +27,7 @@ END_WAIT_DAYS = 5  # = config.DELAY_DEFAULTS_S["end_of_sequence_wait"] (docs onl
 VARIANT_PRIORITY = ("booking_slots", "case_study", "product")
 STEP_VARIANTS = ("standard", "case_study", "product", "booking_slots")
 # Per-lead angle texts (templates `angles:`), chosen from the lead's role / industry (task 20).
-ANGLE_FIELDS = ("topic", "hook", "value", "proof", "ask")
+ANGLE_FIELDS = ("topic", "hook", "value", "proof", "ask", "usecase")
 ALLOWED_PLACEHOLDERS = frozenset({
     "first_name", "company", "booking_link", "unsubscribe_link", "pricing_link",
     "case_study_link", "product_link", "voice_link", "chat_link", "trial_link", "homepage_link", "signature",
@@ -53,10 +53,16 @@ class SequencerConfigError(Exception):
 
 
 def _fields(text: str) -> List[str]:
+    """The {placeholders} in `text`. Plain names only: a format spec ({name:>9999}) or a conversion
+    ({name!r}) is refused (it could blow a text up, and nested specs are not checked)."""
     try:
-        return [f for _, f, _, _ in string.Formatter().parse(text) if f is not None]
+        parsed = list(string.Formatter().parse(text))
     except ValueError as exc:
         raise ValueError(f"bad template syntax: {exc}") from exc
+    for _, field, spec, conv in parsed:
+        if field is not None and (spec or conv):
+            raise ValueError(f"bad template syntax: {{{field}}} must be a plain placeholder")
+    return [f for _, f, _, _ in parsed if f is not None]
 
 
 def _check_text(where: str, text: Any, need_links: bool) -> None:
@@ -68,6 +74,8 @@ def _check_text(where: str, text: Any, need_links: bool) -> None:
             raise ValueError(f"template {where} uses unknown placeholder {{{f}}}")
     if need_links:
         for req in ("booking_link", "unsubscribe_link"):
+            if req == "booking_link" and "[[button]]" in text:
+                continue  # the button is the booking link (and a "Book …: <link>" line in the text)
             if req not in fields:
                 raise ValueError(f"template {where} must contain {{{req}}}")
 
@@ -153,6 +161,15 @@ def _clean(value: Optional[str]) -> str:
     return _WS.sub(" ", value or "").strip()[:MAX_VALUE_LEN].strip()
 
 
+_LEAD_URL = re.compile(r"(?:https?://|www\.)\S*", re.IGNORECASE)
+
+
+def _lead_text(value: Optional[str]) -> str:
+    """A lead-supplied value (name, company): no web addresses, so imported data can never put a
+    link into our email."""
+    return _clean(_LEAD_URL.sub("", value or ""))
+
+
 def _pick(options: Any, lead: Lead, *salt: object) -> str:
     """One of the alternatives, the same for this lead every time (stable across restarts), but
     different across leads: no two prospects at a bank get the same email word for word."""
@@ -173,14 +190,17 @@ def angle_for(lead: Lead, templates: Dict[str, Any]) -> str:
 
 
 def _values(lead: Lead, step: int, settings: Settings,
-            templates: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
+            templates: Optional[Dict[str, Any]] = None, preview: bool = False) -> Dict[str, str]:
     def link(tag: str) -> str:
+        if preview:  # the web app's preview: the real pages, no tracked link, no event
+            targets = settings.link_targets
+            return targets.get(tag) or targets.get("homepage") or "https://ozoo.ai/"
         return make_link(lead.id, step, tag, "email", settings=settings)
 
-    name = _clean(lead.name)
+    name = _lead_text(lead.name)
     vals = {
         "first_name": name.split(" ")[0] if name else "",
-        "company": _clean(lead.company),
+        "company": _lead_text(lead.company),
         "booking_link": link("booking"),
         "unsubscribe_link": link("unsubscribe"),
         "pricing_link": link("pricing"),
@@ -209,28 +229,69 @@ def _variant(lead: Lead) -> str:
     return next((v for v in VARIANT_PRIORITY if v in present), "standard")
 
 
+# Versions (task 22): every body alternative of a step variant is one built-in version; the web app
+# (template_library.py) adds approved custom versions under CUSTOM_KEY and switched-off built-in
+# keys under OFF_KEY of a copy of the templates dict.
+CUSTOM_KEY = "_custom"
+OFF_KEY = "_off"
+
+
+def builtin_key(step: int, variant: str, index: int) -> str:
+    return f"builtin.s{step}.{variant}.{index}"
+
+
+def step_versions(t: Dict[str, Any], step: int, variant: str) -> List[Dict[str, Any]]:
+    """The built-in versions of one step variant (one per body alternative)."""
+    block = t["steps"][step][variant]
+    return [{"key": builtin_key(step, variant, i), "kind": "sequence", "step": step, "variant": variant,
+             "angle": "any", "subject": block["subject"], "body": b, "rich": block.get("rich")}
+            for i, b in enumerate(_alternatives("", block["body"]))]
+
+
+def live_versions(t: Dict[str, Any], step: int, variant: str, angle: str) -> List[Dict[str, Any]]:
+    off = set(t.get(OFF_KEY) or ())
+    custom = [c for c in t.get(CUSTOM_KEY) or () if c.get("kind") == "sequence" and c.get("step") == step
+              and c.get("variant") == variant and c.get("angle") in ("any", angle)]
+    return [v for v in step_versions(t, step, variant) if v["key"] not in off] + custom
+
+
+def render_version(lead: Lead, version: Dict[str, Any], step: int, *, templates: Dict[str, Any],
+                   settings: Settings, preview: bool = False) -> Dict[str, str]:
+    """One version for one lead: {"subject", "text", "html"} ("html" empty for a plain email)."""
+    vals = _values(lead, step, settings, templates, preview=preview)
+    salt = (step, version.get("variant", ""), version.get("key", ""))
+    subject = _clean(_pick(version["subject"], lead, *salt, "subject").format_map(vals))  # one line
+    subject = subject[:1].upper() + subject[1:]  # "{topic}" subjects start lower-case
+    body = _pick(version["body"], lead, *salt, "body").format_map(vals)
+    rich = dict(version["rich"]) if version.get("rich") else None
+    if rich and rich.get("image") == "angle":  # the screen that fits the lead's angle
+        angle = (templates.get("angles") or {}).get(angle_for(lead, templates), {})
+        rich["image"] = angle.get("image", "call-analysis")
+        rich.setdefault("image_link", angle.get("page", "product"))
+    parts = rich_parts(body, rich, vals, settings.link_base_url)
+    return {"subject": subject, "text": parts["text"], "html": parts["html"]}
+
+
+def choose_version(lead: Lead, step: int, templates: Dict[str, Any]) -> Dict[str, Any]:
+    """The lead's version of `step`: its variant's live versions, else the standard ones, else (all
+    switched off) the built-in standard ones: an email is never blank."""
+    v = _variant(lead)
+    angle = angle_for(lead, templates)
+    cands = (live_versions(templates, step, v, angle) or live_versions(templates, step, "standard", angle)
+             or step_versions(templates, step, "standard"))
+    return _pick(cands, lead, step, v, "version")
+
+
 def render_step(
     lead: Lead, step: int, *, templates: Optional[Dict[str, Any]] = None, settings: Optional[Settings] = None
 ) -> Dict[str, str]:
     t = templates or load_templates()
     s = settings or get_settings()
-    block = t["steps"][step]
-    v = _variant(lead)
-    variant = block[v]
-    vals = _values(lead, step, s, t)
-    subject = _clean(_pick(variant["subject"], lead, step, v, "subject").format_map(vals))  # one line
-    subject = subject[:1].upper() + subject[1:]  # "{topic}" subjects start lower-case
-    body = _pick(variant["body"], lead, step, v, "body").format_map(vals)
-    rich = dict(variant["rich"]) if variant.get("rich") else None
-    if rich and rich.get("image") == "angle":  # the screen that fits the lead's angle
-        angle = (t.get("angles") or {}).get(angle_for(lead, t), {})
-        rich["image"] = angle.get("image", "call-analysis")
-        rich.setdefault("image_link", angle.get("page", "product"))
-    parts = rich_parts(body, rich, vals, s.link_base_url, preheader=vals.get("hook", ""))
-    out = {f"subject_{step}": subject, f"body_{step}": parts["text"]}
-    if parts["html"]:
-        out[f"html_{step}"] = parts["html"]  # the designed version (task 21); the text always goes too
-    return out
+    out = render_version(lead, choose_version(lead, step, t), step, templates=t, settings=s)
+    rendered = {f"subject_{step}": out["subject"], f"body_{step}": out["text"]}
+    if out["html"]:
+        rendered[f"html_{step}"] = out["html"]  # the designed version (task 21); the text always goes too
+    return rendered
 
 
 def has_reply(key: str, templates: Optional[Dict[str, Any]] = None) -> bool:
@@ -264,6 +325,12 @@ def _tracking_vars(lead: Lead, campaign_step: int, real: int, s: Settings) -> Di
     return out
 
 
+def _live_templates(session: Session) -> Dict[str, Any]:
+    """The YAML plus the web app's approved / switched-off versions (template_library, task 22)."""
+    from .template_library import templates_for  # imports this module
+    return templates_for(session)
+
+
 LAST_STEP = max(SCHEDULE_DAYS)
 STEP_OFFSET = "step_offset"
 
@@ -295,7 +362,7 @@ def enroll(
     campaign_id = s.campaign_ids.get(group)
     if not campaign_id:
         raise SequencerConfigError(f"no campaign configured for timezone group {group!r}")
-    t = templates or load_templates()
+    t = templates or _live_templates(session)
     offset = from_step - 1
     variables: Dict[str, str] = {}
     for step in SCHEDULE_DAYS:
@@ -303,6 +370,7 @@ def enroll(
         rendered = render_step(lead, real, templates=t, settings=s)
         variables[f"subject_{step}"] = rendered[f"subject_{real}"]
         variables[f"body_{step}"] = rendered[f"body_{real}"]
+        variables[f"html_{step}"] = rendered.get(f"html_{real}", "")  # the designed version, if any
         variables.update(_tracking_vars(lead, step, real, s))
     vals = _values(lead, 1, s)
     variables["first_name"] = vals["first_name"]
@@ -329,9 +397,10 @@ def refresh_next_step(
     campaign_step = real - step_offset(lead)
     if campaign_step < 1:
         return
-    rendered = render_step(lead, real, templates=templates, settings=settings)
+    rendered = render_step(lead, real, templates=templates or _live_templates(session), settings=settings)
     tool.update_variables(lead.tool_lead_id, {f"subject_{campaign_step}": rendered[f"subject_{real}"],
                                               f"body_{campaign_step}": rendered[f"body_{real}"],
+                                              f"html_{campaign_step}": rendered.get(f"html_{real}", ""),
                                               **_tracking_vars(lead, campaign_step, real,
                                                                settings or get_settings())})
 

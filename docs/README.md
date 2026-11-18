@@ -18,6 +18,7 @@ Start with **onboarding**, then pick the guide for what you want to do.
 | [Demo script](guides/demo-script.md) | Giving the 10-minute demo from the web app |
 | [Real demo](guides/real-demo.md) | A free demo with real Gmail, the Meta WhatsApp test number and a real AI model |
 | [Visit tracking](guides/visit-tracking.md) | Installing the one-line reading snippet on the website so the agent sees verified visits (a person read the page) |
+| [Email templates](guides/email-templates.md) | The Templates screen (preview, write, approve, send by hand) and what gets an email into the Primary inbox |
 | [Mailbox mode](guides/mailbox-mode.md) | Sending email from our own mailboxes (`EMAIL_MODE=mailbox`): domain, DNS, warm-up, Reacher verification |
 
 ## 3. Plan (what we agreed to build)

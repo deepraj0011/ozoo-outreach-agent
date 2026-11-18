@@ -94,3 +94,9 @@ Added 2026-11-18 (task 21):
 - [ ] **Booking link and its webhook:** if `LINK_TARGETS.booking` is the Microsoft Bookings page (today's "book a demo" calendar on ozoo.ai), bookings there are **not** detected by the agent (no webhook): the lead keeps getting follow-ups until sales marks it. Either use Cal.com for the scoping call (the `/webhooks/cal` flow) or add a Microsoft Graph / Power Automate hook before volume.
 - [ ] **Designed follow-ups:** send emails 2-4 to the test inboxes and check them in Gmail (web + phone), Outlook (web + desktop, images blocked by default) and Apple Mail: header, product image and button show, and the alt text reads well with images off. Check that they still reach Primary on the warmed-up domain; if not, remove the `rich:` block of step 2 first.
 - [ ] **Image rights:** the screens in `static/email/` are ozoo.ai's own product screenshots with illustrative data; marketing confirms they may go in emails.
+
+Added 2026-11-18 (task 22):
+
+- [ ] **`TEMPLATE_APPROVER_PASSCODE`** set (a strong value, known to the product manager only) wherever the web app runs.
+- [ ] **Sign-in before the Templates screen is used by a team:** the web app is local-only and has no user accounts; names on changes are self-declared. Before a shared deployment, put it behind company sign-in (e.g. Microsoft Entra) and make "approver" a role.
+- [ ] **Primary inbox:** follow docs/guides/email-templates.md section 2 (own sending and tracking domains, SPF/DKIM/DMARC, warm-up, verified lists, Postmaster Tools).

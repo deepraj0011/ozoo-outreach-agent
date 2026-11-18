@@ -61,8 +61,11 @@ class FakeEmailTool:
         self._rec("find_lead", email)
         return self._by_email.get((email or "").lower())
 
-    def reply(self, tool_lead_id: str, body: str) -> bool:
-        self._rec("reply", tool_lead_id, body)
+    def reply(self, tool_lead_id: str, body: str, html: Optional[str] = None) -> bool:
+        if html:
+            self._rec("reply", tool_lead_id, body, html)
+        else:
+            self._rec("reply", tool_lead_id, body)
         return self.reply_supported
 
     def parse_webhook(self, headers: Mapping[str, str], body: bytes,

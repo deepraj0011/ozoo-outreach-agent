@@ -436,12 +436,14 @@ def actions_for_class(rc: ReplyClass, lead: Lead, event: Event, now: datetime,
 
 # ------------------------------------------------------------------ Deps.classify
 
-def _last_email(lead: Lead, settings: Any) -> str:
+def _last_email(session: Session, lead: Lead, settings: Any) -> str:
     """The text of the sequence email the lead is answering (links removed), for the answer's
-    context. Empty if it can't be rendered."""
-    step = lead.step_sent or 1
+    context: the same version the lead got (web-app templates included). Empty if it can't be
+    rendered."""
+    from .template_library import templates_for
+    step = min(max(lead.step_sent or 1, 1), 4)
     try:
-        body = render_step(lead, min(max(step, 1), 4), settings=settings)[f"body_{min(max(step, 1), 4)}"]
+        body = render_step(lead, step, templates=templates_for(session), settings=settings)[f"body_{step}"]
     except Exception:  # noqa: BLE001 - context is optional
         return ""
     return re.sub(r"https?://\S+", "", body)
@@ -468,7 +470,7 @@ def make_classifier(settings: Any, llm: Optional[LLMClient] = None
                 and (event.data or {}).get("matched_by") != "domain"):
             answer = answer_question(strip_quoted(str(data.get("text") or "")), kb, llm, model=chat_model,
                                      today=now.date(), lead_id=lead.id, kb_price_set=kb_price_set,
-                                     context=_last_email(lead, settings))
+                                     context=_last_email(session, lead, settings))
         return actions_for_class(rc, lead, event, now, answer=answer)
 
     return classify

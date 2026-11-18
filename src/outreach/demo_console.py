@@ -34,6 +34,28 @@ import re
 
 PAGE = Path(__file__).with_name("demo_console.html")
 LOOPBACK_CLIENTS = frozenset({"127.0.0.1", "::1", "localhost", "testclient"})
+# Host / Origin names the console answers to: a page on another site that re-points its own DNS
+# name at 127.0.0.1 (DNS rebinding) still sends its own name, so it is refused ("testserver" is the
+# test client's default, not a real name).
+LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "testserver"})
+
+
+def _host_name(value: str) -> str:
+    """"127.0.0.1:8000" / "[::1]:8000" / "http://localhost:8000" -> the bare host name."""
+    v = value.strip().lower().split("://", 1)[-1].split("/", 1)[0]
+    if v.startswith("["):
+        return v[1:v.find("]")] if "]" in v else v
+    return v.rsplit(":", 1)[0] if v.count(":") == 1 else v
+
+
+def is_local_request(request: Request) -> bool:
+    client = request.client.host if request.client else ""
+    if any(h in request.headers for h in TUNNEL_HEADERS) or client not in LOOPBACK_CLIENTS:
+        return False
+    if _host_name(request.headers.get("host", "")) not in LOCAL_HOSTS:
+        return False
+    origin = request.headers.get("origin")
+    return origin is None or _host_name(origin) in LOCAL_HOSTS
 TUNNEL_HEADERS = ("cf-connecting-ip", "cf-ray", "x-forwarded-for", "x-forwarded-host", "x-real-ip",
                   "forwarded", "ngrok-skip-browser-warning")
 IMPORT_MAX_BYTES = 5 * 1024 * 1024
@@ -373,11 +395,8 @@ def register(app: FastAPI, session_factory: sessionmaker, clock: Callable[[], da
         even though it arrives from 127.0.0.1: those get a 404. Tracked links (/r/), webhooks and
         unsubscribe pages are not affected."""
         path = request.url.path
-        if path == "/" or path == "/demo" or path.startswith("/demo/"):
-            client = request.client.host if request.client else ""
-            proxied = any(h in request.headers for h in TUNNEL_HEADERS)
-            if proxied or client not in LOOPBACK_CLIENTS:
-                return Response(status_code=404)
+        if (path == "/" or path == "/demo" or path.startswith("/demo/")) and not is_local_request(request):
+            return Response(status_code=404)
         return await call_next(request)
 
     @app.get("/", include_in_schema=False)

@@ -204,6 +204,9 @@ class Settings(BaseSettings):
     # engaged visit (15 s of active reading plus scrolling, or a second page). Engaged visits score
     # and count as a confirmed human signal. Needs the snippet on the website.
     email_signature: str = Field("The Ozoo.ai team", max_length=200)  # {signature} in email copy
+    # Templates screen (task 22): approving a template, switching one off and sending manually need
+    # this passcode (the product manager's). Unset = those actions are refused; drafts still work.
+    template_approver_passcode: Optional[SecretStr] = None
     visit_tracking: bool = True
     # Our own sender (mailbox / gmail mode): send only inside this window, follow-ups rotating
     # afternoon / morning (outreach.sendwindow). Unset = Mon-Fri 09:30-17:30 in production, off
