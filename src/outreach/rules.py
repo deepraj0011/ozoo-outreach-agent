@@ -60,9 +60,10 @@ class LeadSnapshot:
     wa_human_owner: Optional[str]
     wa_window_open: bool
     flags: Mapping[str, Any]
+    clicks_need_check: bool = False  # settings.click_alerts_need_check (see _score)
 
     @classmethod
-    def from_lead(cls, lead: Any, now: datetime) -> "LeadSnapshot":
+    def from_lead(cls, lead: Any, now: datetime, *, clicks_need_check: bool = False) -> "LeadSnapshot":
         return cls(
             id=lead.id,
             state=LeadState(lead.state),
@@ -77,6 +78,7 @@ class LeadSnapshot:
             wa_human_owner=lead.wa_human_owner,
             wa_window_open=lead.wa_window_until is not None and lead.wa_window_until > now,
             flags=MappingProxyType(dict(lead.variant_flags or {})),
+            clicks_need_check=clicks_need_check,
         )
 
 
@@ -143,12 +145,27 @@ def _engage(lead: LeadSnapshot, reason: str) -> List[Action]:
     return [StopAllOutreach(), *_set_state(lead, S.ENGAGED, reason), Classify(), PauseColleagues()]
 
 
-def _score(lead: LeadSnapshot, points: int, *, force_hot_alert: bool = False) -> List[Action]:
-    """AddScore (if > 0) plus at most one hot_lead alert (ruling C)."""
+CLICK_CHECK_ALERTED = "click_check_alerted"
+CLICK_CHECK_TEXT = ("link clicks only, no reply or booking yet: may be a company security scanner "
+                    "(bank email gateways click links). Check before contacting")
+
+
+def _score(lead: LeadSnapshot, points: int, *, force_hot_alert: bool = False,
+           from_click: bool = False) -> List[Action]:
+    """AddScore (if > 0) plus at most one hot_lead alert (ruling C).
+
+    With clicks_need_check, a click that would alert sales for a lead still in outreach (no reply,
+    no booking) sends one click_check alert instead; hot_alerted stays unset, so a later real
+    signal still alerts sales (task 18)."""
     out: List[Action] = []
     if points > 0:
         out.append(AddScore(points))
     crossed = points > 0 and band(lead.score) != "hot" and band(lead.score + points) == "hot"
+    if from_click and lead.clicks_need_check and lead.state in OUTREACH_STATES:
+        if (force_hot_alert or crossed) and not lead.flags.get("hot_alerted") \
+                and not lead.flags.get(CLICK_CHECK_ALERTED):
+            out += [_alert(lead, "click_check", CLICK_CHECK_TEXT), SetFlag(CLICK_CHECK_ALERTED, True)]
+        return out
     alerted = bool(lead.flags.get("hot_alerted"))
     if (force_hot_alert or crossed) and not alerted:
         out.append(_alert(lead, "hot_lead", "hot lead"))
@@ -307,7 +324,7 @@ def _on_click(lead: LeadSnapshot, event: EventSnapshot) -> List[Action]:
     tag = event.tag
     pts, counted = _click_points(lead, tag)
     if tag == "pricing":
-        out = _score(lead, pts, force_hot_alert=True) + counted
+        out = _score(lead, pts, force_hot_alert=True, from_click=True) + counted
         out += _variant(lead, "booking_slots")
         if not _slots_due(lead, event.occurred_at):
             return out
@@ -317,7 +334,7 @@ def _on_click(lead: LeadSnapshot, event: EventSnapshot) -> List[Action]:
             out += [WaSendText("booking_slots"), SetFlag(BOOKING_SLOTS_AT, event.occurred_at.isoformat())]
         # WA window closed: the hot_lead alert / score is enough (ruling E)
         return out
-    out = _score(lead, pts) + counted
+    out = _score(lead, pts, from_click=True) + counted
     if tag in ("case_study", "product"):
         out += _variant(lead, tag)
     return out

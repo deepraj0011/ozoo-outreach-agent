@@ -156,10 +156,13 @@ def test_email_pricing_click_hot_lead_alert(env):
     assert r.status_code == 200 and devsim.click_target(r.text) == env.settings.link_targets["pricing"]
     assert env.send(devsim.click_confirm(r.text)).status_code == 204  # the browser's script ran
     env.advance(minutes=1)
-    env.tick()  # the click settles: human, +10, hot_lead alert, booking slots reply
-    assert len(env.alerts("hot_lead", lid)) == 1
+    env.tick()  # the click settles: human, +10, booking slots reply, click_check alert (task 18)
+    assert len(env.alerts("click_check", lid)) == 1 and env.alerts("hot_lead", lid) == []
     assert env.lead(lid).score == 10
-    assert any("hot_lead" in line for line in env.console)
+    assert any("click_check" in line for line in env.console)
+    # a real reply afterwards is still acted on as usual (booking link, QUALIFYING)
+    env.send(devsim.email_reply(env.settings, env.sim_lead(lid), env.now(), text="Sounds interesting, can we talk?"))
+    assert _state(env, lid) == S.QUALIFYING.value
 
 
 def test_email_scanner_click_is_bot(env):
@@ -167,7 +170,8 @@ def test_email_scanner_click_is_bot(env):
     env.send(devsim.click(env.settings, env.sim_lead(lid), tag="pricing", scanner=True))
     env.advance(minutes=1)
     env.tick()
-    assert env.alerts("hot_lead", lid) == [] and env.lead(lid).score == 0
+    assert env.alerts("hot_lead", lid) == [] and env.alerts("click_check", lid) == []
+    assert env.lead(lid).score == 0
 
 
 def test_email_reply_interested(env):

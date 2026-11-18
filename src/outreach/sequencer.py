@@ -219,16 +219,18 @@ def refresh_next_step(
                                                                settings or get_settings())})
 
 
-def end_of_sequence_route(lead: Lead, human_clicks: int) -> Tuple[str, List[Action]]:
+def end_of_sequence_route(lead: Lead, human_clicks: int, *,
+                          clicks_need_check: bool = False) -> Tuple[str, List[Action]]:
     """After Email 4 + 5 days with no reply. Opens are not used (unreliable), and there is
     no WhatsApp step here: opted-in leads already got WhatsApp on day 1. The tool lead is stopped
-    first (its campaign has nothing left to send; a failed stop is retried by the worker)."""
+    first (its campaign has nothing left to send; a failed stop is retried by the worker).
+    A hot score here comes from clicks (no reply): with clicks_need_check it is a click_check alert."""
     if band(lead.score) == "hot":
-        return "sales_personal", [
-            ToolStop(),
-            SetState(LeadState.NURTURE, "end_hot"),
-            Alert("hot_no_reply", "Hot lead finished the sequence without replying"),
-        ]
+        alert = (Alert("click_check", "Finished the sequence without replying; hot score from "
+                       "link clicks only, which may be a company security scanner. Check before contacting")
+                 if clicks_need_check else
+                 Alert("hot_no_reply", "Hot lead finished the sequence without replying"))
+        return "sales_personal", [ToolStop(), SetState(LeadState.NURTURE, "end_hot"), alert]
     if human_clicks > 0:
         return "warm_2_3w", [ToolStop(), SetState(LeadState.NURTURE, "end_clicked")]
     return "monthly", [ToolStop(), SetState(LeadState.NURTURE, "end_silent")]

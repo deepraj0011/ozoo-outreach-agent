@@ -34,8 +34,9 @@ Branch: `feat/outreach-agent-v1`. Plan: `docs/plan/implementation-plan-v1.md`. S
 | 16 | Real knowledge base from ozoo.ai; phone numbers: country names, `DEFAULT_PHONE_REGION` (IN), trunk-0 import fix; WhatsApp phone view in the web app (template text + buttons, pre-send preview) | ✅ Done | see git log | 30 | [task-16](tasks/task-16-kb-phones.md) |
 | 17 | Free, accurate email layer: `EMAIL_MODE=mailbox` (several SMTP / IMAP mailboxes, daily caps + warm-up, IMAP IDLE replies), Reacher verification, honeypot link, JavaScript-confirmed clicks, auto-reply filter, thread-header reply matching, open pixel off by default | ✅ Done | see git log | 50 | [task-17](tasks/task-17-mailbox-mode.md) |
 | R2 | Repo ready for git hosting: `docs/` split into onboarding / guides / plan / reference / samples with an index, front-page README, onboarding docs fixed, architecture doc brought up to date, `.gitignore` covers SQLite WAL files, tool state, editors, scratch notes | ✅ Done | see git log | 0 | [docs index](../README.md) |
+| 18 | Trial safety: clicks alone (no reply / booking) send a `click_check` alert instead of `hot_lead` to sales (`CLICK_ALERTS_NEED_CHECK`, default on) | ✅ Done | see git log | 6 | [task-18](tasks/task-18-click-check-alerts.md) |
 
-**Tests now:** 1648 passing (`.venv/bin/pytest -q`).
+**Tests now:** 1654 passing (`.venv/bin/pytest -q`).
 
 **What's next:** test locally with [docs/guides/local-testing.md](../guides/local-testing.md). Before any real sending: verify Instantly on a trial account (sent-event step, stop/block/find endpoints, bounce type, pause), Cal.com and Teams payloads, pick the AI provider, have marketing review `kb/ozoo_kb.md` and the WhatsApp template previews, add DB migrations. See [go-live-checklist.md](go-live-checklist.md).
 

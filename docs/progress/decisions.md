@@ -146,3 +146,9 @@ Verdict: safe for local testing. Real sending is blocked until Instantly is veri
 | Local mode with real email or WhatsApp refuses time speed-ups unless `ALLOW_REAL_LOCAL=1` is set. | Real prospects must never get the 48 h reminder within minutes. | n/a |
 | Ops: `outreach` logging is configured, the access log is off locally, `X-Forwarded-For` is trusted only with `TRUST_PROXY_HEADERS=1`, and dependencies are pinned (`requirements.lock`). | Go-live hygiene. | n/a |
 | Deferred to the Instantly trial account: per-lead and campaign pause, and the block, find and delete semantics. Database migrations are deferred to go-live. | Needs real accounts. | n/a |
+
+## Task 18: clicks alone need a check (2026-11-18)
+
+| Decision | Why | Cost if wrong |
+|---|---|---|
+| While a lead has no reply and no booking, clicks that would alert sales send a `click_check` alert instead of `hot_lead` / `hot_no_reply` (`CLICK_ALERTS_NEED_CHECK`, default on). Points, the booking-slots email and the nurture track are unchanged. | Bank security sandboxes can open links minutes after delivery and run JavaScript, so they can pass the click filter. A false hot lead wastes a sales call and looks bad to the prospect. | A real clicker gets a slightly slower call (someone checks first). Turn it off once real data shows the filter holds. |

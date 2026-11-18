@@ -453,7 +453,16 @@ def test_end_of_sequence_hot_lead_alerts(env):
                    last_sent_at=NOW, score=20, last_human_event_at=NOW)
     run(env, NOW + timedelta(days=5))
     assert get(env, lid).nurture_track == "sales_personal"
-    assert len(alerts(env, "hot_no_reply")) == 1
+    assert len(alerts(env, "click_check")) == 1  # task 18: score from clicks only
+    assert alerts(env, "hot_no_reply") == []
+
+
+def test_end_of_sequence_hot_lead_alerts_sales_when_check_off(env):
+    lid = new_lead(env, verify_status="valid", active_channel="email", tool_lead_id="t-1", step_sent=4,
+                   last_sent_at=NOW, score=20, last_human_event_at=NOW)
+    run(env, NOW + timedelta(days=5), settings=env.settings.model_copy(update={"click_alerts_need_check": False}))
+    assert get(env, lid).nurture_track == "sales_personal"
+    assert len(alerts(env, "hot_no_reply")) == 1 and alerts(env, "click_check") == []
 
 
 # ---------------------------------------------------------------- WhatsApp SLA

@@ -360,7 +360,9 @@ def _process_settled_clicks(ctx: Ctx, session: Session) -> int:
         lead = _fresh(session, ev.lead_id, lambda ld: True) if ev.lead_id is not None else None
         ev.verdict = classify_event(ev, _sent_at(session, ev, lead), _siblings(session, ev), ctx.scanners)
         if lead is not None and ev.tag not in ("unsubscribe", TRAP_TAG):
-            actions = decide(LeadSnapshot.from_lead(lead, ctx.now), EventSnapshot.from_event(ev), ctx.now)
+            snap = LeadSnapshot.from_lead(lead, ctx.now,
+                                          clicks_need_check=ctx.settings.click_alerts_need_check)
+            actions = decide(snap, EventSnapshot.from_event(ev), ctx.now)
             execute(session, lead, actions, ctx.deps, ctx.now, event=ev)
         ev.processed = True
 
@@ -613,7 +615,8 @@ def _end_of_sequence(ctx: Ctx, session: Session) -> int:
     def one(lead: Lead) -> bool:
         clicks = session.scalar(select(func.count(Event.id)).where(
             Event.lead_id == lead.id, Event.kind == "click", Event.verdict == "human")) or 0
-        route, actions = end_of_sequence_route(lead, int(clicks))
+        route, actions = end_of_sequence_route(
+            lead, int(clicks), clicks_need_check=ctx.settings.click_alerts_need_check)
         lead.nurture_track = route
         execute(session, lead, actions, ctx.deps, ctx.now)
         logger.info("lead %s: sequence ended, route %s", lead.id, route)

@@ -26,6 +26,12 @@
 case study / product 5, homepage 2). A reply or a booking moves a lead forward directly, with no
 points needed.
 
+**Safety switch for the first real leads (`CLICK_ALERTS_NEED_CHECK`, on by default):** while a lead
+hasn't replied or booked, clicks never send the "hot lead" alert to sales. They send a
+**`click_check`** alert instead: "link clicks only, may be a company security scanner, check before
+contacting". The points still count, and a later reply or booking works exactly as usual. Turn it
+off once a few weeks of real data show the click filter holds.
+
 ---
 
 ## 2. What the bots of each mail provider actually do
@@ -99,8 +105,9 @@ through Apple's proxy are marked `machine`.
 1. **Delayed sandbox scanners** (Proofpoint, Mimecast and others at banks): if the gateway holds the
    email for a few minutes, check 4 (60 s) misses it. The sandbox runs JavaScript, so check 6 misses
    it too. If it also skips the hidden link and comes from an unknown IP, the click counts as human.
-   A sandbox that visits *pricing* and then *booking* more than 10 s apart scores 20 points, so the
-   lead is wrongly marked **hot** and sales are alerted.
+   A single *pricing* click is enough to make a lead look hot. **Limited by the safety switch:**
+   while the lead hasn't replied or booked, sales get a `click_check` alert ("check first"), not a
+   hot-lead alert.
 2. **The scanner list is small.** Today it holds 2 Microsoft ranges and 6 browser names. Scanners
    often pretend to be normal Chrome. Defender uses many more Azure ranges than the two we have seen.
 3. **Instantly mode:** Instantly's open events probably don't carry the IP or browser, so only the
@@ -150,8 +157,9 @@ bot by check 3 (same network as a scanner).
    `machine`, with **zero `human`**. Any "human" event here is a scanner getting through: check who
    owns its IP (rdap.arin.net) and add the range to `config/scanners.yaml`.
 3. Click one link yourself from your phone on mobile data. It must show as `human`.
-4. **For the first real batch:** treat a lead whose only signal is clicks (no reply, no booking) as
-   "check it", not as confirmed, until a week of real data shows the filter holds.
+4. **For the first real batch:** leave `CLICK_ALERTS_NEED_CHECK` on. Clicks-only leads then arrive
+   as `click_check` alerts. Before calling, look at the lead's events (`dev show <id> --mask`): a
+   data-centre IP, or several links visited within a few minutes of delivery, points to a scanner.
 
 ---
 
@@ -160,4 +168,4 @@ bot by check 3 (same network as a scanner).
 > We **don't rely on opens at all**. We trust **replies, bookings, bounces and unsubscribe button
 > presses** completely. We trust **clicks only after a 6-check bot filter**, which reliably catches
 > Microsoft Defender and Apple but can still be fooled by delayed corporate sandbox scanners, so
-> clicks alone should be double-checked during the first weeks.
+> a safety switch makes clicks alone send a "check first" alert instead of a sales alert.

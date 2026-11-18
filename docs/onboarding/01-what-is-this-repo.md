@@ -48,7 +48,7 @@ Finding leads is **not** part of this repo. We start when a lead is handed to us
 | AI | Any LLM: **Anthropic, OpenAI, Azure OpenAI, or self-hosted** | Classifies replies and runs the WhatsApp chatbot. Changed by a setting, not by code. |
 | Booking | **Cal.com** webhooks | Tells us when a demo is booked, moved or cancelled. |
 | Alerts | **Microsoft Teams** (webhook + `@OzooAgent` commands) | Posts a card to the sales channel. Sales can also reply with commands. |
-| Tests | **pytest**: **1,648 tests** | Every rule and every tracking scenario is tested automatically. Real network calls are blocked in tests. |
+| Tests | **pytest**: **1,654 tests** | Every rule and every tracking scenario is tested automatically. Real network calls are blocked in tests. |
 
 ## Folder map
 
@@ -72,7 +72,7 @@ src/outreach/            ← all the code
 config/scanners.yaml     ← known scanner / privacy-proxy IP ranges
 templates/               ← email + WhatsApp wording (marketing edits these, not code)
 kb/ozoo_kb.md            ← what the chatbot knows about Ozoo.ai
-tests/                   ← 1,648 automated tests
+tests/                   ← 1,654 automated tests
 docs/                    ← see docs/README.md: onboarding, guides, plan, reference, progress
 scripts/                 ← local_setup, run_local, start_demo
 ```
@@ -81,7 +81,7 @@ scripts/                 ← local_setup, run_local, start_demo
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
-.venv/bin/pytest -q              # expect: 1648 passed
+.venv/bin/pytest -q              # expect: 1654 passed
 scripts/local_setup              # creates .env.local with fake services + local.db
 scripts/run_local                # app on http://127.0.0.1:8000
 ```

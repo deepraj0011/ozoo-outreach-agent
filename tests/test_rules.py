@@ -671,3 +671,41 @@ def test_last_real_step_sent_after_resume_stops_the_tool():
 def test_sent_beyond_the_last_real_step_is_ignored_but_stops_the_tool():
     lead = lead_snap(step_sent=4, flags={"step_offset": 2})
     assert decide(lead, ev("sent", step=3), NOW) == [ToolStop()]
+
+
+# ---------------------------------------------------------------- task 18: clicks alone need a check
+
+def checked(**kw) -> LeadSnapshot:
+    return lead_snap(clicks_need_check=True, **kw)
+
+
+def test_click_check_pricing_click_alerts_check_not_sales():
+    out = run(checked(), click("pricing"))
+    assert out == [AddScore(10), Alert("click_check"), SetFlag("click_check_alerted", True),
+                   SetVariant("booking_slots"), SendReply("booking_slots"), SetFlag("booking_slots_at", NOW_ISO)]
+    assert "hot_lead" not in [a.kind for a in out if isinstance(a, Alert)]
+
+
+def test_click_check_score_crossing_alerts_check_once():
+    assert run(checked(score=13), click("homepage")) == [
+        AddScore(2), Alert("click_check"), SetFlag("click_check_alerted", True)]
+    assert run(checked(score=15, flags={"click_check_alerted": True}), click("pricing"))[:1] == [AddScore(10)]
+    assert not [a for a in run(checked(score=15, flags={"click_check_alerted": True}), click("pricing"))
+                if isinstance(a, Alert)]
+
+
+def test_click_check_below_hot_no_alert():
+    assert run(checked(), click("case_study")) == [AddScore(5), SetVariant("case_study")]
+
+
+def test_click_check_not_applied_once_lead_replied():
+    """ENGAGED / QUALIFYING / BOOKED: a person already replied, so a click is a real hot signal."""
+    for state in (S.ENGAGED, S.QUALIFYING, S.BOOKED):
+        out = decide(checked(state=state), click("pricing"), NOW)
+        assert "hot_lead" in [a.kind for a in out if isinstance(a, Alert)], state
+        assert "click_check" not in [a.kind for a in out if isinstance(a, Alert)], state
+
+
+def test_click_check_off_keeps_hot_lead_alert():
+    out = run(lead_snap(clicks_need_check=False), click("pricing"))
+    assert Alert("hot_lead") in out and Alert("click_check") not in out

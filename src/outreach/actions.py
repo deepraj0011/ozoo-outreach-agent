@@ -24,7 +24,7 @@ ALERT_KINDS = frozenset({
     "hot_lead", "hot_no_reply", "question", "unsure", "unmatched_reply", "unmatched_inbound",
     "unmatched_booking", "unmatched_form", "mailbox_paused", "mailbox_unhealthy", "booked", "no_show", "wa_human_needed",
     "wa_sla_missed", "wa_send_failed", "handoff", "integration_error",
-    "tool_stop_failed", "engaged", "stuck_lead", "verify_failed",
+    "tool_stop_failed", "engaged", "stuck_lead", "verify_failed", "click_check",
 })
 
 # A failed stop / block-list call at the email tool is retried by the worker (retry_tool_stops)

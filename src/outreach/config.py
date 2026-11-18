@@ -194,6 +194,11 @@ class Settings(BaseSettings):
     # before forwarding. Most link scanners fetch without running JavaScript; a click with no beacon
     # is labelled bot. Set false for a plain 302 redirect.
     click_js_confirm: bool = True
+    # Trial safety for real leads: while a lead has not replied or booked, a score that turns "hot"
+    # from link clicks alone sends a "click_check" alert (check before contacting) instead of the
+    # hot_lead sales alert. Bank security sandboxes can click links like a person. Set false once
+    # real data shows the click filter holds.
+    click_alerts_need_check: bool = True
     tool_webhook_secret: str
     campaign_ids: Dict[str, str]
     default_tz_group: str
