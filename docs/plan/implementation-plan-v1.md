@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python ≥ 3.10 · FastAPI + uvicorn · SQLAlchemy 2.x (SQLite locally, Postgres in prod via `DATABASE_URL`) · httpx · `anthropic` SDK · `phonenumbers` · pydantic-settings · PyYAML · pytest + respx · Meta WhatsApp Cloud API (Graph API) · Docker for deploy (Render / Railway).
 
-**Spec:** `docs/Outreach_Agent_Plan_v2.md` (approved). Section numbers (§4, §5i, §7 …) refer to it. **Scope change vs the spec's §18:** the WhatsApp flow + chatbot move from "next iterations" into v1, at the user's request on 2026-11-12.
+**Spec:** `docs/plan/outreach-agent-plan-v2.md` (approved). Section numbers (§4, §5i, §7 …) refer to it. **Scope change vs the spec's §18:** the WhatsApp flow + chatbot move from "next iterations" into v1, at the user's request on 2026-11-12.
 
 > **Review update 2026-11-13 (plan v2.1).** Overrides anything below that conflicts:
 > 1. Email needs **no opt-in** (`consent_email` is recorded, not required); WhatsApp still needs opt-in. Every email is verified at intake.
@@ -132,7 +132,7 @@ tests/  (one file per module + tests/fixtures/*.json captured in Task 1)
 This is the gate for the email tool choice and the WhatsApp setup.
 
 **Files:**
-- Create: `docs/tool-capabilities.md`, `tests/fixtures/*.json`, `pyproject.toml`, `.env.example`, `.gitignore`, `src/outreach/__init__.py`, `src/outreach/config.py`, `tests/test_config.py`
+- Create: `docs/reference/tool-capabilities.md`, `tests/fixtures/*.json`, `pyproject.toml`, `.env.example`, `.gitignore`, `src/outreach/__init__.py`, `src/outreach/config.py`, `tests/test_config.py`
 
 **Interfaces:**
 - Produces: `Settings` with these fields, and `get_settings()` (cached):
@@ -145,7 +145,7 @@ This is the gate for the email tool choice and the WhatsApp setup.
   - WhatsApp: `wa_phone_number_id`, `wa_access_token`, `wa_app_secret`, `wa_verify_token`, `wa_graph_version` (e.g. `"v21.0"`)
   - Channels and hours: `primary_when_both ("whatsapp"|"email")`, `business_tz`, `business_hours`
 
-- [ ] **Step 1: `git init`, then fill in `docs/tool-capabilities.md` with yes/no + the endpoint for each capability.**
+- [ ] **Step 1: `git init`, then fill in `docs/reference/tool-capabilities.md` with yes/no + the endpoint for each capability.**
   - **Email tool** (trial account):
     - C1: add a lead with custom variables
     - C2: update variables mid-sequence

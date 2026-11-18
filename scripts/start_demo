@@ -2,7 +2,7 @@
 # One command for the demo: starts the agent (and Mailpit if the settings use it) and opens the
 # console in the browser. Everything else is done from the web page. Stop with Ctrl+C.
 #   scripts/start_demo                 # uses .env.local (simulated / Mailpit)
-#   scripts/start_demo .env.demo       # real Gmail + WhatsApp (docs/REAL_DEMO.md)
+#   scripts/start_demo .env.demo       # real Gmail + WhatsApp (docs/guides/real-demo.md)
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export ENV_FILE="${1:-$ROOT/.env.local}"
@@ -18,7 +18,7 @@ if [ "$MODE" = "mailpit" ] && ! (echo > /dev/tcp/127.0.0.1/1025) 2>/dev/null; th
     mailpit --listen 127.0.0.1:8025 --smtp 127.0.0.1:1025 >/dev/null 2>&1 &
     echo "Mailpit started: http://localhost:8025"
   else
-    echo "Warning: EMAIL_MODE=mailpit but mailpit is not installed (see docs/LOCAL_TESTING.md 4b)." >&2
+    echo "Warning: EMAIL_MODE=mailpit but mailpit is not installed (see docs/guides/local-testing.md 4b)." >&2
   fi
 fi
 ( sleep 3; URL="http://127.0.0.1:$PORT/"; command -v xdg-open >/dev/null && xdg-open "$URL" >/dev/null 2>&1 \

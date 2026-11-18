@@ -10,7 +10,7 @@
   FAQ language list (conflicts with the product page). Marketing must review before go-live.
 - **Finding:** the email copy (`templates/emails.yaml`) and the WhatsApp intro text describe Ozoo.ai
   as "automating outreach and follow-up". The real product is call QA + voice/chat agents for
-  lenders. The intro template text in `docs/REAL_DEMO.md` is updated; email copy is still to do.
+  lenders. The intro template text in `docs/guides/real-demo.md` is updated; email copy is still to do.
 
 ## Phone numbers
 - `eu.country_code()` (was private): ISO code or common English name ("India", "UAE", "UK" -> GB).

@@ -9,7 +9,7 @@ Sets up the Python project and settings loader. Also researches the email tool, 
 ## Files
 - `pyproject.toml`, `.env.example`, `.gitignore`
 - `src/outreach/config.py`, `tests/test_config.py`
-- `docs/tool-capabilities.md`
+- `docs/reference/tool-capabilities.md`
 - `tests/fixtures/*.json` (17 files: `tool_*`, `cal_*`, `wa_*`)
 
 ## Key functions and interfaces

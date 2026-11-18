@@ -1,4 +1,4 @@
-"""Instantly API v2 adapter (tool chosen in docs/tool-capabilities.md).
+"""Instantly API v2 adapter (tool chosen in docs/reference/tool-capabilities.md).
 
 Every endpoint / field the capability doc marks UNVERIFIED carries a `# UNVERIFIED:` comment;
 confirm each on a trial account before go-live (see the doc's checklist).

@@ -2,7 +2,7 @@
 
 ## Module map
 
-Solid boxes exist today. Dashed boxes are planned (tasks 7-13).
+All modules below exist (tasks 1-17).
 
 ```mermaid
 flowchart TD
@@ -10,8 +10,8 @@ flowchart TD
         LS[Lead source] -->|POST /intake| APP
         EW[Email tool webhooks] -->|POST /webhooks/email| APP
         CL[Link clicks and unsubscribe page] -->|GET /r, GET+POST /u| APP
-        WAW[Meta WhatsApp webhooks]:::planned -->|/webhooks/whatsapp| APP
-        CAW[Cal.com webhooks]:::planned -->|/webhooks/cal| APP
+        WAW[Meta WhatsApp webhooks] -->|/webhooks/whatsapp| APP
+        CAW[Cal.com webhooks] -->|/webhooks/cal| APP
         TMC[Teams outgoing webhook] -->|/teams/commands| APP
     end
     APP[app.py routes] --> INTAKE[intake.py + verify.py + channels.py]
@@ -22,17 +22,16 @@ flowchart TD
     ACTIONS --> STATES[states.py transition]
     STATES --> DB[(db.py + models.py)]
     ACTIONS --> PORTS{{Deps ports}}
-    PORTS --> EMAIL[emailtool: Instantly adapter]
+    PORTS --> EMAIL[emailtool: mailbox / Instantly / Gmail / Mailpit]
     PORTS --> TEAMS[alerts.py TeamsAlerter]
-    PORTS --> WA[WhatsApp client]:::planned
-    PORTS --> CLS[Claude classifier]:::planned
-    PORTS --> CHAT[Claude chatbot + handoff]:::planned
-    PORTS --> OUT[outreach.py starter/switcher]:::planned
-    PORTS --> CAL[Cal.com booking]:::planned
-    SEQ[sequencer.py + templates]:::planned --> EMAIL
-    WORKER[worker.py tick + health.py]:::planned --> OUT
+    PORTS --> WA[WhatsApp client]
+    PORTS --> CLS[AI classifier]
+    PORTS --> CHAT[AI chatbot + handoff]
+    PORTS --> OUT[outreach.py starter/switcher]
+    PORTS --> CAL[Cal.com booking]
+    SEQ[sequencer.py + templates] --> EMAIL
+    WORKER[worker.py tick + health.py] --> OUT
     WORKER --> INGEST
-    classDef planned stroke-dasharray: 5 5,fill:#f4f4f4,color:#555;
 ```
 
 ## How an event flows
@@ -71,12 +70,16 @@ Clicks are stored unprocessed and decided later by the worker (30 s settle windo
 | `emailtool/base.py`, `fake.py`, `instantly.py` | Email tool port, test fake, Instantly adapter | Task 6 | yes |
 | `alerts.py` | Alert rows plus Teams post after commit; `teams_escape` makes third-party text inert | Task 6 | yes |
 | `ingest.py` | Shared event pipeline: dedup, match, verdict, decide, execute, commit | Task 6 | yes |
-| `app.py` | FastAPI: `/webhooks/email`, `/r`, `/u`, `/intake`, `/healthz` | Task 6 | yes (more routes planned) |
+| `app.py` | FastAPI: `/webhooks/email`, `/r`, `/u`, `/intake`, `/healthz` | Task 6 | yes |
 | `unsubscribe_page.py` | Confirm and success HTML for `/u/{token}` | Task 6 | yes |
 | `sequencer.py`, `templates/emails.yaml` | Email enroll, variants, end-of-sequence routing | Task 7 | yes |
-| `whatsapp/client.py`, `whatsapp/webhook.py` | Cloud API client and webhook parser | Task 8 | planned |
-| `classifier.py` | Claude reply classification | Task 9 | planned |
+| `whatsapp/client.py`, `whatsapp/webhook.py` | Cloud API client and webhook parser | Task 8 | yes |
+| `classifier.py` | AI reply classification (provider via `llm/`) | Task 9 | yes |
 | `chatbot.py`, `handoff.py` | WhatsApp bot, Teams takeover (`/teams/commands`) | Task 10, 10b | yes |
-| `booking.py` | Cal.com events, fit routing, handoff summary | Task 11 | planned |
-| `outreach.py`, `worker.py`, `health.py` | Start/switch channel, 60 s tick, mailbox health | Task 12 | planned |
-| `Dockerfile`, runbook, e2e checklist | Deploy and verify | Task 13 | planned |
+| `booking.py` | Cal.com events, fit routing, handoff summary | Task 11 | yes |
+| `outreach.py`, `worker.py`, `health.py` | Start/switch channel, 60 s tick, mailbox health | Task 12 | yes |
+| `scripts/`, `docs/guides/local-testing.md`, `test_local_e2e.py` | Run locally + local end-to-end test (deploy deferred) | Task 13 | yes |
+| `llm/` | One AI port; Anthropic, OpenAI, Azure OpenAI, OpenAI-compatible adapters | Task 9b | yes |
+| `jobs.py` | Background AI jobs (classify, bot reply) outside webhook requests | Task 12a | yes |
+| `emailtool/mailbox.py`, `mailpit_sender.py` | Our own SMTP / IMAP sender with caps and warm-up; the sender loop | Tasks 14, 17 | yes |
+| `demo_console.py`, `demo_console.html` | Local web app at `/` | D3, 16 | yes |

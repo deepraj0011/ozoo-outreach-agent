@@ -25,7 +25,7 @@ Testing with real inboxes showed four problems:
   - Steps 2–4 are sent as "Re: <email 1 subject>" with `In-Reply-To`/`References` pointing to the previous message. Each step's own body is kept.
   - Template subjects for steps 2–4 are therefore unused in these modes.
 - **Demo timing.** `.env.demo` `TIME_SCALE` changed from 1440 to 288, so a day is 5 minutes and emails go out at 0, 20, 45 and 75 min.
-- **Docs.** `docs/REAL_DEMO.md` gained three sections: how far to trust each signal, follow-ups, and inbox placement (the `trycloudflare.com` link domain and personal Gmail are the demo's main spam factors).
+- **Docs.** `docs/guides/real-demo.md` gained three sections: how far to trust each signal, follow-ups, and inbox placement (the `trycloudflare.com` link domain and personal Gmail are the demo's main spam factors).
 
 ## Tests
 - `tests/test_open_tracking.py`: 23 tests.

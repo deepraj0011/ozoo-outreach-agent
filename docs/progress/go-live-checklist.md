@@ -1,6 +1,6 @@
 # Go-live checklist
 
-Nothing below is done yet. Do not send to real prospects until all boxes are ticked. Sources: `docs/tool-capabilities.md`, the ledger's deferred minors, and spec section 18.
+Nothing below is done yet. Do not send to real prospects until all boxes are ticked. Sources: `docs/reference/tool-capabilities.md`, the ledger's deferred minors, and spec section 18.
 
 ## A. Start these now (long lead times, spec section 18)
 

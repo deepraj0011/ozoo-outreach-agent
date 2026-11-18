@@ -8,8 +8,8 @@ Everything happens in one web page. No terminal during the demo.
 2. Optional, to start from an empty screen: `rm -f local.db local.db-wal local.db-shm .local_clock.json .mailpit_tool.db`
 3. Start: `scripts/start_demo`. It starts the agent (and Mailpit if your settings use it) and opens
    <http://127.0.0.1:8000/> in the browser.
-   - With real Gmail + WhatsApp (docs/REAL_DEMO.md): `scripts/start_demo .env.demo`
-4. Have `docs/sample_leads.xlsx` ready (or your own CSV / Excel file).
+   - With real Gmail + WhatsApp (docs/guides/real-demo.md): `scripts/start_demo .env.demo`
+4. Have `docs/samples/sample_leads.xlsx` ready (or your own CSV / Excel file).
 
 ## The story
 
@@ -17,7 +17,7 @@ Everything happens in one web page. No terminal during the demo.
 outreach → reply handling → booking → hand to sales, plus the nurture loop. Its job ends when a qualified
 meeting is handed to sales.
 
-**2. "We give it leads."** (1 min) **Leads → Import CSV / Excel** → drop `docs/sample_leads.xlsx`.
+**2. "We give it leads."** (1 min) **Leads → Import CSV / Excel** → drop `docs/samples/sample_leads.xlsx`.
 The preview shows which columns it matched and flags the row with no contact details. Click **Import**:
 the result shows who was accepted, the EU lead held for legal approval, and the skipped row.
 

@@ -1,15 +1,39 @@
-.superpowers/
+# Python
 __pycache__/
 *.pyc
-.env
-*.db
 .venv/
 .pytest_cache/
+.coverage
+htmlcov/
 *.egg-info/
+build/
+dist/
+
+# Secrets: only .env.example is committed
+.env
 .env.*
 !.env.example
+
+# Local runtime data (SQLite databases, their WAL files, tool state, fake clock)
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
 .local_clock.json
 .clock-*
+*.log
 
-# local test leads with real addresses: never commit
+# Local test leads with real addresses: never commit
 docs/test_leads.csv
+# Personal scratch notes
+docs/Untitled
+
+# Agent working files
+.superpowers/
+
+# Editors and OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db

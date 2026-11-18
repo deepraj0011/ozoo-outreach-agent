@@ -1,4 +1,4 @@
-"""Local developer CLI (APP_ENV=local only). See docs/LOCAL_TESTING.md.
+"""Local developer CLI (APP_ENV=local only). See docs/guides/local-testing.md.
 
   python -m outreach.dev setup [--force]          write .env.local (fresh secrets) + create local.db
   python -m outreach.dev seed                     5 sample leads through the real intake function
@@ -107,7 +107,7 @@ def render_env_local(example_text: str, values: Dict[str, str]) -> str:
     have are appended. Every other key is left commented out (unset: its default, or blank where
     fake mode needs no credential)."""
     out = ["# Local run settings, written by scripts/local_setup. Never commit this file.",
-           "# Every service is fake (no real accounts, no network, no cost). See docs/LOCAL_TESTING.md.", ""]
+           "# Every service is fake (no real accounts, no network, no cost). See docs/guides/local-testing.md.", ""]
     done = set()
     for line in example_text.splitlines():
         m = _KEY_LINE.match(line)

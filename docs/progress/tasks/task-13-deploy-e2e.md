@@ -19,7 +19,7 @@
 - **Local e2e test.** `tests/test_local_e2e.py` runs every row of the plan's end-to-end table in-process.
 
 ## Guide
-[docs/LOCAL_TESTING.md](../../LOCAL_TESTING.md)
+[docs/guides/local-testing.md](../../guides/local-testing.md)
 
 ## Notes
 - Run only one process that writes the database. The worker runs inside the app; do not also start `worker --loop`.

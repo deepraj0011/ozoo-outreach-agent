@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One-time local setup: writes .env.local (local defaults, fresh random secrets, every service
 # fake) and creates the SQLite database local.db. Installs nothing. Safe to run again: an
-# existing .env.local is kept unless you pass --force. See docs/LOCAL_TESTING.md.
+# existing .env.local is kept unless you pass --force. See docs/guides/local-testing.md.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PY="$ROOT/.venv/bin/python"

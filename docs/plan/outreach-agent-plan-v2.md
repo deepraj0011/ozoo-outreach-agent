@@ -1,6 +1,6 @@
 # Ozoo.ai Outreach Agent — Plan v2
 
-> Updated from `Email_WhatsApp_Flows_Simple.pdf` after CTO/PM review.
+> Updated from `email-whatsapp-flows.pdf` after CTO/PM review.
 > **Scope:** leads come from elsewhere. We handle everything **after** a lead arrives.
 
 ### Changes after review (v2.1, 2026-11-13)

@@ -16,7 +16,7 @@ You see Email 1 to 4 exactly as a lead would, and the booking, reschedule and sl
 ## Files
 - `src/outreach/emailtool/mailpit.py`: `MailpitEmailTool`, which implements the `EmailTool` port, including `block` and `find_lead`.
 - `src/outreach/mailpit_sender.py`: `python -m outreach.mailpit_sender [--once]`.
-- Wiring: `config.py` (`EmailMode`, `smtp_host` loopback check, `smtp_port`, `mailpit_state_file`, mailpit refused in production, not counted as real sending), `app.py` `default_deps`, `scripts/run_local` (starts the sender, keeps `--no-access-log`), `.env.example`, `docs/LOCAL_TESTING.md` section 4b.
+- Wiring: `config.py` (`EmailMode`, `smtp_host` loopback check, `smtp_port`, `mailpit_state_file`, mailpit refused in production, not counted as real sending), `app.py` `default_deps`, `scripts/run_local` (starts the sender, keeps `--no-access-log`), `.env.example`, `docs/guides/local-testing.md` section 4b.
 - `tests/test_mailpit.py`: 24 tests. SMTP is a recording stub, so no network is used.
 
 ## How it works
@@ -41,7 +41,7 @@ Task 6 (EmailTool port, Instantly webhook parser), Task 7 (`SCHEDULE_DAYS`, `sub
    - Add `smtp_host` (loopback validated, default `127.0.0.1`), `smtp_port` (1025) and an optional `mailpit_state_file`.
 2. `app.py` `default_deps`: when `email_mode == "mailpit"`, build `mailpit_sender.make_tool(settings)`.
 3. `scripts/run_local`: when `EMAIL_MODE=mailpit`, start `python -m outreach.mailpit_sender` in the background.
-4. `docs/LOCAL_TESTING.md`: a "See real emails with Mailpit" section. Also a `.env.example` comment.
+4. `docs/guides/local-testing.md`: a "See real emails with Mailpit" section. Also a `.env.example` comment.
 
 ## Open items
 - A click within 60 s of a send is marked `bot` (bot filter rule), so wait a minute after an email arrives before clicking its links.

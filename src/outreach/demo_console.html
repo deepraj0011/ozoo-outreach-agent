@@ -507,7 +507,7 @@ function pSettings() {
       ${conn('WhatsApp', m.whatsapp === 'real' ? 'Real messages through the WhatsApp Cloud API.' : 'Messages are recorded but not sent.', m.whatsapp, 'WhatsApp (real)', 'Simulated')}
       ${conn('AI model', m.ai === 'real' ? 'A real AI model reads replies and runs the chatbot.' : 'A simple rule-based stand-in reads replies.', m.ai, 'Connected', 'Rule-based')}
       ${conn('Sales alerts', m.alerts === 'real' ? 'Posted to the Microsoft Teams sales channel.' : 'Shown on the Sales alerts page.', m.alerts, 'Microsoft Teams', 'In this app')}
-    </div><p class="text-xs text-slate-400 mt-2">Connections are set in the settings file. docs/REAL_DEMO.md explains how to connect free Gmail, WhatsApp and AI accounts.</p></section>
+    </div><p class="text-xs text-slate-400 mt-2">Connections are set in the settings file. docs/guides/real-demo.md explains how to connect free Gmail, WhatsApp and AI accounts.</p></section>
     <section class="card p-5"><h2 class="font-semibold text-sm">Time machine</h2><p class="text-xs text-slate-500 mt-0.5">Follow-ups happen over days. Skip ahead to see them go out now. Agent time: <b>${new Date(data.clock).toLocaleString()}</b></p>
       <div class="flex flex-wrap gap-2 mt-3"><button class="btn" onclick="run({action:'advance',hours:24})">+1 day</button><button class="btn" onclick="run({action:'advance',hours:48})">+2 days</button>
         <button class="btn" onclick="run({action:'advance',hours:96})">+4 days</button><button class="btn" onclick="run({action:'tick'})">Run the agent now</button><button class="btn" onclick="run({action:'reset_clock'})">Back to today</button></div></section>

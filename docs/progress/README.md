@@ -2,7 +2,7 @@
 
 **What it is.** One outreach agent that takes a lead (email only, WhatsApp only, or both) through an intake gate and runs the right channel. Email is a 4-email sequence sent by a cold-email tool (Instantly). WhatsApp is an opt-in template with two buttons, a reminder and a chatbot. The agent records every event, filters bots, scores engagement, classifies replies with an AI model the company chooses (Claude, OpenAI, Azure OpenAI or any OpenAI-compatible), books demos through Cal.com and alerts sales in Microsoft Teams. Both channels share **one lead record and one state**. Lead sourcing is out of scope: the agent starts at intake.
 
-Branch: `feat/outreach-agent-v1`. Plan: `docs/superpowers/plans/2026-11-12-outreach-agent-v1.md`. Spec: `docs/Outreach_Agent_Plan_v2.md`.
+Branch: `feat/outreach-agent-v1`. Plan: `docs/plan/implementation-plan-v1.md`. Spec: `docs/plan/outreach-agent-plan-v2.md`.
 
 ## Status board
 
@@ -24,19 +24,20 @@ Branch: `feat/outreach-agent-v1`. Plan: `docs/superpowers/plans/2026-11-12-outre
 | 9b | Pluggable AI model provider (company chooses: Claude, OpenAI, Azure OpenAI, any OpenAI-compatible) | ✅ Done (1 fix round, verified) | `9630116`, `1929218` | 144 | [task-09b](tasks/task-09b-pluggable-llm.md) |
 | 12a | Run AI calls as background jobs (not inside webhooks) | ✅ Done (1 fix round, verified) | `b354fc1`, `b87c6bc` | 40 | [task-12a](tasks/task-12a-background-ai-jobs.md) |
 | 12 | Outreach starter + worker + mailbox health | ✅ Done (1 fix round, verified) | `a99c7c0`, `fba97eb` | 109 | [task-12](tasks/task-12-worker-health.md) |
-| 13 | Run locally + local end-to-end test (deploy deferred) | ✅ Done (controller smoke-tested) | `43716f9`, `0ae48e1` | 116 | [task-13](tasks/task-13-deploy-e2e.md) · **[LOCAL_TESTING.md](../LOCAL_TESTING.md)** |
+| 13 | Run locally + local end-to-end test (deploy deferred) | ✅ Done (controller smoke-tested) | `43716f9`, `0ae48e1` | 116 | [task-13](tasks/task-13-deploy-e2e.md) · **[local testing guide](../guides/local-testing.md)** |
 | F | Final whole-branch review + fix round | ✅ Done | `2b384b5`, `a47ca78` | 103 | [decisions](decisions.md#final-review-2026-11-13) |
 | 14 | Mailpit local email mode (`EMAIL_MODE=mailpit`) | ✅ Done (live smoke test with real Mailpit) | see git log | 24 | [task-14](tasks/task-14-mailpit.md) |
-| D | Demo console at `/demo` (local only): live leads, journey, timeline, WhatsApp chat, alerts; buttons act as the lead | ✅ Done (smoke-tested in isolation) | uncommitted | 0 (spike) | [DEMO_SCRIPT.md](../DEMO_SCRIPT.md) |
-| D2 | Real free demo: `EMAIL_MODE=gmail` (Gmail SMTP + IMAP replies), WhatsApp test number, Groq AI, `.env.demo`; fix: intro template now sends quick-reply payloads (real taps arrive as BOOK_DEMO / ASK_QUESTION, not button text) | ✅ Built, startup verified with dummy keys; not yet run with real accounts | uncommitted | 6 | [REAL_DEMO.md](../REAL_DEMO.md) |
-| D3 | Web app at `/` (local only): Overview funnel, Leads with CSV / Excel import (column matching, preview, intake results), lead panel with step tracker + simulate buttons, WhatsApp Conversations with salesperson takeover, Sales alerts, How it works, Settings; `scripts/start_demo` | ✅ Done, smoke-tested in isolation | uncommitted | 9 | [DEMO_SCRIPT.md](../DEMO_SCRIPT.md) |
+| D | Demo console at `/demo` (local only): live leads, journey, timeline, WhatsApp chat, alerts; buttons act as the lead | ✅ Done (smoke-tested in isolation) | see git log | 0 (spike) | [demo script](../guides/demo-script.md) |
+| D2 | Real free demo: `EMAIL_MODE=gmail` (Gmail SMTP + IMAP replies), WhatsApp test number, Groq AI, `.env.demo`; fix: intro template now sends quick-reply payloads (real taps arrive as BOOK_DEMO / ASK_QUESTION, not button text) | ✅ Built, startup verified with dummy keys; not yet run with real accounts | see git log | 6 | [real demo guide](../guides/real-demo.md) |
+| D3 | Web app at `/` (local only): Overview funnel, Leads with CSV / Excel import (column matching, preview, intake results), lead panel with step tracker + simulate buttons, WhatsApp Conversations with salesperson takeover, Sales alerts, How it works, Settings; `scripts/start_demo` | ✅ Done, smoke-tested in isolation | see git log | 9 | [demo script](../guides/demo-script.md) |
 | 15 | Own open tracking (pixel), Microsoft scanner ranges, labelled unsubscribe visits, one-click unsubscribe headers, threaded follow-ups | ✅ Done | see git log | 35 | [task-15](tasks/task-15-tracking-accuracy.md) |
 | 16 | Real knowledge base from ozoo.ai; phone numbers: country names, `DEFAULT_PHONE_REGION` (IN), trunk-0 import fix; WhatsApp phone view in the web app (template text + buttons, pre-send preview) | ✅ Done | see git log | 30 | [task-16](tasks/task-16-kb-phones.md) |
 | 17 | Free, accurate email layer: `EMAIL_MODE=mailbox` (several SMTP / IMAP mailboxes, daily caps + warm-up, IMAP IDLE replies), Reacher verification, honeypot link, JavaScript-confirmed clicks, auto-reply filter, thread-header reply matching, open pixel off by default | ✅ Done | see git log | 50 | [task-17](tasks/task-17-mailbox-mode.md) |
+| R2 | Repo ready for git hosting: `docs/` split into onboarding / guides / plan / reference / samples with an index, front-page README, onboarding docs fixed, architecture doc brought up to date, `.gitignore` covers SQLite WAL files, tool state, editors, scratch notes | ✅ Done | see git log | 0 | [docs index](../README.md) |
 
 **Tests now:** 1648 passing (`.venv/bin/pytest -q`).
 
-**What's next:** test locally with [docs/LOCAL_TESTING.md](../LOCAL_TESTING.md). Before any real sending: verify Instantly on a trial account (sent-event step, stop/block/find endpoints, bounce type, pause), Cal.com and Teams payloads, pick the AI provider, have marketing review `kb/ozoo_kb.md` and the WhatsApp template previews, add DB migrations. See [go-live-checklist.md](go-live-checklist.md).
+**What's next:** test locally with [docs/guides/local-testing.md](../guides/local-testing.md). Before any real sending: verify Instantly on a trial account (sent-event step, stop/block/find endpoints, bounce type, pause), Cal.com and Teams payloads, pick the AI provider, have marketing review `kb/ozoo_kb.md` and the WhatsApp template previews, add DB migrations. See [go-live-checklist.md](go-live-checklist.md).
 
 ## Files in this folder
 

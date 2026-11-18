@@ -25,7 +25,7 @@
    - One IMAP IDLE watcher thread per mailbox, with reconnect and backoff. The sender loop is woken when a reply arrives.
    - Allowed in production: the sender skips the local-only check for this mode.
    - `EMAIL_MODE=gmail` is now a one-mailbox preset of the same tool (no cap ramp, 400 a day).
-   - Guide: [docs/MAILBOX_MODE.md](../../MAILBOX_MODE.md).
+   - Guide: [docs/guides/mailbox-mode.md](../../guides/mailbox-mode.md).
 
 Also: the IMAP timeout fix (`2ef16fd`): a stalled Gmail connection froze the sender for an hour.
 
