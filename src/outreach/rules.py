@@ -17,7 +17,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 from .actions import (
     Action, AddScore, Alert, BotReply, Classify, HandOff, MarkPlannedSent, PauseColleagues, RefreshNextStep,
     SendReply, SetFlag, SetNurtureUntil, SetState, SetStepSent, SetVariant, StopAllOutreach, Suppress,
-    SuppressAllChannels, SwitchChannel, ToolStop, WaSendText,
+    SuppressAllChannels, SwitchChannel, ToolPause, ToolStop, WaSendText,
 )
 from .channels import email_usable, whatsapp_usable
 from .score import band, points_for
@@ -402,7 +402,9 @@ def _on_visit(lead: LeadSnapshot, event: EventSnapshot) -> List[Action]:
 
 def _on_reply(lead: LeadSnapshot, event: EventSnapshot) -> List[Action]:
     if lead.flags.get("p0") and lead.state in OUTREACH_STATES:
-        return [Classify()]  # the label decides (classifier.actions_for_class): out-of-office keeps the schedule
+        # hold the sender at once (an email already handed must not go while the reply is read); the label
+        # decides the rest (classifier.actions_for_class): out-of-office resumes and keeps the schedule
+        return [ToolPause(), Classify()]
     if lead.state in OUTREACH_STATES:
         return _engage(lead, "reply")
     if lead.state in CONVERSATION_STATES:

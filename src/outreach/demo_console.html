@@ -298,7 +298,7 @@ function pLeads() {
         <td class="px-5 py-3"><div class="flex items-center gap-3">${avatar(l.name)}<div class="min-w-0"><div class="font-medium truncate">${esc(l.name)}</div><div class="text-xs text-slate-500 truncate">${esc(l.role && l.role !== 'Not given' ? l.role + ' · ' : '')}${esc(l.company)}</div></div></div></td>
         <td class="px-3 py-3 text-xs">${chan(l.channel, l.switched)}</td>
         <td class="px-3 py-3">${badge(l.state)}${l.email_hold ? '<div class="text-[10px] text-amber-700 mt-1">EU: waiting for approval</div>' : ''}</td>
-        <td class="px-3 py-3 text-xs text-slate-600">${l.channel === 'email' || l.step_sent ? `<div class="flex gap-1">${[1,2,3,4].map(i => `<span class="h-1.5 w-5 rounded-full ${i <= l.step_sent ? 'bg-blue-500' : 'bg-slate-200'}"></span>`).join('')}</div><div class="mt-1 text-slate-400">${l.step_sent} of 4</div>` : '<span class="text-slate-300">—</span>'}</td>
+        <td class="px-3 py-3 text-xs text-slate-600">${l.channel === 'email' || l.step_sent ? `<div class="flex gap-1">${Array.from({length: l.emails_total}, (_, i) => i + 1).map(i => `<span class="h-1.5 w-5 rounded-full ${i <= l.emails_sent ? 'bg-blue-500' : 'bg-slate-200'}"></span>`).join('')}</div><div class="mt-1 text-slate-400">${l.emails_sent} of ${l.emails_total}</div>` : '<span class="text-slate-300">—</span>'}</td>
         <td class="px-3 py-3 text-xs"><span class="font-semibold tabular-nums ${bandC(l.band)}">${l.score}</span> <span class="${bandC(l.band)}">${esc(l.band)}</span></td>
         <td class="px-3 py-3 text-xs text-slate-500 whitespace-nowrap">${when(l.last_at)}</td></tr>`).join('')}</tbody></table></div>`
       : data.leads.length ? empty('No leads match this filter.') : empty('No leads yet.', `<div class="flex justify-center gap-2 mt-4"><button class="btn btn-primary" onclick="openImport()">⇪ Import CSV / Excel</button><button class="btn" onclick="run({action:'seed'})">Load 5 sample leads</button></div>`)}</div></div>`;
@@ -342,7 +342,7 @@ function renderDrawer(first) {
           <div class="text-[10px] text-center ${cur ? 'text-brand-700 font-semibold' : 'text-slate-400'}">${label}</div></div>
           ${i < STEPS.length - 1 ? `<div class="flex-1 h-0.5 mt-3 ${si !== undefined && i < si ? 'bg-brand-500' : 'bg-slate-200'}"></div>` : ''}</div>`; }).join('')}</div>
       ${side}
-      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-4">${[['Channel', chan(l.channel, l.switched)], ['Emails sent', l.step_sent + ' of 4'],
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-4">${[['Channel', chan(l.channel, l.switched)], ['Emails sent', l.emails_sent + ' of ' + l.emails_total],
         ['Engagement', `<span class="${bandC(l.band)}">${l.score} · ${esc(l.band)}</span>`], ['Chat handled by', l.human_owner ? 'Sales' : l.channel === 'whatsapp' ? 'Bot' : '—']]
         .map(([k, v]) => `<div class="bg-slate-50 rounded-lg px-3 py-2"><div class="text-[10px] uppercase tracking-wide text-slate-400">${k}</div><div class="text-xs font-medium mt-0.5">${v}</div></div>`).join('')}</div>
       ${notes.map(n => `<div class="mt-2 text-xs bg-amber-50 text-amber-800 rounded-lg px-3 py-2">${esc(n)}</div>`).join('')}

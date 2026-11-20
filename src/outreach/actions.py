@@ -103,7 +103,7 @@ class ToolStop:
 
 @dataclass(frozen=True)
 class ToolPause:
-    until: datetime
+    until: Optional[datetime] = None  # None: hold the sender only (P0 reply being read), no out-of-office date
 
 
 @dataclass(frozen=True)
@@ -483,7 +483,8 @@ class _Run:
             from .p0.planner import mark_sent
             mark_sent(s, lead, a.step, self.event_time)
         elif isinstance(a, ToolPause):
-            lead.pause_until = a.until
+            if a.until is not None:
+                lead.pause_until = a.until
             if lead.tool_lead_id:
                 self.external("tool.pause", deps.tool.pause, lead.tool_lead_id)
         elif isinstance(a, ToolResume):

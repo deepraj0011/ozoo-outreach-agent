@@ -104,8 +104,11 @@ def account_resume_at(session: Session, lead: Lead, now: datetime) -> Optional[d
     return max(times) if times else now
 
 
-def _restart(session: Session, lead: Lead, tool: Any, now: datetime, reason: str) -> None:
+def _restart(session: Session, lead: Lead, tool: Any, now: datetime, reason: str, settings: Any = None) -> None:
     transition(session, lead, S.IN_SEQUENCE, reason, now)
+    if (lead.variant_flags or {}).get("p0"):
+        from .p0.planner import shift_lead  # p0 imports this package's modules
+        shift_lead(session, lead, now, settings=settings)  # overdue emails go in the next slot, gaps kept
     lead.pause_reason = None
     flags = dict(lead.variant_flags or {})
     flags.pop("paused_by", None)
@@ -123,7 +126,7 @@ def _restart(session: Session, lead: Lead, tool: Any, now: datetime, reason: str
     # never-started leads (held at intake) are picked up by the worker's start_new job
 
 
-def resume_account_holds(session: Session, tool: Any, now: datetime) -> int:
+def resume_account_holds(session: Session, tool: Any, now: datetime, settings: Any = None) -> int:
     """Restart colleagues whose blockers allow it. Returns how many restarted."""
     paused: Iterable[Lead] = session.scalars(
         select(Lead).where(Lead.state == S.PAUSED.value, Lead.pause_reason == "account")
@@ -133,7 +136,7 @@ def resume_account_holds(session: Session, tool: Any, now: datetime) -> int:
     for lead in paused:
         at = account_resume_at(session, lead, now)
         if at is not None and at <= now:
-            _restart(session, lead, tool, now, "account_resume")
+            _restart(session, lead, tool, now, "account_resume", settings)
             logger.info("lead %s restarted: account hold released", lead.id)
             n += 1
     session.flush()

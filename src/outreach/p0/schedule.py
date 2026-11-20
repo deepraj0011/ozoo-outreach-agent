@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
@@ -63,8 +63,19 @@ def save_schedule(session: Session, rows: List[Dict[str, Any]], by: str, now: da
     return get_schedule(session)
 
 
-def example_dates(session: Session, now: datetime, *, settings: Any) -> List[Dict[str, Any]]:
-    """The dates each email would go if a lead started `now` (business-time calendar days)."""
-    return [{"email_no": r["email_no"], "day": r["day"],
-             "date": planner.local_day(planner.due_at(now, r["day"], settings=settings), settings=settings)}
-            for r in get_schedule(session)]
+def example_dates(session: Session, now: datetime, *, settings: Any,
+                  days: Optional[List[Any]] = None) -> List[Dict[str, Any]]:
+    """The dates each email would go if a lead started `now` (business-time calendar days, moved into the
+    send window). `days`: unsaved days from the screen instead of the saved schedule ("" if not a day)."""
+    if days is None:
+        days = [r["day"] for r in get_schedule(session)]
+    out: List[Dict[str, Any]] = []
+    for n, raw in enumerate(days, 1):
+        try:
+            day = int(raw)
+        except (TypeError, ValueError):
+            day = -1
+        date = "" if day < 0 else planner.local_day(
+            planner.send_slot(planner.due_at(now, day, settings=settings), settings=settings), settings=settings)
+        out.append({"email_no": n, "day": raw, "date": date})
+    return out

@@ -116,7 +116,7 @@ def test_new_lead_gets_rows_and_tool_waits(session, tool):
 
     assert [r.status for r in rows(session, lead)] == ["planned"] * 4
     v = tool_vars(tool, lead)
-    assert v["plan"] == "1" and v["steps"] == "4" and "subject_1" not in v
+    assert v["plan"] == "1" and v["steps"] == "10" and "subject_1" not in v  # MAX_STEPS: p0_finish ends it
     assert tool.send_due({}) == []
 
 

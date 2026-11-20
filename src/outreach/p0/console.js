@@ -89,8 +89,12 @@ function pP0Schedule() {
     <td class="text-xs text-slate-500">${esc((p0Example.find(e => e.email_no === i + 1) || {}).date || '')}</td>
     <td><button class="btn btn-sm" onclick="p0Sched.splice(${i},1);renderPage()">Remove</button></td></tr>`).join('');
   return `<div class="space-y-4 max-w-4xl"><section class="card p-4"><table class="w-full text-sm"><tr class="text-left text-xs text-slate-400"><th>#</th><th>Template</th><th>Day</th><th>Example date</th><th></th></tr>${rows}</table>
-    <div class="flex gap-2 mt-3"><button class="btn" onclick="p0AddRow()">+ Add</button><button class="btn" onclick="p0LoadSched()">Example dates</button>
+    <div class="flex gap-2 mt-3"><button class="btn" onclick="p0AddRow()">+ Add</button><button class="btn" onclick="p0ExampleDates()">Example dates</button>
     <button class="btn btn-primary" onclick="p0SaveSched()">Save</button></div></section></div>`;
+}
+async function p0ExampleDates() {  // dates for the rows on screen, saved or not (keeps unsaved edits)
+  const j = await p0Post('/demo/api/p0/schedule/example', {rows: p0Sched});
+  if (j) { p0Example = j.example; renderPage(); }
 }
 function p0AddRow() {
   const live = p0Tpls.filter(t => t.status === 'live'); if (!live.length) { toast('No live template', false); return; }

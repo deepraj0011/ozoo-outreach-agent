@@ -29,6 +29,15 @@ class _NotJson(Exception):
     pass
 
 
+def _int_or_none(raw: Any, what: str) -> Any:
+    """A template id from the screen: absent, or a whole number (P0Error otherwise)."""
+    if raw is None:
+        return None
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        raise P0Error(f"The {what} must be a whole number.")
+    return raw
+
+
 async def _json(request: Request) -> Dict[str, Any]:
     if not request.headers.get("content-type", "").lower().startswith("application/json"):
         raise _NotJson()
@@ -82,6 +91,7 @@ def register(app: FastAPI, session_factory: sessionmaker, clock: Callable[[], da
 
     def _save_template(b: Dict[str, Any]) -> Dict[str, Any]:
         s = b.pop("_s")
+        _int_or_none(b.get("id"), "template id")
         tpl = tpls.save_template(s, b, str(b.get("by") or ""), clock(), settings=settings)
         return {"ok": True, "id": tpl.id}
 
@@ -97,7 +107,8 @@ def register(app: FastAPI, session_factory: sessionmaker, clock: Callable[[], da
                                                str(b.get("by") or ""), clock()), {"ok": True})[1], body)
 
     def _preview(b: Dict[str, Any]) -> Dict[str, Any]:
-        out = tpls.preview(b["_s"], settings, template_id=b.get("template_id"), draft=b.get("draft"),
+        tid = _int_or_none(b.get("template_id"), "template id")
+        out = tpls.preview(b["_s"], settings, template_id=tid, draft=b.get("draft"),
                            role=str(b.get("role") or "Head of Collections"))
         out["html"] = out["html"].replace(settings.link_base_url.rstrip("/") + "/img/", "/img/")
         return {"subject": out["subject"], "text": out["text"], "html": out["html"]}
@@ -121,6 +132,15 @@ def register(app: FastAPI, session_factory: sessionmaker, clock: Callable[[], da
         return {"rows": saved, "example": sch.example_dates(s, clock(), settings=settings)}
 
     app.post("/demo/api/p0/schedule", include_in_schema=False)(guarded(_save_schedule))
+
+    def _example(b: Dict[str, Any]) -> Dict[str, Any]:
+        rows = b.get("rows")
+        if not isinstance(rows, list) or not all(isinstance(r, dict) for r in rows):
+            raise P0Error("Send the schedule as a list of emails.")
+        days = [r.get("day") for r in rows]
+        return {"example": sch.example_dates(b["_s"], clock(), settings=settings, days=days)}
+
+    app.post("/demo/api/p0/schedule/example", include_in_schema=False)(guarded(_example))
 
     @app.get("/demo/api/p0/leads/{lead_id}", include_in_schema=False)
     def lead_rows(lead_id: int) -> JSONResponse:

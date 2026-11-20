@@ -209,9 +209,9 @@ def start_outreach(session: Session, lead: Lead, deps: Deps, now: datetime, *,
                 lead.tool_lead_id = str(found)
                 pop_flags(lead, EMAIL_ENROLL_ATTEMPT)
                 set_flag(lead, "enrolled_at", now.isoformat())
-                from .p0 import flow as p0_flow, planner as p0_planner  # p0 imports this package
+                from .p0 import flow as p0_flow  # p0 imports this package
                 if p0_flow.is_p0(settings or get_settings(), deps.tool):
-                    p0_planner.plan_lead(session, lead, now, settings=settings or get_settings())
+                    p0_flow.start_p0(session, lead, now, settings=settings or get_settings())
                 session.flush()
                 logger.info("lead %s: already in the email tool, enrolment recovered", lead.id)
                 return "started"

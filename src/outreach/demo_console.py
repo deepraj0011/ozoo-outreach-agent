@@ -16,7 +16,7 @@ import sys
 from collections import Counter, defaultdict
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
@@ -115,17 +115,25 @@ def _event_summary(e: Event) -> str:
     return " · ".join(parts)
 
 
-def _lead_row(ld: Lead) -> Dict[str, Any]:
+def _lead_row(ld: Lead, p0_counts: Optional[Dict[int, Tuple[int, int]]] = None) -> Dict[str, Any]:
+    """p0_counts (P0 leads): {lead id: (emails sent, emails scheduled)} shown instead of "step of 4"."""
+    sent, total = (p0_counts or {}).get(ld.id, (ld.step_sent, 4))
     return {
         "id": ld.id, "name": ld.name, "company": ld.company, "role": ld.role, "email": ld.email,
         "phone": ld.phone, "state": ld.state, "channel": ld.active_channel,
         "switched": bool(ld.channel_switched), "score": ld.score, "band": band(ld.score),
-        "step_sent": ld.step_sent, "pause_reason": ld.pause_reason, "email_hold": ld.email_hold,
+        "step_sent": ld.step_sent, "emails_sent": sent, "emails_total": total,
+        "pause_reason": ld.pause_reason, "email_hold": ld.email_hold,
         "is_eu": bool(ld.is_eu), "consent_whatsapp": bool(ld.consent_whatsapp),
         "human_owner": ld.wa_human_owner_name or ld.wa_human_owner, "bot_turns": ld.wa_bot_turns,
         "nurture_track": ld.nurture_track, "nurture_until": _iso(ld.nurture_until),
         "last_sent_at": _iso(ld.last_sent_at), "created_at": _iso(ld.created_at),
     }
+
+
+def _p0_counts(session: Any, leads: List[Lead]) -> Dict[int, Tuple[int, int]]:
+    from .p0.planner import email_counts  # p0 imports this package's modules
+    return email_counts(session, [ld.id for ld in leads if (ld.variant_flags or {}).get("p0")])
 
 
 # ------------------------------------------------------------------ WhatsApp phone view
@@ -424,6 +432,7 @@ def register(app: FastAPI, session_factory: sessionmaker, clock: Callable[[], da
         with session_factory() as s:
             leads = list(s.scalars(select(Lead).order_by(Lead.id.desc()).limit(LEAD_ROWS)))
             names = {ld.id: ld.name for ld in leads}
+            p0_counts = _p0_counts(s, leads)
             events = list(s.scalars(select(Event).order_by(Event.id.desc()).limit(FEED_ROWS)))
             alerts = list(s.scalars(select(Alert).order_by(Alert.id.desc()).limit(50)))
             counts = Counter(ld.state for ld in leads)
@@ -462,7 +471,7 @@ def register(app: FastAPI, session_factory: sessionmaker, clock: Callable[[], da
         ]
         rows = []
         for ld in leads:
-            r = _lead_row(ld)
+            r = _lead_row(ld, p0_counts)
             r["last_at"] = _iso(last_at.get(ld.id))
             r["last_msg"] = last_msg.get(ld.id)
             rows.append(r)
@@ -497,7 +506,7 @@ def register(app: FastAPI, session_factory: sessionmaker, clock: Callable[[], da
             alerts = list(s.scalars(select(Alert).where(Alert.lead_id == lead_id).order_by(Alert.id)))
             jobs = list(s.scalars(select(Job).where(Job.lead_id == lead_id).order_by(Job.id)))
             return JSONResponse({
-                "lead": _lead_row(ld),
+                "lead": _lead_row(ld, _p0_counts(s, [ld])),
                 "events": [_event_row(e, names) for e in events],
                 "chat": chat_view(ld, chat, wa_templates),
                 "wa_preview": None if chat or ld.wa_template_sent_at else wa_preview(ld, wa_templates),

@@ -382,7 +382,8 @@ class MailpitEmailTool:
             due = due.replace(tzinfo=timezone.utc)
         if (self.send_window is not None and time_scale == 1.0
                 and variables.get(f"due_exact_{step}") != "1"):
-            return self.send_window.slot(due, step, key)
+            # P0 (variable p0=1): every email goes at the first-email slot, no afternoon/morning rotation
+            return self.send_window.slot(due, 1 if variables.get("p0") == "1" else step, key)
         return due
 
     def send_due(self, schedule_days: Mapping[int, int], time_scale: float = 1.0) -> List[Dict[str, Any]]:

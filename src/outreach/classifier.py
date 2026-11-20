@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from .actions import (
     Action, Alert, BotReply, IntakeReferral, SendReply, SetNurtureUntil, SetState, StartTakeover, StopAllOutreach,
-    Suppress, SuppressAllChannels, ToolPause, WaSendText,
+    Suppress, SuppressAllChannels, ToolPause, ToolResume, WaSendText,
 )
 from .intake import FREE_MAIL_DOMAINS
 from .chatbot import kb_prices, load_kb
@@ -348,18 +348,28 @@ def _follow_up_when(later: Optional[date], now: datetime) -> str:
 P0_REPLY_STATES = frozenset({S.IN_SEQUENCE, S.PAUSED, S.NURTURE})
 
 
-def _p0_reply(rc: ReplyClass, lead: Lead) -> Optional[List[Action]]:
-    """P0 (design 6.6): out-of-office changes nothing; an opt-out is an unsubscribe (normal branch); any
-    other reply stops the emails, marks the lead engaged and tells sales. Never an automatic reply.
-    None = not a P0 lead in outreach (the normal rules apply)."""
-    if not (lead.variant_flags or {}).get("p0") or S(lead.state) not in P0_REPLY_STATES:
+def _p0_reply(rc: ReplyClass, lead: Lead, event: Event) -> Optional[List[Action]]:
+    """P0 (design 6.6): never an automatic email. Out-of-office keeps the schedule (the sender, paused when
+    the reply came in, resumes); an opt-out is an unsubscribe (normal branch); any other reply during the
+    schedule stops the emails, marks the lead engaged and tells sales; later replies only tell sales.
+    None = the normal rules apply (not a P0 lead, or a WhatsApp message after the schedule ended)."""
+    if not (lead.variant_flags or {}).get("p0"):
         return None
+    state = S(lead.state)
+    if event.channel != "email" and state not in P0_REPLY_STATES:
+        return None  # a WhatsApp conversation after a channel switch keeps its own rules
     if rc.label == "ooo":
-        return []
+        paused_by_pm = (lead.variant_flags or {}).get("p0_paused")
+        return [ToolResume()] if state == S.IN_SEQUENCE and not paused_by_pm else []
     if rc.label == "unsubscribe":
         return None
+    company = (lead.company or "").strip()
+    who = (f"a colleague at {company}" if company else "a colleague") + f" replied to lead {lead.id}'s email" \
+        if (event.data or {}).get("matched_by") == "domain" else f"lead {lead.id} replied ({rc.label})"
+    if state not in P0_REPLY_STATES:
+        return [Alert("engaged", f"{who}; please answer personally")]
     return [StopAllOutreach(), SetState(S.ENGAGED, f"reply_{rc.label}"),
-            Alert("engaged", f"lead {lead.id} replied ({rc.label}); emails stopped, please answer personally")]
+            Alert("engaged", f"{who}; emails stopped, please answer personally")]
 
 
 def actions_for_class(rc: ReplyClass, lead: Lead, event: Event, now: datetime,
@@ -372,7 +382,7 @@ def actions_for_class(rc: ReplyClass, lead: Lead, event: Event, now: datetime,
     courteous close; wrong person -> thanks (a named colleague) or "who is the right person?".
     Out-of-office and opt-outs get nothing: an auto-reply needs no answer, and an opt-out means no
     more email. The courtesy reply goes before the state change (a closed lead gets no email)."""
-    p0 = _p0_reply(rc, lead)
+    p0 = _p0_reply(rc, lead, event)
     if p0 is not None:
         return p0
     if (event.data or {}).get("matched_by") == "domain":

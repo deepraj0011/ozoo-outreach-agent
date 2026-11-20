@@ -77,6 +77,7 @@ from .hours import business_deadline, business_zone, parse_business_hours
 from .models import Alert as AlertRow
 from .models import AlertAttempt, ChatMessage, Event, Lead, PlannedEmail, WorkerLock, WorkerMark
 from .p0 import flow as p0_flow
+from .p0 import planner as p0_planner
 from .outreach import (
     FAILED_SUFFIX, INTRO_ATTEMPT, INTRO_TEMPLATE, REMINDER_ATTEMPT, REMINDER_TEMPLATE, WA_RETRY_AFTER,
     handle_wa_send_failure, send_template_once, set_flag, start_outreach, switch_channel, wa_gave_up,
@@ -568,7 +569,7 @@ def _resume_paused(ctx: Ctx, session: Session) -> int:
             # the reply that carried the out-of-office stopped (deleted) the tool lead: nothing to resume
             lead.tool_lead_id = None
             set_flag(lead, "previous_tool_lead_id", old_tool_id)
-        _restart(session, lead, ctx.deps.tool, ctx.now, "ooo_resume")
+        _restart(session, lead, ctx.deps.tool, ctx.now, "ooo_resume", ctx.settings)
         lead.pause_until = None
         if send_plan.on_plan(lead):  # the next email waits a day after they're back (send_plan.BACK_GAP_DAYS)
             set_flag(lead, send_plan.BACK_FLAG, ctx.now.isoformat())
@@ -596,7 +597,7 @@ def _re_enrol(ctx: Ctx, session: Session, lead: Lead) -> None:
 
 
 def _account_holds(ctx: Ctx, session: Session) -> int:
-    return resume_account_holds(session, ctx.deps.tool, ctx.now)
+    return resume_account_holds(session, ctx.deps.tool, ctx.now, ctx.settings)
 
 
 def _eu_holds(ctx: Ctx, session: Session) -> int:
@@ -706,17 +707,54 @@ def _p0_dispatch(ctx: Ctx, session: Session) -> int:
     return _each_lead(ctx, session, "p0_dispatch", _pick(session, stmt, keep, ctx.batch), keep, one)
 
 
+P0_STUCK_DAYS = 2
+P0_STUCK_FLAG = "p0_stuck_alerted"  # planned_email ids already alerted as stuck in the sender
+
+
+def _p0_stuck_handed(ctx: Ctx, session: Session) -> int:
+    """An email handed to our sender that is still not sent 2 days after its send slot: one stuck_lead alert
+    per email (the sender may be down, or its mailbox at its cap for days)."""
+    limit = send_plan._scaled(P0_STUCK_DAYS, ctx.settings)
+    handed = select(PlannedEmail.lead_id).where(PlannedEmail.status == "handed",
+                                                PlannedEmail.handed_at <= ctx.now - limit)
+    stmt = select(Lead).where(Lead.id.in_(handed)).order_by(Lead.id)
+
+    def stuck(lead: Lead) -> List[PlannedEmail]:
+        done = set(_flags(lead).get(P0_STUCK_FLAG) or [])
+        rows = session.scalars(select(PlannedEmail).where(PlannedEmail.lead_id == lead.id,
+                                                          PlannedEmail.status == "handed")).all()
+        return [r for r in rows if r.id not in done and r.handed_at is not None
+                and ctx.now - p0_planner.send_slot(_ts(r.handed_at), settings=ctx.settings,
+                                                   key=lead.tool_lead_id or "") > limit]
+
+    def qualifies(lead: Lead) -> bool:
+        return bool(_flags(lead).get("p0")) and bool(stuck(lead))
+
+    def one(lead: Lead) -> bool:
+        rows = stuck(lead)
+        set_flag(lead, P0_STUCK_FLAG, sorted(set(_flags(lead).get(P0_STUCK_FLAG) or []) | {r.id for r in rows}))
+        execute(session, lead, [Alert("stuck_lead", f"lead {lead.id}: email {r.email_no} was handed to the sender "
+                                                    f"{P0_STUCK_DAYS} days ago and is not sent; check the sender")
+                                for r in rows], ctx.deps, ctx.now)
+        logger.warning("lead %s: P0 email stuck in the sender, alerted", lead.id)
+        return True
+
+    return _each_lead(ctx, session, "p0_stuck_handed", _pick(session, stmt, qualifies, ctx.batch), qualifies, one)
+
+
 P0_END_DAYS = 5
 
 
 def _p0_finish(ctx: Ctx, session: Session) -> int:
     """A P0 lead with nothing left to send goes to nurture 5 days after its last email (no alert)."""
     open_rows = select(PlannedEmail.lead_id).where(PlannedEmail.status.in_(("planned", "handed")))
-    stmt = (select(Lead).where(Lead.state == S.IN_SEQUENCE.value, Lead.id.not_in(open_rows)).order_by(Lead.id))
+    stmt = (select(Lead).where(Lead.state == S.IN_SEQUENCE.value, Lead.active_channel == "email",
+                               Lead.id.not_in(open_rows)).order_by(Lead.id))
     cutoff = ctx.now - send_plan._scaled(P0_END_DAYS, ctx.settings)
 
     def qualifies(lead: Lead) -> bool:
-        if lead.state != S.IN_SEQUENCE.value or not _flags(lead).get("p0"):
+        if (lead.state != S.IN_SEQUENCE.value or lead.active_channel != "email"
+                or not _flags(lead).get("p0")):
             return False
         rows = session.execute(select(PlannedEmail.status, PlannedEmail.sent_at).where(
             PlannedEmail.lead_id == lead.id)).all()
@@ -1013,7 +1051,7 @@ def _verified(ctx: Ctx, session: Session, lead: Lead, status: str) -> None:
         if eu_hold:
             lead.pause_reason = EU_HOLD
         else:
-            _restart(session, lead, ctx.deps.tool, ctx.now, "verified")  # start_new picks it up
+            _restart(session, lead, ctx.deps.tool, ctx.now, "verified", ctx.settings)  # start_new picks it up
             if status not in EMAIL_OK_STATUSES:  # email-only lead with a bad address: nothing to send
                 execute(session, lead, [SetState(S.CLOSED, "invalid_email")], ctx.deps, ctx.now)
     logger.info("lead %s: email verified (%s), hold lifted", lead.id, status)
@@ -1124,6 +1162,7 @@ JOBS: Sequence[Tuple[str, JobFn]] = (
     ("eu_holds", _eu_holds),
     ("plan_schedule", _plan_schedule),
     ("p0_dispatch", _p0_dispatch),
+    ("p0_stuck_handed", _p0_stuck_handed),
     ("nurture_follow_up", _nurture_follow_up),
     ("p0_finish", _p0_finish),
     ("end_of_sequence", _end_of_sequence),

@@ -20,7 +20,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, SessionTransaction
 
-from .actions import Action, Alert, Deps, StartTakeover, execute, record_integration_error
+from .actions import Action, Alert, Deps, StartTakeover, ToolStop, execute, record_integration_error
 from .chatbot import takeover_active
 from .models import Event, Job, Lead
 from .states import TERMINAL_VALUES
@@ -277,6 +277,11 @@ def _give_up(s: Session, job_id: int, kind: str, lead_id: int, deps: Deps, now: 
     if lead is None:
         return
     if kind == "classify":
+        if (lead.variant_flags or {}).get("p0") and lead.state not in _TERMINAL_VALUES:
+            # P0: the sender was paused for this reply; unread, the emails stop (a person answers)
+            from .p0.planner import cancel_remaining  # p0 imports this package's modules
+            cancel_remaining(s, lead, "reply_unread", now)
+            execute(s, lead, [ToolStop()], deps, now)
         execute(s, lead, [Alert("unsure", f"reply from lead {lead.id} could not be classified — "
                                           "please read it")], deps, now)
     elif lead.state not in _TERMINAL_VALUES and not lead.wa_human_owner and not takeover_active(lead):

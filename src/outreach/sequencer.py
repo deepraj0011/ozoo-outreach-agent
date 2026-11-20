@@ -5,7 +5,7 @@ import hashlib
 import logging
 import re
 import string
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -421,24 +421,12 @@ def enroll(
 
 def _enroll_p0(session: Session, lead: Lead, tool: Any, now: datetime, s: Settings, campaign_id: str) -> None:
     """P0: the tool waits (plan=1) for each email the worker hands it (p0.flow.dispatch_due). Day 0 is the
-    start time picked at import (flag plan_start), else now."""
-    from .p0.planner import _schedule, plan_lead
-    from .p0.templates import ensure_starter
-    ensure_starter(session, now, settings=s)
-    day0 = now
-    raw = (lead.variant_flags or {}).get("plan_start")
-    if raw:
-        try:
-            day0 = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
-        except ValueError:
-            day0 = now
-        if day0.tzinfo is None:
-            day0 = day0.replace(tzinfo=timezone.utc)
+    start time picked at import (flag plan_start) if still ahead, else now (p0.flow.start_p0)."""
+    from .p0.flow import TOOL_VARS, start_p0
     vals = _values(lead, 1, s)
     lead.tool_lead_id = tool.add_lead(campaign_id, lead, {
-        PLAN_VAR: "1", "steps": str(len(_schedule(session))),
-        "first_name": vals["first_name"], "company": vals["company"]})
-    plan_lead(session, lead, day0, settings=s)
+        **TOOL_VARS, "first_name": vals["first_name"], "company": vals["company"]})
+    start_p0(session, lead, now, settings=s)
     flags = dict(lead.variant_flags or {})
     flags["enrolled_at"] = now.isoformat()
     lead.variant_flags = flags
