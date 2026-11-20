@@ -15,7 +15,8 @@ import { useUser } from "./user";
 import CampaignPage from "./pages/CampaignPage";
 import TemplatesPage from "./pages/TemplatesPage";
 import ConversationsPage from "./pages/ConversationsPage";
-import ComingSoonPage from "./pages/ComingSoonPage";
+import ConnectorsPage from "./pages/ConnectorsPage";
+import SettingsPage from "./pages/SettingsPage";
 import LeadsPage from "./pages/LeadsPage";
 
 const NAV_WIDTH = 232;
@@ -111,8 +112,8 @@ export default function App() {
           <Route path="/leads" element={<LeadsPage />} />
           <Route path="/conversations" element={<ConversationsPage />} />
           <Route path="/templates" element={<TemplatesPage />} />
-          <Route path="/connectors" element={<ComingSoonPage title="Connectors" />} />
-          <Route path="/settings" element={<ComingSoonPage title="Settings" />} />
+          <Route path="/connectors" element={<ConnectorsPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/campaign" replace />} />
         </Routes>
       </Box>
