@@ -232,3 +232,15 @@ Verdict: safe for local testing. Real sending is blocked until Instantly is veri
 - **After an out-of-office, at least one day before the next email.** Its date was counted from the last email, so it was usually overdue and went the minute the lead was back.
 - **"Sooner" can end the sequence** (`fast.last`). Once a lead shows interest, the PM may want one meeting-time email and then sales, not three more automated emails.
 - **A "not now" lead gets exactly one check-in on its date**, in the same thread. More nurture emails need content and a cadence the PM hasn't asked for. End-of-sequence nurture leads (no date) get none.
+
+## Task 29: P0 scheduled emails (2026-11-20)
+
+| Decision | Why | Cost if wrong |
+|---|---|---|
+| P0/P1 split: P0 = PM-scheduled templates on fixed days, no tracking-driven choices; the "sooner if interested" and agent-picked types stay in the classic flow (P1). | Ship the simple, predictable thing first. | Two flows to maintain until P1 is rebuilt on P0. |
+| Tracking is record-only in every state (counters `p0_clicks`, `p0_visits`; no score, alert or schedule change). | The PM asked for emails on the schedule only. | Interested leads get no faster follow-up. |
+| A reply stops the rest, makes the lead engaged and alerts sales in Teams; no auto-reply. Out-of-office is ignored. | A person should answer a real reply. | Slower first answer to simple questions. |
+| Day N = calendar day N in the business timezone; at most one P0 email per lead per day (except "Send now"). | Matches how a PM reads a schedule; avoids two emails in a day after a weekend shift. | Day 2 on a Saturday goes Monday. |
+| `EMAIL_FLOW` setting, default `classic`; P0 only with our own sender. | Existing tests, Instantly mode and other flows stay untouched. | Must be set per run. |
+| Design 6.10 "failed after 3 tries" replaced by a `late` flag on the lead's Emails tab. | Simpler; a late email is visible, nothing is silently dropped. | No retry limit. |
+| Screens are local-only with no login until the new frontend. | Same as the other local screens. | Anyone on the machine can edit the schedule. |

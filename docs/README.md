@@ -20,6 +20,7 @@ Start with **onboarding**, then pick the guide for what you want to do.
 | [Visit tracking](guides/visit-tracking.md) | Installing the one-line reading snippet on the website so the agent sees verified visits (a person read the page) |
 | [Email templates](guides/email-templates.md) | The Templates screen (preview, write, approve, send by hand) and what gets an email into the Primary inbox |
 | [Email schedule](guides/send-plans.md) | When each email goes and what type it is (simple list, ⚡ sooner if interested, per-lead changes) |
+| [P0 email schedule](guides/p0-email-schedule.md) | `EMAIL_FLOW=p0`: PM picks templates and days, tracking record-only, what stops emails, how to run |
 | [Mailbox mode](guides/mailbox-mode.md) | Sending email from our own mailboxes (`EMAIL_MODE=mailbox`): domain, DNS, warm-up, Reacher verification |
 
 ## 3. Plan (what we agreed to build)
