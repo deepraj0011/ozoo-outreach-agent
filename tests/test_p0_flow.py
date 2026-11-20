@@ -189,3 +189,55 @@ def test_dispatch_is_idempotent(env, clock):
         statuses = [r.status for r in rows(s, lead)]
     assert statuses == ["handed", "planned", "planned", "planned"]
     assert [x["step"] for x in env.tool.send_due({})] == [1]
+
+
+# ------------------------------------------------------------------ task 7
+
+def _controls(session, lead):
+    session.flush()
+    return [e.data["action"] for e in session.scalars(select(Event).where(
+        Event.lead_id == lead.id, Event.kind == "p0_control").order_by(Event.id))]
+
+
+def test_pause_holds_and_resume_shifts(session, tool):
+    lead = start(session, tool)
+    assert flow.dispatch_due(session, lead, tool, NOW, settings=S)
+    event(session, lead, "sent", NOW, make_deps(tool=tool), step=1)
+    flow.pause(session, lead, tool, "pm", NOW)
+    r2 = rows(session, lead)[1]
+    late = r2.due_at + timedelta(days=3)
+
+    assert not flow.dispatch_due(session, lead, tool, late, settings=S)
+    flow.resume(session, lead, tool, "pm", late, settings=S)
+
+    after = rows(session, lead)
+    assert after[1].due_at == late and after[2].due_at - after[1].due_at > timedelta(0)
+    assert flow.dispatch_due(session, lead, tool, late, settings=S)
+    assert _controls(session, lead) == ["pause", "resume"]
+
+
+def test_stop_cancels_and_nurtures(session, tool):
+    lead = start(session, tool)
+    deps = make_deps(tool=tool)
+
+    flow.stop(session, lead, deps, "pm", NOW)
+
+    assert [r.status for r in rows(session, lead)] == ["cancelled"] * 4
+    assert rows(session, lead)[0].reason == "p0_stopped"
+    assert lead.state == LeadState.NURTURE.value and tool_status(tool, lead) == "stopped"
+    assert _controls(session, lead) == ["stop"]
+
+
+def test_send_now_hands_next_even_same_day(session, tool):
+    lead = start(session, tool)
+    assert flow.dispatch_due(session, lead, tool, NOW, settings=S)
+    event(session, lead, "sent", NOW, make_deps(tool=tool), step=1)
+    later = NOW + timedelta(hours=1)
+
+    assert not flow.dispatch_due(session, lead, tool, later, settings=S)
+    assert flow.send_now(session, lead, tool, "pm", later, settings=S)
+
+    r2 = rows(session, lead)[1]
+    assert r2.status == "handed" and r2.tool_step == 2
+    assert tool_vars(tool, lead)["due_exact_2"] == "1"
+    assert _controls(session, lead) == ["send_now"]

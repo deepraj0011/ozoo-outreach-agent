@@ -74,3 +74,57 @@ def dispatch_due(session: Session, lead: Any, tool: Any, now: datetime, *, setti
     session.flush()
     logger.info("p0: lead %s email %s handed to the tool as step %s", lead.id, row.email_no, k)
     return True
+
+
+# ------------------------------------------------------------------ per-lead controls (design 4.6)
+
+def _log(session: Session, lead: Any, action: str, by: str, now: datetime) -> None:
+    from ..models import Event
+    session.add(Event(lead_id=lead.id, channel="system", kind="p0_control", occurred_at=now, received_at=now,
+                      verdict="n/a", processed=True, data={"action": action, "by": by}))
+    session.flush()
+    logger.info("p0: lead %s %s", lead.id, action)
+
+
+def _set_paused(lead: Any, paused: bool) -> None:
+    flags = dict(lead.variant_flags or {})
+    if paused:
+        flags[PAUSED_FLAG] = True
+    else:
+        flags.pop(PAUSED_FLAG, None)
+    lead.variant_flags = flags
+
+
+def pause(session: Session, lead: Any, tool: Any, by: str, now: datetime) -> None:
+    """Planned emails wait; an email already handed to the tool is held there too."""
+    _set_paused(lead, True)
+    if lead.tool_lead_id and any(r.status == "handed" for r in _rows(session, lead.id)):
+        tool.pause(lead.tool_lead_id)
+    _log(session, lead, "pause", by, now)
+
+
+def resume(session: Session, lead: Any, tool: Any, by: str, now: datetime, *, settings: Any) -> None:
+    """Overdue emails go in the next slot, the rest keep their gaps."""
+    _set_paused(lead, False)
+    planner.shift_overdue(_rows(session, lead.id), now, settings=settings)
+    if lead.tool_lead_id:
+        tool.resume(lead.tool_lead_id)
+    _log(session, lead, "resume", by, now)
+
+
+def stop(session: Session, lead: Any, deps: Any, by: str, now: datetime) -> None:
+    """Cancel the rest (ToolStop cancels the planned rows) and move the lead to nurture."""
+    from ..actions import SetState, ToolStop, execute  # actions imports p0 lazily too
+    execute(session, lead, [ToolStop(), SetState(LeadState.NURTURE, "p0_stopped")], deps, now)
+    _log(session, lead, "stop", by, now)
+
+
+def send_now(session: Session, lead: Any, tool: Any, by: str, now: datetime, *, settings: Any) -> bool:
+    """Hand the next planned email at once (exact time, even if one already went today)."""
+    row = planner.next_row(session, lead)
+    if row is None:
+        return False
+    row.due_at, row.reason = now, SEND_NOW
+    session.flush()
+    _log(session, lead, "send_now", by, now)
+    return dispatch_due(session, lead, tool, now, settings=settings)
