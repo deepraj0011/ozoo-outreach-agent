@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import Event, Lead, P0ScheduleRow, P0Template
+from ..models import Event, Lead, P0ScheduleRow, P0Template, PlannedEmail
 from ..sequencer import (
     ALLOWED_PLACEHOLDERS, load_templates, render_version, step_versions,
 )
@@ -146,6 +146,11 @@ def set_status(session: Session, template_id: int, status: str, by: str, now: da
         if on:
             raise P0Error(f"This template is on the schedule as email {on[0]}: choose another "
                           "template there first.")
+        unsent = session.scalar(select(PlannedEmail.id).where(
+            PlannedEmail.template_id == tpl.id, PlannedEmail.status.in_(("planned", "handed"))).limit(1))
+        if unsent is not None:
+            raise P0Error("Some leads still have this template planned or waiting to go out, "
+                          "so it cannot be switched off yet.")
     tpl.status, tpl.updated_by, tpl.updated_at = status, who, now
     session.flush()
     _log(session, tpl.id, f"status:{status}", who, now)

@@ -55,6 +55,7 @@ def save_schedule(session: Session, rows: List[Dict[str, Any]], by: str, now: da
     session.execute(delete(P0ScheduleRow))
     session.add_all([P0ScheduleRow(email_no=i, **r) for i, r in enumerate(clean, 1)])
     session.flush()
+    planner.replan_all(session, now, settings=settings)
     session.add(Event(channel="system", kind="p0_schedule", occurred_at=now, received_at=now,
                       data={"emails": len(clean), "days": [r["day"] for r in clean], "by": who}))
     session.flush()
