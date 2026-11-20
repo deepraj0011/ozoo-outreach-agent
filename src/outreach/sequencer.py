@@ -199,6 +199,8 @@ def _values(lead: Lead, step: int, settings: Settings,
 
     name = _lead_text(lead.name)
     vals = {
+        "name": name,
+        "role": _lead_text(lead.role),
         "first_name": name.split(" ")[0] if name else "",
         "company": _lead_text(lead.company),
         "booking_link": link("booking"),

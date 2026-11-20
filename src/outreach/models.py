@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 
 from sqlalchemy import (
-    JSON, Boolean, CheckConstraint, ForeignKey, Index, Integer, String, Text,
+    JSON, Boolean, CheckConstraint, ForeignKey, Index, Integer, String, Text, UniqueConstraint,
 )
 from sqlalchemy.ext.mutable import MutableDict
 from sqlalchemy.orm import Mapped, mapped_column
@@ -216,3 +216,50 @@ class SendPlan(Base):
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+
+class P0Template(Base):
+    """An email the product manager wrote (P0 scheduled emails): draft until made live."""
+    __tablename__ = "p0_template"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), default="")
+    subject: Mapped[str] = mapped_column(Text, default="")
+    body: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(10), default="draft")  # draft|live|off
+    created_by: Mapped[str] = mapped_column(String(80), default="")
+    updated_by: Mapped[str] = mapped_column(String(80), default="")
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+
+class P0ScheduleRow(Base):
+    """The schedule: which template goes as email `email_no`, `day` days after the first."""
+    __tablename__ = "p0_schedule_row"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email_no: Mapped[int] = mapped_column(Integer, unique=True)
+    template_id: Mapped[int] = mapped_column(ForeignKey("p0_template.id"))
+    day: Mapped[int] = mapped_column(Integer)
+
+
+class PlannedEmail(Base):
+    """One email planned for one lead at a due time."""
+    __tablename__ = "planned_email"
+    __table_args__ = (
+        UniqueConstraint("lead_id", "email_no"),
+        Index("ix_planned_email_status_due", "status", "due_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    lead_id: Mapped[int] = mapped_column(ForeignKey("lead.id"))
+    email_no: Mapped[int] = mapped_column(Integer)
+    template_id: Mapped[int] = mapped_column(ForeignKey("p0_template.id"))
+    due_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    status: Mapped[str] = mapped_column(String(10), default="planned")  # planned|handed|sent|cancelled|skipped
+    tool_step: Mapped[Optional[int]] = mapped_column(Integer)
+    handed_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime)
+    sent_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime)
+    reason: Mapped[Optional[str]] = mapped_column(String(50))
+    sent_subject: Mapped[Optional[str]] = mapped_column(Text)
+    sent_text: Mapped[Optional[str]] = mapped_column(Text)
