@@ -1,81 +1,70 @@
 import { Box, ButtonBase, Stack, Tooltip, Typography } from "@mui/material";
-import CheckIcon from "@mui/icons-material/CheckCircle";
-import OpenIcon from "@mui/icons-material/DraftsOutlined";
-import ClickIcon from "@mui/icons-material/AdsClickOutlined";
-import ReadIcon from "@mui/icons-material/AutoStoriesOutlined";
-import ScheduleIcon from "@mui/icons-material/ScheduleOutlined";
-import WarningIcon from "@mui/icons-material/WarningAmberRounded";
-import type { ReactNode } from "react";
+import CheckCircleRounded from "@mui/icons-material/CheckCircleRounded";
+import ScheduleSendRounded from "@mui/icons-material/ScheduleSendRounded";
+import WarningAmberRounded from "@mui/icons-material/WarningAmberRounded";
 import type { Cell } from "../types";
 import { shortDate, timeOfDay } from "../format";
+import { cellLook, type CellLook } from "../lib/campaign";
 
-function Count({ icon, n, title }: { icon: ReactNode; n: number; title: string }) {
-  if (!n) return null;
-  return (
-    <Tooltip title={title}>
-      <Stack direction="row" alignItems="center" spacing={0.25} sx={{ color: "text.secondary", "& svg": { fontSize: 13 } }}>
-        {icon}
-        <Typography sx={{ fontSize: 11, fontWeight: 600 }}>{n}</Typography>
-      </Stack>
-    </Tooltip>
-  );
+const TONE_COLOR: Record<CellLook["tone"], string> = {
+  success: "success.main",
+  warning: "warning.main",
+  muted: "text.secondary",
+};
+
+function label(cell: Cell, tz: string): string {
+  switch (cell.status) {
+    case "sent": return shortDate(cell.sent_at ?? cell.date, tz);
+    case "today": return `Today ${timeOfDay(cell.date, tz)}`.trim();
+    case "skipped": return shortDate(cell.date, tz) || "Skipped";
+    case "cancelled": return shortDate(cell.date, tz) || "Cancelled";
+    default: return shortDate(cell.date, tz);
+  }
 }
 
-function Body({ cell, tz }: { cell: Cell; tz: string }) {
-  const date = shortDate(cell.date, tz);
+function hint(cell: Cell): string {
   switch (cell.status) {
-    case "sent":
-      return (
-        <>
-          <Stack direction="row" alignItems="center" spacing={0.5} sx={{ color: "success.main" }}>
-            <CheckIcon sx={{ fontSize: 16 }} />
-            <Typography sx={{ fontSize: 13, fontWeight: 600 }}>{shortDate(cell.sent_at ?? cell.date, tz)}</Typography>
-          </Stack>
-          <Stack direction="row" spacing={1} sx={{ mt: 0.25, minHeight: 16 }}>
-            <Count icon={<OpenIcon />} n={cell.opens} title="Opened (people, not scanners)" />
-            <Count icon={<ClickIcon />} n={cell.clicks} title="Link clicks" />
-            <Count icon={<ReadIcon />} n={cell.visits} title="Read the web page" />
-            {!cell.opens && !cell.clicks && !cell.visits && (
-              <Typography sx={{ fontSize: 11, color: "text.disabled" }}>no opens yet</Typography>
-            )}
-          </Stack>
-        </>
-      );
-    case "today":
-      return (
-        <Stack direction="row" alignItems="center" spacing={0.5} sx={{ color: "info.main" }}>
-          <ScheduleIcon sx={{ fontSize: 16 }} />
-          <Typography sx={{ fontSize: 13, fontWeight: 600 }}>Today {timeOfDay(cell.date, tz)}</Typography>
-        </Stack>
-      );
-    case "handed":
-      return <Typography sx={{ fontSize: 13, fontWeight: 600, color: "info.main" }}>Sending {date}</Typography>;
-    case "planned":
-      return <Typography sx={{ fontSize: 13, color: "text.secondary" }}>{date}</Typography>;
-    case "skipped":
-      return <Typography sx={{ fontSize: 12, color: "text.disabled" }}>Skipped</Typography>;
-    default:
-      return <Typography sx={{ fontSize: 12, color: "text.disabled" }}>Cancelled</Typography>;
+    case "sent": {
+      const parts = [`${cell.opens} opens`, `${cell.clicks} clicks`];
+      if (cell.visits) parts.push(`${cell.visits} page reads`);
+      return `Sent. ${parts.join(", ")}.`;
+    }
+    case "today": return "Goes today";
+    case "handed": return "With the sender";
+    case "planned": return "Planned";
+    case "skipped": return "Skipped";
+    default: return cell.reason ? `Cancelled (${cell.reason.replace(/_/g, " ")})` : "Cancelled";
   }
 }
 
 export default function EmailCell({ cell, tz, onClick }: { cell: Cell | undefined; tz: string; onClick: () => void }) {
-  if (!cell) return <Typography sx={{ fontSize: 13, color: "text.disabled", px: 1 }}>—</Typography>;
-  const bg = cell.status === "sent" ? "rgba(21,128,61,0.06)" : cell.status === "today" ? "rgba(29,78,216,0.07)" : "transparent";
+  if (!cell) return <Box component="span" aria-label="Not planned" />;
+  const look = cellLook(cell.status);
+  const struck = look.icon === "cancelled";
   return (
-    <ButtonBase
-      onClick={onClick}
-      aria-label={`Email ${cell.email_no}: ${cell.status}`}
-      sx={{ display: "block", textAlign: "left", width: "100%", px: 1, py: 0.75, borderRadius: 1.5, bgcolor: bg,
-        "&:hover": { bgcolor: "rgba(55,48,163,0.07)" } }}
-    >
-      <Body cell={cell} tz={tz} />
-      {cell.late && (
-        <Stack direction="row" alignItems="center" spacing={0.25} sx={{ color: "warning.main", mt: 0.25 }}>
-          <WarningIcon sx={{ fontSize: 13 }} />
-          <Box component="span" sx={{ fontSize: 11, fontWeight: 700 }}>late</Box>
-        </Stack>
-      )}
-    </ButtonBase>
+    <Tooltip title={hint(cell)} placement="top" enterDelay={400}>
+      <ButtonBase
+        onClick={(e) => {
+          e.stopPropagation();
+          onClick();
+        }}
+        aria-label={`Email ${cell.email_no}: ${hint(cell)}`}
+        sx={{ justifyContent: "flex-start", gap: 0.625, px: 1, py: 0.5, ml: -1, borderRadius: 1.5,
+          color: TONE_COLOR[look.tone], "&:hover": { bgcolor: "rgba(255,255,255,0.05)" } }}
+      >
+        {look.icon === "sent" && <CheckCircleRounded sx={{ fontSize: 17 }} />}
+        {look.icon === "today" && <ScheduleSendRounded sx={{ fontSize: 17 }} />}
+        <Typography component="span" noWrap sx={{ fontSize: 13, fontWeight: look.tone === "muted" ? 500 : 600,
+          textDecoration: struck ? "line-through" : "none", opacity: struck ? 0.75 : 1 }}>
+          {label(cell, tz)}
+        </Typography>
+        {cell.late && (
+          <Stack direction="row" alignItems="center" sx={{ color: "warning.main", ml: 0.25 }}>
+            <WarningAmberRounded sx={{ fontSize: 15 }} />
+            <Box component="span" sx={{ fontSize: 11.5, fontWeight: 700, ml: 0.25 }}>late</Box>
+          </Stack>
+        )}
+      </ButtonBase>
+    </Tooltip>
   );
 }

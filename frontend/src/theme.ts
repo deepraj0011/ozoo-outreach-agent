@@ -33,7 +33,13 @@ export const theme = createTheme({
     },
     MuiChip: { styleOverrides: { root: { fontWeight: 500, borderRadius: 999 } } },
     MuiTableCell: { styleOverrides: { head: { fontWeight: 600, color: "#9aa1ab" } } },
-    MuiDrawer: { styleOverrides: { paper: { backgroundColor: "#1a1d21", backgroundImage: "none" } } },
+    MuiDrawer: {
+      styleOverrides: {
+        paper: { backgroundColor: "#1a1d21", backgroundImage: "none" },
+        // Side panels (lead, email, schedule) open above the app bar, which sits at drawer + 1.
+        modal: ({ ownerState }) => (ownerState.anchor === "right" ? { zIndex: 1300 } : {}),
+      },
+    },
     MuiAppBar: { styleOverrides: { root: { backgroundImage: "none" } } },
   },
 });

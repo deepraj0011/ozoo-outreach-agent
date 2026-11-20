@@ -1,151 +1,80 @@
-import { useEffect, useMemo, useState } from "react";
-import { Alert, Box, Button, Card, IconButton, MenuItem, Stack, TextField, Tooltip, Typography } from "@mui/material";
-import AddIcon from "@mui/icons-material/Add";
-import CloseIcon from "@mui/icons-material/Close";
-import { errorText, postJson } from "../api";
-import { calendarDay } from "../format";
-import type { Board, ExampleDate } from "../types";
-import { useUser } from "../user";
+import { Box, Button, ButtonBase, Card, Stack, Typography } from "@mui/material";
+import AddRounded from "@mui/icons-material/AddRounded";
+import BoltRounded from "@mui/icons-material/BoltRounded";
+import CalendarTodayRounded from "@mui/icons-material/CalendarTodayRounded";
+import EditRounded from "@mui/icons-material/EditRounded";
+import EventRounded from "@mui/icons-material/EventRounded";
+import ScheduleRounded from "@mui/icons-material/ScheduleRounded";
+import type { ScheduleRow } from "../types";
+import { stripItems, timingLabel } from "../lib/campaign";
 
 const MAX_EMAILS = 10;
-const EXAMPLE_DELAY_MS = 400;
+const STEP_MIN_WIDTH = 150;
+const ADD_WIDTH = 132;
+const DOT = 30;
 
-interface Draft {
-  template_id: number | "";
-  day: string;
-}
-
-function fromBoard(board: Board): Draft[] {
-  return board.schedule.map((s) => ({ template_id: s.template_id, day: String(s.day) }));
-}
-
-function payload(rows: Draft[]) {
-  return rows.map((r) => ({ template_id: r.template_id === "" ? null : r.template_id,
-    day: r.day.trim() === "" ? null : Number(r.day) }));
-}
+const TIMING_ICON: Record<ScheduleRow["mode"], typeof BoltRounded> = {
+  now: BoltRounded,
+  at: EventRounded,
+  day: CalendarTodayRounded,
+};
 
 interface Props {
-  board: Board;
-  onSaved: (message: string) => void;
-  onDirtyChange: (dirty: boolean) => void;
+  schedule: ScheduleRow[];
+  tz: string;
+  onEdit: (addRow: boolean) => void;
 }
 
-export default function ScheduleStrip({ board, onSaved, onDirtyChange }: Props) {
-  const { name } = useUser();
-  const saved = useMemo(() => fromBoard(board), [board]);
-  const [rows, setRows] = useState<Draft[]>(saved);
-  const [dirty, setDirty] = useState(false);
-  const [example, setExample] = useState<ExampleDate[]>(board.example);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    if (!dirty) {
-      setRows(saved);
-      setExample(board.example);
-    }
-  }, [saved, board.example, dirty]);
-
-  useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange]);
-
-  useEffect(() => {
-    if (!dirty) return undefined;
-    const t = window.setTimeout(() => {
-      postJson<{ example: ExampleDate[] }>("/demo/api/p0/schedule/example", { rows: payload(rows) })
-        .then((r) => setExample(r.example))
-        .catch(() => undefined);
-    }, EXAMPLE_DELAY_MS);
-    return () => window.clearTimeout(t);
-  }, [rows, dirty]);
-
-  const live = board.templates.filter((t) => t.status === "live");
-  const change = (next: Draft[]) => {
-    setRows(next);
-    setDirty(true);
-    setError(null);
-  };
-  const update = (i: number, patch: Partial<Draft>) => change(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
-  const remove = (i: number) => change(rows.filter((_, j) => j !== i));
-  const add = () => {
-    const last = rows[rows.length - 1];
-    const day = last && last.day.trim() !== "" ? String(Number(last.day) + 5) : "0";
-    change([...rows, { template_id: live[0]?.id ?? "", day }]);
-  };
-  const cancel = () => {
-    setRows(saved);
-    setExample(board.example);
-    setDirty(false);
-    setError(null);
-  };
-  const save = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      await postJson("/demo/api/p0/schedule", { rows: payload(rows), by: name });
-      setDirty(false);
-      onSaved("Schedule saved. Every lead still on the schedule now follows it.");
-    } catch (e) {
-      setError(errorText(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
+function Step({ row, name, first, last, tz }: { row: ScheduleRow; name: string; first: boolean; last: boolean;
+  tz: string }) {
+  const Icon = TIMING_ICON[row.mode] ?? CalendarTodayRounded;
+  const title = name || `Email ${row.email_no}`;
   return (
-    <Box>
-      <Stack direction="row" alignItems="baseline" justifyContent="space-between" sx={{ mb: 1 }}>
-        <Box>
-          <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>Email schedule</Typography>
-          <Typography variant="caption" color="text.secondary">
-            Which template goes as which email, and on which day after the lead starts (day 0).
-          </Typography>
-        </Box>
-        {dirty && (
-          <Stack direction="row" spacing={1}>
-            <Button onClick={cancel} disabled={busy}>Cancel</Button>
-            <Button variant="contained" onClick={save} disabled={busy}>Save schedule</Button>
-          </Stack>
-        )}
-      </Stack>
-      {error && <Alert severity="error" sx={{ mb: 1.5 }} onClose={() => setError(null)}>{error}</Alert>}
-      <Stack direction="row" spacing={1.5} sx={{ overflowX: "auto", pb: 1 }}>
-        {rows.map((r, i) => {
-          const date = example[i]?.date ? calendarDay(example[i].date) : "";
-          const known = live.some((t) => t.id === r.template_id);
-          const other = board.templates.find((t) => t.id === r.template_id);
-          return (
-            <Card key={i} sx={{ minWidth: 220, maxWidth: 240, p: 1.5, flexShrink: 0,
-              borderColor: dirty ? "primary.light" : "divider" }}>
-              <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
-                <Typography sx={{ fontWeight: 700, fontSize: 14 }}>Email {i + 1}</Typography>
-                <Tooltip title={rows.length > 1 ? "Remove this email" : "The schedule needs at least one email"}>
-                  <span>
-                    <IconButton size="small" onClick={() => remove(i)} disabled={rows.length <= 1}
-                      aria-label={`Remove email ${i + 1}`}>
-                      <CloseIcon fontSize="small" />
-                    </IconButton>
-                  </span>
-                </Tooltip>
-              </Stack>
-              <TextField select fullWidth size="small" label="Template" value={r.template_id}
-                onChange={(e) => update(i, { template_id: Number(e.target.value) })}>
-                {live.map((t) => <MenuItem key={t.id} value={t.id}>{t.name}</MenuItem>)}
-                {!known && other && <MenuItem value={other.id} disabled>{other.name} ({other.status})</MenuItem>}
-              </TextField>
-              <TextField fullWidth size="small" type="number" label="Day" value={r.day} sx={{ mt: 1.5 }}
-                inputProps={{ min: 0, step: 1 }} onChange={(e) => update(i, { day: e.target.value })} />
-              <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1, minHeight: 18 }}>
-                {date ? `A lead starting today: ~${date}` : " "}
-              </Typography>
-            </Card>
-          );
-        })}
-        <Button variant="outlined" onClick={add} disabled={rows.length >= MAX_EMAILS || live.length === 0}
-          startIcon={<AddIcon />}
-          sx={{ minWidth: 150, flexShrink: 0, borderStyle: "dashed", borderRadius: 2.5 }}>
-          Add email
-        </Button>
+    <Box sx={{ position: "relative", pr: 2, minWidth: STEP_MIN_WIDTH,
+      "&::after": last ? undefined : { content: '""', position: "absolute", top: DOT / 2 - 1, left: DOT + 6,
+        right: 6, height: 2, bgcolor: "divider", borderRadius: 1 } }}>
+      <Box sx={{ position: "relative", zIndex: 1, width: DOT, height: DOT, borderRadius: "50%", display: "grid",
+        placeItems: "center", fontWeight: 700, fontSize: 13,
+        bgcolor: first ? "primary.main" : "#1d2e2c", color: first ? "primary.contrastText" : "primary.main" }}>
+        {row.email_no}
+      </Box>
+      <Typography title={title} sx={{ mt: 1.25, fontWeight: 700, fontSize: 13.5 }} noWrap>{title}</Typography>
+      <Stack direction="row" alignItems="center" spacing={0.5} sx={{ mt: 0.25, color: "text.secondary" }}>
+        <Icon sx={{ fontSize: 15 }} />
+        <Typography sx={{ fontSize: 12.5 }} noWrap>{timingLabel(row, tz)}</Typography>
       </Stack>
     </Box>
+  );
+}
+
+export default function ScheduleStrip({ schedule, tz, onEdit }: Props) {
+  const steps = stripItems(schedule);
+  const n = steps.length;
+  return (
+    <Card>
+      <Stack direction="row" alignItems="center" spacing={1.25}
+        sx={{ px: 2, py: 1.5, borderBottom: 1, borderColor: "divider" }}>
+        <ScheduleRounded sx={{ color: "primary.main", fontSize: 20 }} />
+        <Typography sx={{ fontWeight: 700, fontSize: 14.5 }}>Email schedule</Typography>
+        <Typography color="text.secondary" sx={{ fontSize: 12.5, display: { xs: "none", sm: "block" } }}>
+          {n} {n === 1 ? "email" : "emails"}, sent in working hours
+        </Typography>
+        <Box sx={{ flexGrow: 1 }} />
+        <Button size="small" startIcon={<EditRounded />} onClick={() => onEdit(false)}>Edit</Button>
+      </Stack>
+      <Box sx={{ display: "grid", gap: 0, p: 2, overflowX: "auto",
+        gridTemplateColumns: n ? `repeat(${n}, minmax(${STEP_MIN_WIDTH}px, 1fr)) ${ADD_WIDTH}px` : `${ADD_WIDTH}px` }}>
+        {steps.map((s, i) => (
+          <Step key={s.emailNo} row={s.row} name={s.name} first={i === 0} last={i === n - 1} tz={tz} />
+        ))}
+        {n < MAX_EMAILS && (
+          <ButtonBase onClick={() => onEdit(true)} aria-label="Add email"
+            sx={{ border: "1.5px dashed", borderColor: "divider", borderRadius: 2, color: "primary.main", minHeight: 72,
+              fontWeight: 600, fontSize: 13.5, gap: 0.5, "&:hover": { borderColor: "primary.main", bgcolor: "#1d2e2c" } }}>
+            <AddRounded sx={{ fontSize: 18 }} /> Add email
+          </ButtonBase>
+        )}
+      </Box>
+    </Card>
   );
 }

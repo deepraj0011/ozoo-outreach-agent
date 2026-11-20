@@ -53,8 +53,11 @@ export interface Totals {
 
 export interface ExampleDate {
   email_no: number;
-  day: number | string;
+  day: number | string | null;
   date: string;
+  mode?: ScheduleRow["mode"];
+  when?: string;
+  exact?: boolean;
 }
 
 export interface CampaignState {

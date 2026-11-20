@@ -1,41 +1,46 @@
-import { Box, Card, Typography } from "@mui/material";
-import PeopleIcon from "@mui/icons-material/PeopleAltOutlined";
-import SendIcon from "@mui/icons-material/SendOutlined";
-import TodayIcon from "@mui/icons-material/TodayOutlined";
-import ReplyIcon from "@mui/icons-material/ChatBubbleOutline";
-import StopIcon from "@mui/icons-material/DoNotDisturbOnOutlined";
-import UnsubIcon from "@mui/icons-material/UnsubscribeOutlined";
 import type { ReactNode } from "react";
+import { Box, Card, Typography } from "@mui/material";
+import GroupRounded from "@mui/icons-material/GroupRounded";
+import SendRounded from "@mui/icons-material/SendRounded";
+import MarkEmailReadRounded from "@mui/icons-material/MarkEmailReadRounded";
+import BlockRounded from "@mui/icons-material/BlockRounded";
 import type { Totals } from "../types";
 
-interface Stat {
-  key: keyof Totals;
+interface Tile {
   label: string;
   icon: ReactNode;
-  color: string;
+  value: number;
+  of?: number;
 }
 
-const STATS: Stat[] = [
-  { key: "leads", label: "Leads", icon: <PeopleIcon />, color: "#3730a3" },
-  { key: "sent", label: "Emails sent", icon: <SendIcon />, color: "#15803d" },
-  { key: "today", label: "Going today", icon: <TodayIcon />, color: "#1d4ed8" },
-  { key: "replied", label: "Replied", icon: <ReplyIcon />, color: "#0f766e" },
-  { key: "stopped", label: "Stopped", icon: <StopIcon />, color: "#6b7280" },
-  { key: "unsubscribed", label: "Unsubscribed", icon: <UnsubIcon />, color: "#b91c1c" },
-];
+function tiles(t: Totals): Tile[] {
+  return [
+    { label: "Leads in sequence", icon: <GroupRounded />, value: Math.max(0, t.leads - t.stopped) },
+    { label: "Sent today", icon: <SendRounded />, value: t.sent_today, of: t.sent_today + t.today },
+    { label: "Replies", icon: <MarkEmailReadRounded />, value: t.replied },
+    { label: "Stopped or unsubscribed", icon: <BlockRounded />, value: t.stopped },
+  ];
+}
 
 export default function TotalsRow({ totals }: { totals: Totals }) {
   return (
-    <Box sx={{ display: "grid", gap: 1.5, gridTemplateColumns: { xs: "repeat(2, 1fr)", sm: "repeat(3, 1fr)", lg: "repeat(6, 1fr)" } }}>
-      {STATS.map((s) => (
-        <Card key={s.key} sx={{ p: 1.75, display: "flex", alignItems: "center", gap: 1.5 }}>
-          <Box sx={{ width: 38, height: 38, borderRadius: 2, display: "grid", placeItems: "center",
-            color: s.color, bgcolor: `${s.color}14` }}>
+    <Box sx={{ display: "grid", gap: 1.5, gridTemplateColumns: { xs: "repeat(2, 1fr)", lg: "repeat(4, 1fr)" } }}>
+      {tiles(totals).map((s) => (
+        <Card key={s.label} sx={{ px: 2, py: 1.75, display: "flex", alignItems: "center", gap: 1.5 }}>
+          <Box sx={{ width: 40, height: 40, borderRadius: 2.25, display: "grid", placeItems: "center", flexShrink: 0,
+            color: "primary.main", bgcolor: "#1d2e2c", "& svg": { fontSize: 22 } }}>
             {s.icon}
           </Box>
-          <Box>
-            <Typography sx={{ fontSize: 22, fontWeight: 700, lineHeight: 1.1 }}>{totals[s.key]}</Typography>
-            <Typography variant="caption" color="text.secondary">{s.label}</Typography>
+          <Box sx={{ minWidth: 0 }}>
+            <Typography component="div" sx={{ fontSize: 22, fontWeight: 700, lineHeight: 1.15 }}>
+              {s.value}
+              {s.of !== undefined && (
+                <Box component="span" sx={{ fontSize: 13, fontWeight: 500, color: "text.secondary", ml: 0.75 }}>
+                  of {s.of}
+                </Box>
+              )}
+            </Typography>
+            <Typography noWrap variant="body2" color="text.secondary" sx={{ fontSize: 12.5 }}>{s.label}</Typography>
           </Box>
         </Card>
       ))}
