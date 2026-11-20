@@ -345,6 +345,23 @@ def _follow_up_when(later: Optional[date], now: datetime) -> str:
     return f"in {later.strftime('%B %Y')}"
 
 
+P0_REPLY_STATES = frozenset({S.IN_SEQUENCE, S.PAUSED, S.NURTURE})
+
+
+def _p0_reply(rc: ReplyClass, lead: Lead) -> Optional[List[Action]]:
+    """P0 (design 6.6): out-of-office changes nothing; an opt-out is an unsubscribe (normal branch); any
+    other reply stops the emails, marks the lead engaged and tells sales. Never an automatic reply.
+    None = not a P0 lead in outreach (the normal rules apply)."""
+    if not (lead.variant_flags or {}).get("p0") or S(lead.state) not in P0_REPLY_STATES:
+        return None
+    if rc.label == "ooo":
+        return []
+    if rc.label == "unsubscribe":
+        return None
+    return [StopAllOutreach(), SetState(S.ENGAGED, f"reply_{rc.label}"),
+            Alert("engaged", f"lead {lead.id} replied ({rc.label}); emails stopped, please answer personally")]
+
+
 def actions_for_class(rc: ReplyClass, lead: Lead, event: Event, now: datetime,
                       answer: Optional[str] = None) -> List[Action]:
     """Pure: the actions for one classified reply. `answer`: the knowledge-base answer to an emailed
@@ -355,6 +372,9 @@ def actions_for_class(rc: ReplyClass, lead: Lead, event: Event, now: datetime,
     courteous close; wrong person -> thanks (a named colleague) or "who is the right person?".
     Out-of-office and opt-outs get nothing: an auto-reply needs no answer, and an opt-out means no
     more email. The courtesy reply goes before the state change (a closed lead gets no email)."""
+    p0 = _p0_reply(rc, lead)
+    if p0 is not None:
+        return p0
     if (event.data or {}).get("matched_by") == "domain":
         return _colleague(rc, lead, event)
 
@@ -467,6 +487,7 @@ def make_classifier(settings: Any, llm: Optional[LLMClient] = None
         logger.info("lead %s: event %s classified %s (%.2f)", lead.id, event.id, rc.label, rc.confidence)
         answer = None
         if (rc.label == "question" and event.channel == "email" and lead.active_channel == "email"
+                and not (lead.variant_flags or {}).get("p0")  # P0 never answers automatically
                 and (event.data or {}).get("matched_by") != "domain"):
             answer = answer_question(strip_quoted(str(data.get("text") or "")), kb, llm, model=chat_model,
                                      today=now.date(), lead_id=lead.id, kb_price_set=kb_price_set,

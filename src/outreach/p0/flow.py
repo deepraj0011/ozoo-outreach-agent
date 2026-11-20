@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..emailtool.mailpit import MAX_STEPS
-from ..models import P0Template, PlannedEmail
+from ..models import Job, P0Template, PlannedEmail
 from ..states import LeadState
 from . import planner
 
@@ -47,6 +47,9 @@ def dispatch_due(session: Session, lead: Any, tool: Any, now: datetime, *, setti
     rows = _rows(session, lead.id)
     if any(r.status == "handed" for r in rows):
         return False
+    if session.scalar(select(Job.id).where(Job.lead_id == lead.id, Job.kind == "classify",
+                                           Job.status.in_(("pending", "running"))).limit(1)) is not None:
+        return False  # a reply is being read: its label decides whether the emails go on
     row = next((r for r in rows if r.status == "planned"), None)
     if row is None or row.due_at > now:
         return False

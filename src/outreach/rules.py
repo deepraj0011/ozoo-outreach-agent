@@ -401,6 +401,8 @@ def _on_visit(lead: LeadSnapshot, event: EventSnapshot) -> List[Action]:
 
 
 def _on_reply(lead: LeadSnapshot, event: EventSnapshot) -> List[Action]:
+    if lead.flags.get("p0") and lead.state in OUTREACH_STATES:
+        return [Classify()]  # the label decides (classifier.actions_for_class): out-of-office keeps the schedule
     if lead.state in OUTREACH_STATES:
         return _engage(lead, "reply")
     if lead.state in CONVERSATION_STATES:
@@ -590,6 +592,17 @@ _TIMED_HANDLERS: Dict[str, Callable[[LeadSnapshot, EventSnapshot, datetime], Lis
 }
 
 
+# P0: clicks and verified visits are counted only (no score, alert, next-email version or booking slots)
+P0_RECORD_ONLY = {"click": "p0_clicks", "visit": "p0_visits", "booking_click_not_booked": None}
+
+
+def _p0_record(lead: LeadSnapshot, event: EventSnapshot) -> List[Action]:
+    key = P0_RECORD_ONLY[event.kind]
+    if key is None:
+        return []
+    return [SetFlag(key, int(lead.flags.get(key, 0) or 0) + 1)]
+
+
 def decide(lead: LeadSnapshot, event: EventSnapshot, now: datetime) -> List[Action]:
     """Return the ordered actions for `event` on `lead`. Pure; `now` is only used to compute
     future dates (nurture_until); other time-dependent facts are precomputed into the snapshots."""
@@ -600,6 +613,8 @@ def decide(lead: LeadSnapshot, event: EventSnapshot, now: datetime) -> List[Acti
         return []
     if event.kind in HINT_KINDS and event.verdict != "human":
         return []
+    if lead.flags.get("p0") and event.kind in P0_RECORD_ONLY:
+        return _p0_record(lead, event)
     timed = _TIMED_HANDLERS.get(event.kind)
     if timed is not None:
         return timed(lead, event, now)
