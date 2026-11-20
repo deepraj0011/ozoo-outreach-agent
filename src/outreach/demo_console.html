@@ -77,6 +77,7 @@ tailwind.config = { theme: { extend: {
 
 <script src="/demo/templates.js"></script>
 <script src="/demo/schedule.js"></script>
+<script src="/demo/p0.js"></script>
 <script>
 // ------------------------------------------------------------------ vocabulary (plan-aligned)
 const STATE = {
@@ -173,7 +174,8 @@ async function refresh() {
   try {
     const r = await fetch('/demo/api/state'); data = await r.json();
     if (openId != null) { const d = await fetch('/demo/api/lead/' + openId); detail = d.ok ? await d.json() : null;
-      if (drawerTab === 'schedule') await schLoadLead(openId); }
+      if (drawerTab === 'schedule') await schLoadLead(openId);
+      if (drawerTab === 'p0emails') await p0LoadLead(openId); }
     if (page === 'conversations' && convId != null) { const d = await fetch('/demo/api/lead/' + convId); convDetail = d.ok ? await d.json() : null; }
     $('clock').textContent = new Date(data.clock).toLocaleString([], {weekday:'short', month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'});
     renderPage(true); if (openId != null) renderDrawer();
@@ -199,7 +201,7 @@ function renderShell() {
   const acts = {
     overview: `<button class="btn" onclick="location.hash='#/how'">How it works</button><button class="btn btn-primary" onclick="openImport()">⇪ Import leads</button>`,
     leads: `<button class="btn" onclick="openAdd()">+ Add lead</button><button class="btn btn-primary" onclick="openImport()">⇪ Import CSV / Excel</button>`,
-    templates: `<button class="btn" onclick="tplNew('manual')">+ One-off email</button><button class="btn btn-primary" onclick="tplNew()">+ New template</button>`,
+    templates: p0On ? '' : `<button class="btn" onclick="tplNew('manual')">+ One-off email</button><button class="btn btn-primary" onclick="tplNew()">+ New template</button>`,
   };
   $('pageActions').innerHTML = acts[page] || '';
 }
@@ -208,7 +210,7 @@ let lastRendered = '';
 function renderPage(fromPoll) {
   renderShell();
   if (!data) { $('page').innerHTML = '<div class="text-sm text-slate-400">Loading…</div>'; return; }
-  const html = ({overview: pOverview, leads: pLeads, conversations: pConversations, templates: pTemplates, schedule: pSchedule, alerts: pAlerts, how: pHow, settings: pSettings}[page])();
+  const html = ({overview: pOverview, leads: pLeads, conversations: pConversations, templates: p0On ? pP0Templates : pTemplates, schedule: p0On ? pP0Schedule : pSchedule, alerts: pAlerts, how: pHow, settings: pSettings}[page])();
   if (fromPoll && html === lastRendered) return;
   // keep typed text and focus across re-renders
   const focused = document.activeElement && document.activeElement.id;
@@ -345,9 +347,9 @@ function renderDrawer(first) {
         .map(([k, v]) => `<div class="bg-slate-50 rounded-lg px-3 py-2"><div class="text-[10px] uppercase tracking-wide text-slate-400">${k}</div><div class="text-xs font-medium mt-0.5">${v}</div></div>`).join('')}</div>
       ${notes.map(n => `<div class="mt-2 text-xs bg-amber-50 text-amber-800 rounded-lg px-3 py-2">${esc(n)}</div>`).join('')}
     </div>
-    <div class="px-6 border-b border-slate-100 flex gap-6 text-sm overflow-x-auto">${[['activity','Activity'],['schedule','Email schedule'],['chat','WhatsApp chat'],['alerts','Alerts'],['demo','▶ Simulate the lead']].map(([k, t]) =>
+    <div class="px-6 border-b border-slate-100 flex gap-6 text-sm overflow-x-auto">${[['activity','Activity'],[p0On ? 'p0emails' : 'schedule', p0On ? 'Emails' : 'Email schedule'],['chat','WhatsApp chat'],['alerts','Alerts'],['demo','▶ Simulate the lead']].map(([k, t]) =>
       `<button onclick="drawerTab='${k}';renderDrawer()" class="py-3 border-b-2 font-medium whitespace-nowrap ${drawerTab === k ? 'border-brand-500 text-brand-700' : 'border-transparent text-slate-500 hover:text-slate-800'}">${t}</button>`).join('')}</div>
-    <div id="drawerBody" class="flex-1 overflow-y-auto thin p-6">${drawerTab === 'activity' ? dActivity() : drawerTab === 'schedule' ? dSchedule(l) : drawerTab === 'chat' ? dChat(detail) : drawerTab === 'alerts' ? dAlerts() : dDemo(l)}</div>`;
+    <div id="drawerBody" class="flex-1 overflow-y-auto thin p-6">${drawerTab === 'activity' ? dActivity() : drawerTab === 'p0emails' ? dP0Emails(l) : drawerTab === 'schedule' ? dSchedule(l) : drawerTab === 'chat' ? dChat(detail) : drawerTab === 'alerts' ? dAlerts() : dDemo(l)}</div>`;
   Object.entries(keep).forEach(([id, v]) => { const e = $(id); if (e) e.value = v; });
   if (focused && $(focused)) $(focused).focus();
   if (!first && $('drawerBody')) $('drawerBody').scrollTop = scroll;

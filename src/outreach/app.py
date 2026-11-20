@@ -414,6 +414,9 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
         demo_console.register(app, session_factory, clock, settings)
         template_console.register(app, session_factory, clock, settings, deps.tool)
         schedule_console.register(app, session_factory, clock, settings, deps.tool)
+        from .p0 import console as p0_console
+
+        p0_console.register(app, session_factory, clock, settings, deps)
 
     @app.exception_handler(Exception)
     async def _unhandled(request: Request, exc: Exception) -> JSONResponse:
