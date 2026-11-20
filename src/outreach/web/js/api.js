@@ -55,6 +55,10 @@ export function leadAction(leadId, action, by) {
   return post(`/p0/leads/${Number(leadId)}/${action}`, { by });
 }
 
+// campaign Start / Pause (nothing is sent before Start)
+export const startCampaign = (by) => post('/p0/campaign/start', { by });
+export const pauseCampaign = (by) => post('/p0/campaign/pause', { by });
+
 // templates
 export const getTemplates = () => get('/p0/templates');
 export const saveTemplate = (template) => post('/p0/templates', template);

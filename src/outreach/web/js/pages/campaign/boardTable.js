@@ -1,6 +1,7 @@
 // Board table: one row per lead, one column per scheduled email. A stopped lead's remaining cells merge into
 // one span that says why ("Replied 22 Nov — emails stopped").
 import { h } from '../../dom.js';
+import { fmtCalendarDay } from '../../format.js';
 import { Chip, StateChip } from '../../components/Chip.js';
 import { StatusCell, StopChip, stopText } from '../../components/StatusCell.js';
 import { Table } from '../../components/Table.js';
@@ -33,10 +34,20 @@ function columnsOf(board) {
   return [...nos].sort((a, b) => a - b);
 }
 
+/** "Day 4", "Now" or "24 Nov 10:00" (a schedule row's timing; `at` is local business time). */
+function timingText(row) {
+  if (row.mode === 'now') return 'Now';
+  if (row.mode === 'at' && row.at) {
+    const [date, time] = row.at.split('T');
+    return `${fmtCalendarDay(date)} ${time}`;
+  }
+  return `Day ${row.day}`;
+}
+
 function headCell(no, schedule) {
   const row = schedule.find((s) => s.email_no === no);
   return h('div', null, `Email ${no}`,
-    h('div', { class: 'cell-sub' }, row ? `Day ${row.day} · ${row.template_name}` : 'not on the schedule'));
+    h('div', { class: 'cell-sub' }, row ? `${timingText(row)} · ${row.template_name}` : 'not on the schedule'));
 }
 
 function leadCell(lead, onLead) {

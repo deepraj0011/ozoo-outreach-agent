@@ -246,6 +246,17 @@ class P0ScheduleRow(Base):
     at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime)
 
 
+class P0Campaign(Base):
+    """The P0 campaign switch (one row, id 1): nothing is handed to the sender until the PM presses Start."""
+    __tablename__ = "p0_campaign"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    running: Mapped[bool] = mapped_column(Boolean, default=False)
+    started_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime)
+    updated_by: Mapped[str] = mapped_column(String(80), default="")
+    updated_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime)
+
+
 class PlannedEmail(Base):
     """One email planned for one lead at a due time."""
     __tablename__ = "planned_email"

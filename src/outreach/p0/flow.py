@@ -72,13 +72,17 @@ def _blocked(session: Session, lead: Any, rows: List[PlannedEmail]) -> Optional[
 
 def dispatch_due(session: Session, lead: Any, tool: Any, now: datetime, *, settings: Any,
                  force: bool = False) -> bool:
-    """Hand the lead's next due email to the tool (rendered now). At most one email per calendar day, except
+    """Hand the lead's next due email to the tool (rendered now), only while the campaign runs (p0.campaign).
+    At most one email per calendar day, except
     exact rows (the PM picked that moment: "now", a date and time, Send now), which the tool sends at once.
     force (Send now): the next planned email goes at once at that exact time; if it cannot, P0Error says
     why and nothing changes. Written in the caller's transaction."""
     from ..sequencer import _tracking_vars  # sequencer imports this module
+    from . import campaign  # campaign imports this module
     from .templates import P0Error, render
 
+    if not campaign.is_running(session) and not force:
+        return False  # nothing is handed before the PM presses Start (Send now on one lead still works)
     rows = planner.lead_rows(session, lead.id)
     why = _blocked(session, lead, rows)
     row = next((r for r in rows if r.status == "planned"), None)

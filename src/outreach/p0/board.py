@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from ..models import Event, Lead, P0Template, PlannedEmail
 from ..send_plan import _scaled
 from ..sequencer import load_templates, render_version
-from . import planner
+from . import campaign, planner
 from . import schedule as sch
 from .flow import CONTROL_STATES, PAUSED_FLAG
 from .templates import P0Error, _version
@@ -89,11 +89,12 @@ def _stop(lead: Lead, rows: List[PlannedEmail], events: Dict[str, datetime]) -> 
     return None, None
 
 
-def _cell(row: PlannedEmail, lead: Lead, counts: Dict[Tuple[int, int, str], int], today: str,
+def _cell(row: PlannedEmail, lead: Lead, counts: Dict[Tuple[int, int, str], int], today: Optional[str],
           day_start: datetime, now: datetime, settings: Any) -> Dict[str, Any]:
+    """today=None (campaign not started): nothing is going today, cells stay planned."""
     slot = _slot(row, lead, settings)
     status = row.status
-    if status in OPEN_STATUSES and planner.local_day(slot, settings=settings) == today:
+    if today is not None and status in OPEN_STATUSES and planner.local_day(slot, settings=settings) == today:
         status = "today"
     late = (row.status == "planned" and row.due_at < day_start) or (
         row.status == "handed" and row.handed_at is not None and now - row.handed_at > _scaled(1, settings))
@@ -118,7 +119,8 @@ def board(session: Session, now: datetime, *, settings: Any) -> Dict[str, Any]:
                                  .order_by(PlannedEmail.email_no)):
             rows.setdefault(r.lead_id, []).append(r)
     counts, stops = _counts(session, ids), _stop_events(session, ids)
-    today = planner.local_day(now, settings=settings)
+    camp = campaign.view(session)
+    today = planner.local_day(now, settings=settings) if camp["running"] else None
     day_start = planner._day_start(now, settings=settings)
     out_leads: List[Dict[str, Any]] = []
     totals = {"leads": len(leads), "sent": 0, "today": 0, "replied": 0, "stopped": 0, "unsubscribed": 0}
@@ -134,7 +136,7 @@ def board(session: Session, now: datetime, *, settings: Any) -> Dict[str, Any]:
         out_leads.append({"id": ld.id, "name": ld.name, "company": ld.company, "role": ld.role or "",
                           "state": ld.state, "paused": bool((ld.variant_flags or {}).get(PAUSED_FLAG)),
                           "stop_reason": reason, "stopped_at": _iso(at), "emails": cells})
-    return {"schedule": schedule, "templates": [{"id": t.id, "name": t.name, "status": t.status} for t in templates],
+    return {"campaign": camp, "schedule": schedule, "templates": [{"id": t.id, "name": t.name, "status": t.status} for t in templates],
             "totals": totals, "leads": out_leads, "now": now.isoformat(), "tz": planner._zone(settings).key,
             "example": sch.example_dates(session, now, settings=settings)}
 

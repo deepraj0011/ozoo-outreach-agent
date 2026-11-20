@@ -148,15 +148,21 @@ def shift_lead(session: Session, lead: Lead, now: datetime, *, settings: Any,
     return delta
 
 
-def _replan_lead(session: Session, lead: Lead, sched: List[P0ScheduleRow], now: datetime,
-                 *, settings: Any) -> bool:
+def lead_day0(lead: Lead) -> Optional[datetime]:
+    """The lead's day 0 (flag p0_day0), or None if unreadable."""
     try:
         day0 = datetime.fromisoformat(str((lead.variant_flags or {}).get("p0_day0")))
     except ValueError:
+        return None
+    return day0 if day0.tzinfo is not None else day0.replace(tzinfo=timezone.utc)
+
+
+def _replan_lead(session: Session, lead: Lead, sched: List[P0ScheduleRow], now: datetime,
+                 *, settings: Any) -> bool:
+    day0 = lead_day0(lead)
+    if day0 is None:
         logger.warning("p0: lead %s has no readable start day; its emails were not replanned", lead.id)
         return False
-    if day0.tzinfo is None:
-        day0 = day0.replace(tzinfo=timezone.utc)
     rows = lead_rows(session, lead.id)
     by_no = {r.email_no: r for r in rows}
     gone = {r.email_no for r in rows if r.status in ("handed", "sent")}

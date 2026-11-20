@@ -14,7 +14,7 @@ from sqlalchemy.orm import sessionmaker
 
 from ..models import Lead
 from . import board as brd
-from . import flow, planner
+from . import campaign, flow, planner
 from . import schedule as sch
 from . import templates as tpls
 from .templates import P0Error
@@ -146,9 +146,22 @@ def register(app: FastAPI, session_factory: sessionmaker, clock: Callable[[], da
     def board_view() -> JSONResponse:
         with session_factory() as s:
             tpls.ensure_starter(s, clock(), settings=settings)
-            s.commit()
             out = brd.board(s, clock(), settings=settings)
+            s.commit()  # keeps the campaign row board() may have created
         return JSONResponse(out, headers=NO_STORE)
+
+    def _campaign(action: str) -> Callable[[Dict[str, Any]], Any]:
+        def run(b: Dict[str, Any]) -> Dict[str, Any]:
+            s, by, now = b["_s"], str(b.get("by") or ""), clock()
+            if not on():
+                raise P0Error("The P0 email flow is not on.")
+            if action == "start":
+                return {"campaign": campaign.start(s, deps.tool, by, now, settings=settings)}
+            return {"campaign": campaign.pause(s, deps.tool, by, now)}
+        return run
+
+    app.post("/demo/api/p0/campaign/start", include_in_schema=False)(guarded(_campaign("start")))
+    app.post("/demo/api/p0/campaign/pause", include_in_schema=False)(guarded(_campaign("pause")))
 
     @app.get("/demo/api/p0/leads/{lead_id}/emails/{email_no}", include_in_schema=False)
     def email_view(lead_id: int, email_no: int) -> JSONResponse:

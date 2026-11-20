@@ -32,6 +32,13 @@ def _no_network(monkeypatch):
     monkeypatch.setattr(httpx2.AsyncHTTPTransport, "handle_async_request", _ablocked)
 
 
+@pytest.fixture(autouse=True)
+def _p0_campaign_started(monkeypatch):
+    """Tests written before the P0 Start button assume sending has started; test_p0_campaign sets it back."""
+    from outreach.p0 import campaign
+    monkeypatch.setattr(campaign, "FRESH_RUNNING", True)
+
+
 @pytest.fixture
 def session():
     engine = make_engine("sqlite://", poolclass=StaticPool)

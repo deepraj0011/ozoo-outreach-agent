@@ -129,12 +129,23 @@ export function createScheduleStrip({ onSaved }) {
     mount(cardsHost, draft.map(card), draft.length < MAX_EMAILS ? addCard() : null);
   }
 
+  /** Save the unsaved edits (throws the API error, shown under the cards). */
+  async function saveDraft() {
+    try {
+      await saveSchedule(draft.map(apiRow), store.get().by);
+    } catch (e) {
+      error = e.message;
+      renderActions();
+      throw e;
+    }
+    saved = draft;
+    store.set({ editing: false });
+  }
+
   async function save(button) {
     try {
-      const rows = draft.map(apiRow);
-      await busy(button, () => saveSchedule(rows, store.get().by));
-      store.set({ editing: false });
-      showSnackbar('Schedule saved. Leads still waiting follow the new days.', 'success');
+      await busy(button, saveDraft);
+      showSnackbar('Schedule saved. Leads still waiting follow the new timing.', 'success');
       await onSaved();
     } catch (e) {
       error = e.message;
@@ -165,6 +176,8 @@ export function createScheduleStrip({ onSaved }) {
 
   return {
     el,
+    isDirty,
+    saveDraft,
     /** New board data; ignored while the PM has unsaved edits. */
     load(board) {
       if (store.get().editing) return;

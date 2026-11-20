@@ -162,6 +162,7 @@ textarea.field__input { resize: vertical; line-height: 1.5; font-family: var(--f
 .alert--error { background: var(--c-danger-soft); color: var(--c-danger); }
 .alert--info { background: var(--c-info-soft); color: var(--c-info); }
 .alert--success { background: var(--c-success-soft); color: var(--c-success); }
+.campaign-banner { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); flex-wrap: wrap; font-size: var(--t-md, 1rem); }
 .empty { text-align: center; padding: var(--s-8) var(--s-4); color: var(--c-text-2); }
 .empty__title { font-size: var(--t-lg); font-weight: 500; color: var(--c-text); margin-bottom: var(--s-2); }
 .empty .btn { margin-top: var(--s-4); }
