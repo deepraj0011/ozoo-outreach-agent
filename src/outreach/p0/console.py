@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse, Response
 from sqlalchemy.orm import sessionmaker
 
 from ..models import Lead
+from . import board as brd
 from . import flow, planner
 from . import schedule as sch
 from . import templates as tpls
@@ -141,6 +142,23 @@ def register(app: FastAPI, session_factory: sessionmaker, clock: Callable[[], da
         return {"example": sch.example_dates(b["_s"], clock(), settings=settings, days=days)}
 
     app.post("/demo/api/p0/schedule/example", include_in_schema=False)(guarded(_example))
+
+    @app.get("/demo/api/p0/board", include_in_schema=False)
+    def board_view() -> JSONResponse:
+        with session_factory() as s:
+            tpls.ensure_starter(s, clock(), settings=settings)
+            s.commit()
+            out = brd.board(s, clock(), settings=settings)
+        return JSONResponse(out, headers=NO_STORE)
+
+    @app.get("/demo/api/p0/leads/{lead_id}/emails/{email_no}", include_in_schema=False)
+    def email_view(lead_id: int, email_no: int) -> JSONResponse:
+        with session_factory() as s:
+            try:
+                out = brd.email_detail(s, lead_id, email_no, clock(), settings=settings)
+            except P0Error as exc:
+                return JSONResponse({"error": str(exc)}, status_code=404)
+        return JSONResponse(out, headers=NO_STORE)
 
     @app.get("/demo/api/p0/leads/{lead_id}", include_in_schema=False)
     def lead_rows(lead_id: int) -> JSONResponse:
