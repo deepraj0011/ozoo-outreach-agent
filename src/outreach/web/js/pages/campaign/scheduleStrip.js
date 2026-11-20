@@ -1,8 +1,9 @@
-// Schedule strip: one card per email (template + day), "+ Add email", Save / Cancel while edited, and under each
-// card the date a lead added today would get it (POST schedule/example with the unsaved rows).
+// Schedule strip: one card per email (template + timing: Now / Day N / a date and time), "+ Add email",
+// Save / Cancel while edited, and under each card when a lead added now would get it (POST schedule/example with
+// the unsaved rows).
 import { exampleDates, saveSchedule } from '../../api.js';
 import { debounce, h, mount } from '../../dom.js';
-import { fmtCalendarDay } from '../../format.js';
+import { fmtCalendarDay, fmtTime } from '../../format.js';
 import { store } from '../../store.js';
 import { Button, busy } from '../../components/Button.js';
 import { Card } from '../../components/Card.js';
@@ -17,6 +18,11 @@ const EXAMPLE_DELAY_MS = 300;
 /** A day as the API wants it: a number when it is one, otherwise the raw text (the API names the problem). */
 const dayValue = (raw) => (/^\d+$/.test(String(raw).trim()) ? Number(raw) : String(raw));
 const sameRows = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const MODES = [['now', 'Now (email 1 only)'], ['day', 'Day'], ['at', 'Date & time']];
+/** A schedule row as the API wants it. */
+const apiRow = (r) => ({ template_id: Number(r.template_id), mode: r.mode || 'day', day: dayValue(r.day),
+  at: r.mode === 'at' ? (r.at || '') : null });
+const draftRow = (r) => ({ template_id: r.template_id, mode: r.mode || 'day', day: r.day, at: r.at || '' });
 
 function templateOptions(templates, currentId) {
   return templates
@@ -32,27 +38,34 @@ export function createScheduleStrip({ onSaved }) {
   let savedDates = [];
   let dateEls = [];
   let error = '';
+  let tz;
   const cardsHost = h('div', { class: 'schedule' });
   const actionsHost = h('div');
   const el = h('section', { 'aria-label': 'Email schedule' },
     h('div', { class: 'page-head' }, h('h2', null, 'Email schedule'),
-      h('span', { class: 'muted small' }, 'Day 0 is the day a lead is added. Emails go inside working hours.')),
+      h('span', { class: 'muted small' },
+        'Day 0 is the day a lead starts. Day emails go inside working hours; Now and a date and time go exactly then.')),
     cardsHost, actionsHost);
 
   const isDirty = () => !sameRows(draft, saved);
 
   function renderDate(i) {
-    const date = dates[i];
-    mount(dateEls[i], date ? 'A lead added today gets it ' : 'Enter a day (0 or more)',
-      date ? h('b', null, fmtCalendarDay(date)) : null);
+    const ex = dates[i];
+    const row = draft[i] || {};
+    if (!ex || !ex.date) {
+      mount(dateEls[i], row.mode === 'at' ? 'Pick a date and time' : 'Enter a day (0 or more)');
+      return;
+    }
+    const label = ex.exact ? `${fmtCalendarDay(ex.date)}, ${fmtTime(ex.when, tz)}` : fmtCalendarDay(ex.date);
+    mount(dateEls[i], 'A lead starting now gets it ', h('b', null, label), ex.exact ? null : ' (working hours)');
   }
 
   const refreshExample = debounce(async () => {
     const rows = draft;
     try {
-      const out = await exampleDates(rows.map((r) => ({ template_id: Number(r.template_id), day: dayValue(r.day) })));
+      const out = await exampleDates(rows.map(apiRow));
       if (rows !== draft) return; // edited again meanwhile: the next call answers
-      dates = out.example.map((e) => e.date);
+      dates = out.example;
       dates.forEach((_, i) => dateEls[i] && renderDate(i));
     } catch (e) {
       showError(e);
@@ -78,11 +91,25 @@ export function createScheduleStrip({ onSaved }) {
     const select = Select({ value: row.template_id, ariaLabel: `Email ${i + 1} template`,
       options: templateOptions(templates, row.template_id),
       onChange: (v) => setDraft(update(i, { template_id: Number(v) })) });
-    const day = TextField({ label: 'Day', type: 'number', min: 0, value: String(row.day),
-      onInput: (v) => setDraft(update(i, { day: dayValue(v) })) });
+    const timing = Select({ value: row.mode || 'day', ariaLabel: `Email ${i + 1} timing`,
+      options: MODES.map(([value, label]) => ({ value, label, disabled: value === 'now' && i > 0 })),
+      onChange: (v) => {
+        const ex = dates[i];
+        const cur = draft[i].at;
+        const at = v === 'at' && !cur && ex && ex.date ? `${ex.date}T10:00` : cur;
+        setDraft(update(i, { mode: v, at }), { rerender: true });
+      } });
+    let when = null;
+    if (row.mode === 'at') {
+      when = TextField({ label: 'Date & time', type: 'datetime-local', value: row.at || '',
+        onInput: (v) => setDraft(update(i, { at: v })) });
+    } else if (row.mode !== 'now') {
+      when = TextField({ label: 'Day', type: 'number', min: 0, value: String(row.day),
+        onInput: (v) => setDraft(update(i, { day: dayValue(v) })) });
+    }
     const node = Card({ class: 'sched-card' },
       h('div', { class: 'sched-card__head' }, h('span', { class: 'sched-card__name' }, `Email ${i + 1}`), remove),
-      select, day, dateEl);
+      select, timing, when, dateEl);
     renderDate(i);
     return node;
   }
@@ -91,7 +118,8 @@ export function createScheduleStrip({ onSaved }) {
     const last = draft[draft.length - 1];
     const firstLive = templates.find((t) => t.status === 'live');
     const lastDay = last && /^\d+$/.test(String(last.day)) ? Number(last.day) : -DEFAULT_GAP_DAYS;
-    const row = { template_id: last ? last.template_id : (firstLive ? firstLive.id : ''), day: lastDay + DEFAULT_GAP_DAYS };
+    const row = { template_id: last ? last.template_id : (firstLive ? firstLive.id : ''), mode: 'day',
+      day: lastDay + DEFAULT_GAP_DAYS, at: '' };
     return Card({ class: 'sched-card sched-card--add' },
       Button({ label: '+ Add email', variant: 'text', onClick: () => setDraft([...draft, row], { rerender: true }) }));
   }
@@ -103,7 +131,7 @@ export function createScheduleStrip({ onSaved }) {
 
   async function save(button) {
     try {
-      const rows = draft.map((r) => ({ template_id: Number(r.template_id), day: dayValue(r.day) }));
+      const rows = draft.map(apiRow);
       await busy(button, () => saveSchedule(rows, store.get().by));
       store.set({ editing: false });
       showSnackbar('Schedule saved. Leads still waiting follow the new days.', 'success');
@@ -140,8 +168,9 @@ export function createScheduleStrip({ onSaved }) {
     /** New board data; ignored while the PM has unsaved edits. */
     load(board) {
       if (store.get().editing) return;
-      const nextSaved = board.schedule.map((r) => ({ template_id: r.template_id, day: r.day }));
-      const nextDates = board.example.map((e) => e.date);
+      const nextSaved = board.schedule.map(draftRow);
+      const nextDates = board.example;
+      tz = board.tz;
       const unchanged = sameRows(nextSaved, saved) && sameRows(nextDates, savedDates)
         && sameRows(board.templates, templates) && cardsHost.childElementCount > 0;
       if (unchanged) return; // keep focus in the strip across auto-refreshes

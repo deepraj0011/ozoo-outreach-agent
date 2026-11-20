@@ -38,9 +38,8 @@ def _slot(row: PlannedEmail, lead: Lead, settings: Any) -> datetime:
         return row.sent_at
     if row.status == "handed" and row.handed_at is not None:
         return row.handed_at
-    if row.reason == planner.SEND_NOW:
-        return row.due_at
-    return planner.send_slot(row.due_at, settings=settings, key=lead.tool_lead_id or "")
+    return planner.goes_at(row.due_at, row.reason == planner.SEND_NOW or bool(row.exact), settings=settings,
+                           key=lead.tool_lead_id or "")
 
 
 def _counts(session: Session, lead_ids: List[int]) -> Dict[Tuple[int, int, str], int]:
@@ -109,8 +108,7 @@ def board(session: Session, now: datetime, *, settings: Any) -> Dict[str, Any]:
     templates = list(session.execute(select(P0Template.id, P0Template.name, P0Template.status)
                                      .order_by(P0Template.id)).all())
     names = {t.id: t.name for t in templates}
-    schedule = [{"email_no": r["email_no"], "day": r["day"], "template_id": r["template_id"],
-                 "template_name": names.get(r["template_id"], "")} for r in sch.get_schedule(session)]
+    schedule = [{**r, "template_name": names.get(r["template_id"], "")} for r in sch.get_schedule(session, settings=settings)]
     leads = [ld for ld in session.scalars(select(Lead).order_by(Lead.created_at.desc(), Lead.id.desc()))
              if (ld.variant_flags or {}).get("p0")]
     ids = [ld.id for ld in leads]

@@ -121,7 +121,7 @@ def register(app: FastAPI, session_factory: sessionmaker, clock: Callable[[], da
         with session_factory() as s:
             tpls.ensure_starter(s, clock(), settings=settings)
             s.commit()
-            out = {"rows": sch.get_schedule(s), "example": sch.example_dates(s, clock(), settings=settings)}
+            out = {"rows": sch.get_schedule(s, settings=settings), "example": sch.example_dates(s, clock(), settings=settings)}
         return JSONResponse(out, headers=NO_STORE)
 
     def _save_schedule(b: Dict[str, Any]) -> Dict[str, Any]:
@@ -138,8 +138,7 @@ def register(app: FastAPI, session_factory: sessionmaker, clock: Callable[[], da
         rows = b.get("rows")
         if not isinstance(rows, list) or not all(isinstance(r, dict) for r in rows):
             raise P0Error("Send the schedule as a list of emails.")
-        days = [r.get("day") for r in rows]
-        return {"example": sch.example_dates(b["_s"], clock(), settings=settings, days=days)}
+        return {"example": sch.example_dates(b["_s"], clock(), settings=settings, rows=rows)}
 
     app.post("/demo/api/p0/schedule/example", include_in_schema=False)(guarded(_example))
 

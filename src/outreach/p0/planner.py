@@ -39,6 +39,26 @@ def due_at(day0: datetime, day: int, *, settings: Any) -> datetime:
     return datetime.combine(date, time.min, tzinfo=zone).astimezone(timezone.utc)
 
 
+MODES = ("now", "day", "at")
+
+
+def row_due(day0: datetime, mode: Optional[str], day: int, at: Optional[datetime], *,
+            settings: Any) -> Tuple[datetime, bool]:
+    """(due time, exact) of one schedule email for a lead whose day 0 is `day0`. "now": day 0 itself, exact.
+    "at": that moment, exact, or, for a lead that starts after it, day 0 in working hours (late, never
+    skipped). "day": due_at, moved into the send window when handed."""
+    if mode == "now":
+        return day0, True
+    if mode == "at" and at is not None:
+        return (at, True) if at >= day0 else (day0, False)
+    return due_at(day0, day, settings=settings), False
+
+
+def goes_at(due: datetime, exact: bool, *, settings: Any, key: str = "") -> datetime:
+    """When an email due at `due` actually goes: exactly then, or in the send window's slot."""
+    return due if exact else send_slot(due, settings=settings, key=key)
+
+
 def local_day(at: datetime, *, settings: Any) -> str:
     """The calendar day `at` falls on (business time), or the scaled-day bucket on a fast clock."""
     scale = _scale(settings)
@@ -88,8 +108,11 @@ def plan_lead(session: Session, lead: Lead, day0: datetime, *, settings: Any) ->
     flags = dict(lead.variant_flags or {})
     flags["p0"], flags["p0_day0"] = True, day0.isoformat()
     lead.variant_flags = flags
-    rows = [PlannedEmail(lead_id=lead.id, email_no=s.email_no, template_id=s.template_id, status="planned",
-                         due_at=due_at(day0, s.day, settings=settings)) for s in _schedule(session)]
+    rows = []
+    for s in _schedule(session):
+        due, exact = row_due(day0, s.mode, s.day, s.at, settings=settings)
+        rows.append(PlannedEmail(lead_id=lead.id, email_no=s.email_no, template_id=s.template_id,
+                                 status="planned", due_at=due, exact=exact))
     session.add_all(rows)
     session.flush()
     return rows
@@ -103,7 +126,7 @@ def shift_overdue(rows: Sequence[PlannedEmail], now: datetime, *, settings: Any)
         return timedelta(0)
     delta = now - planned[0].due_at
     for r in planned:
-        r.due_at = r.due_at + delta
+        r.due_at, r.exact = r.due_at + delta, False  # late: the next working-hours slot
     return delta
 
 
@@ -139,18 +162,21 @@ def _replan_lead(session: Session, lead: Lead, sched: List[P0ScheduleRow], now: 
     gone = {r.email_no for r in rows if r.status in ("handed", "sent")}
     used = {r.template_id for r in rows if r.status in ("handed", "sent")}
     shift = _shift(lead)
-    before = [(r.email_no, r.template_id, r.due_at, r.status, r.reason) for r in rows]
+    before = [(r.email_no, r.template_id, r.due_at, r.status, r.reason, bool(r.exact)) for r in rows]
     for s in sched:
         row = by_no.get(s.email_no)
-        due = due_at(day0, s.day, settings=settings) + shift
+        if s.mode in ("now", "at"):
+            due, exact = row_due(day0 + shift, s.mode, s.day, s.at, settings=settings)
+        else:
+            due, exact = due_at(day0, s.day, settings=settings) + shift, False
         skip = s.template_id in used and s.email_no not in gone
         if row is None:
             row = PlannedEmail(lead_id=lead.id, email_no=s.email_no, template_id=s.template_id, due_at=due,
-                               status="skipped" if skip else "planned", reason="already_sent" if skip else None)
+                               exact=exact, status="skipped" if skip else "planned", reason="already_sent" if skip else None)
             session.add(row)
             rows.append(row)
         elif row.status == "planned" and row.reason != SEND_NOW:
-            row.template_id, row.due_at = s.template_id, due
+            row.template_id, row.due_at, row.exact = s.template_id, due, exact
             if skip:
                 row.status, row.reason = "skipped", "already_sent"
     numbers = {s.email_no for s in sched}
@@ -159,7 +185,7 @@ def _replan_lead(session: Session, lead: Lead, sched: List[P0ScheduleRow], now: 
             row.status, row.reason = "cancelled", "removed"
     shift_lead(session, lead, now, settings=settings, rows=rows)
     session.flush()
-    after = [(r.email_no, r.template_id, r.due_at, r.status, r.reason) for r in sorted(rows, key=lambda r: r.email_no)]
+    after = [(r.email_no, r.template_id, r.due_at, r.status, r.reason, bool(r.exact)) for r in sorted(rows, key=lambda r: r.email_no)]
     return sorted(before) != after
 
 
@@ -226,10 +252,9 @@ def lead_view(session: Session, lead: Lead, now: datetime, *, settings: Any) -> 
         late = (r.status == "planned" and r.due_at < start) or (
             r.status == "handed" and r.handed_at is not None and now - r.handed_at > _scaled(1, settings))
         out.append({"email_no": r.email_no, "template_name": names.get(r.template_id, ""), "status": r.status,
-                    "due_date": local_day(
-                        r.due_at if r.reason == SEND_NOW else send_slot(r.due_at, settings=settings,
-                                                                        key=lead.tool_lead_id or ""),
-                        settings=settings), "sent_at": r.sent_at, "reason": r.reason,
+                    "due_date": local_day(goes_at(r.due_at, r.reason == SEND_NOW or bool(r.exact),
+                                                  settings=settings, key=lead.tool_lead_id or ""),
+                                          settings=settings), "sent_at": r.sent_at, "reason": r.reason,
                     "sent_subject": r.sent_subject, "late": late,
                     "opens": counts.get((r.email_no, "open"), 0), "clicks": counts.get((r.email_no, "click"), 0),
                     "visits": counts.get((r.email_no, "visit"), 0)})

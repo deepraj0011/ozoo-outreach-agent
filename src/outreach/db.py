@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from sqlalchemy import DateTime, Engine, create_engine, event
+from sqlalchemy import DateTime, Engine, create_engine, event, inspect, text
 from sqlalchemy.engine import Dialect
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.types import TypeDecorator
@@ -61,7 +61,37 @@ def make_engine(url: str, **kwargs: Any) -> Engine:
     return engine
 
 
+# columns added to an existing table after it was first created (there are no migrations yet):
+# init_db adds any that are missing, with their server default
+LATE_COLUMNS = (
+    ("p0_schedule_row", "mode"),
+    ("p0_schedule_row", "at"),
+    ("planned_email", "exact"),
+)
+
+
+def add_missing_columns(engine: Engine) -> int:
+    """ALTER TABLE ... ADD COLUMN for every LATE_COLUMNS entry the database lacks. Idempotent; SQLite and
+    Postgres. Returns how many columns were added."""
+    from sqlalchemy.schema import CreateColumn
+
+    added = 0
+    with engine.begin() as conn:
+        insp = inspect(conn)
+        for table, name in LATE_COLUMNS:
+            if not insp.has_table(table):
+                continue
+            if name in {c["name"] for c in insp.get_columns(table)}:
+                continue
+            column = Base.metadata.tables[table].c[name]
+            ddl = CreateColumn(column).compile(dialect=engine.dialect)
+            conn.execute(text(f"ALTER TABLE {engine.dialect.identifier_preparer.quote(table)} ADD COLUMN {ddl}"))
+            added += 1
+    return added
+
+
 def init_db(engine: Engine) -> None:
     from . import models  # noqa: F401  (register tables)
 
     Base.metadata.create_all(engine)
+    add_missing_columns(engine)

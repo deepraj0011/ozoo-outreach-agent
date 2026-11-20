@@ -72,7 +72,8 @@ def _blocked(session: Session, lead: Any, rows: List[PlannedEmail]) -> Optional[
 
 def dispatch_due(session: Session, lead: Any, tool: Any, now: datetime, *, settings: Any,
                  force: bool = False) -> bool:
-    """Hand the lead's next due email to the tool (rendered now). At most one email per calendar day.
+    """Hand the lead's next due email to the tool (rendered now). At most one email per calendar day, except
+    exact rows (the PM picked that moment: "now", a date and time, Send now), which the tool sends at once.
     force (Send now): the next planned email goes at once at that exact time; if it cannot, P0Error says
     why and nothing changes. Written in the caller's transaction."""
     from ..sequencer import _tracking_vars  # sequencer imports this module
@@ -87,7 +88,9 @@ def dispatch_due(session: Session, lead: Any, tool: Any, now: datetime, *, setti
         if why is not None:
             raise P0Error(why)
         row.due_at, row.reason = now, SEND_NOW
-    elif why is not None or row.due_at > now or (row.reason != SEND_NOW and _sent_today(rows, now, settings)):
+    # an exact row (Send now, "now", a date and time) goes at its moment even if one already went today
+    exact = row is not None and (row.reason == SEND_NOW or bool(row.exact))
+    if not force and (why is not None or row.due_at > now or (not exact and _sent_today(rows, now, settings))):
         return False
     tpl = session.get(P0Template, row.template_id)
     if tpl is None:
@@ -98,7 +101,7 @@ def dispatch_due(session: Session, lead: Any, tool: Any, now: datetime, *, setti
     k = sum(1 for r in rows if r.status in ("handed", "sent")) + 1
     variables = {f"subject_{k}": out["subject"], f"body_{k}": out["text"], f"html_{k}": out.get("html") or "",
                  f"due_at_{k}": now.isoformat(), **TOOL_VARS, **_tracking_vars(lead, k, row.email_no, settings)}
-    if row.reason == SEND_NOW:
+    if exact:
         variables[f"due_exact_{k}"] = "1"
     tool.update_variables(lead.tool_lead_id, variables)
     row.status, row.tool_step, row.handed_at = "handed", k, now

@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 
 from sqlalchemy import (
-    JSON, Boolean, CheckConstraint, ForeignKey, Index, Integer, String, Text, UniqueConstraint,
+    JSON, Boolean, CheckConstraint, ForeignKey, Index, Integer, String, Text, UniqueConstraint, false,
 )
 from sqlalchemy.ext.mutable import MutableDict
 from sqlalchemy.orm import Mapped, mapped_column
@@ -234,13 +234,16 @@ class P0Template(Base):
 
 
 class P0ScheduleRow(Base):
-    """The schedule: which template goes as email `email_no`, `day` days after the first."""
+    """The schedule: which template goes as email `email_no`, and when: `mode` "day" (`day` days after the
+    first, in working hours), "now" (email 1 only: as soon as the lead starts) or "at" (the fixed moment `at`)."""
     __tablename__ = "p0_schedule_row"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     email_no: Mapped[int] = mapped_column(Integer, unique=True)
     template_id: Mapped[int] = mapped_column(ForeignKey("p0_template.id"))
-    day: Mapped[int] = mapped_column(Integer)
+    day: Mapped[int] = mapped_column(Integer)  # 0 for "now" / "at" rows
+    mode: Mapped[str] = mapped_column(String(5), default="day", server_default="day")
+    at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime)
 
 
 class PlannedEmail(Base):
@@ -263,3 +266,4 @@ class PlannedEmail(Base):
     reason: Mapped[Optional[str]] = mapped_column(String(50))
     sent_subject: Mapped[Optional[str]] = mapped_column(Text)
     sent_text: Mapped[Optional[str]] = mapped_column(Text)
+    exact: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())  # goes at due_at, no window
