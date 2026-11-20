@@ -137,7 +137,7 @@ def board(session: Session, now: datetime, *, settings: Any) -> Dict[str, Any]:
                           "state": ld.state, "paused": bool((ld.variant_flags or {}).get(PAUSED_FLAG)),
                           "stop_reason": reason, "stopped_at": _iso(at), "emails": cells})
     return {"schedule": schedule, "templates": [{"id": t.id, "name": t.name, "status": t.status} for t in templates],
-            "totals": totals, "leads": out_leads, "now": now.isoformat(),
+            "totals": totals, "leads": out_leads, "now": now.isoformat(), "tz": planner._zone(settings).key,
             "example": sch.example_dates(session, now, settings=settings)}
 
 

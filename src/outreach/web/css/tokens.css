@@ -1,0 +1,64 @@
+/* Design tokens: Material-like light theme, indigo primary. Components use only these variables. */
+:root {
+  /* color */
+  --c-primary: #3f51b5;
+  --c-primary-dark: #303f9f;
+  --c-primary-soft: #e8eaf6;
+  --c-on-primary: #ffffff;
+  --c-bg: #f5f6fa;
+  --c-surface: #ffffff;
+  --c-surface-2: #f8f9fc;
+  --c-border: #e0e3eb;
+  --c-text: #1f2333;
+  --c-text-2: #5b6170;
+  --c-text-3: #8a8f9c;
+  --c-success: #2e7d32;
+  --c-success-soft: #e8f5e9;
+  --c-warning: #b26a00;
+  --c-warning-soft: #fff4e0;
+  --c-danger: #c62828;
+  --c-danger-soft: #fdecea;
+  --c-info: #0277bd;
+  --c-info-soft: #e1f5fe;
+  --c-neutral-soft: #eef0f4;
+  --c-scrim: rgba(20, 22, 35, 0.38);
+
+  /* spacing (4 px grid) */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-8: 32px;
+
+  /* shape */
+  --r-sm: 4px;
+  --r-md: 8px;
+  --r-lg: 12px;
+  --r-pill: 999px;
+
+  /* elevation */
+  --e-1: 0 1px 2px rgba(20, 22, 35, 0.08), 0 1px 3px rgba(20, 22, 35, 0.06);
+  --e-2: 0 2px 6px rgba(20, 22, 35, 0.10), 0 1px 3px rgba(20, 22, 35, 0.06);
+  --e-3: 0 8px 24px rgba(20, 22, 35, 0.16), 0 2px 6px rgba(20, 22, 35, 0.08);
+
+  /* typography */
+  --font: "Roboto", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --t-xs: 12px;
+  --t-sm: 13px;
+  --t-md: 14px;
+  --t-lg: 16px;
+  --t-xl: 20px;
+  --t-2xl: 24px;
+
+  /* layout */
+  --topbar-h: 56px;
+  --nav-w: 200px;
+  --drawer-w: 560px;
+  --z-topbar: 20;
+  --z-drawer: 40;
+  --z-dialog: 50;
+  --z-snackbar: 60;
+}

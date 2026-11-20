@@ -412,16 +412,17 @@ def register(app: FastAPI, session_factory: sessionmaker, clock: Callable[[], da
     async def console_is_local_only(request: Request, call_next: Any) -> Response:
         """The console shows lead data and runs dev actions, so it answers only on this computer.
         A request that came through a tunnel (cloudflared, ngrok, ...) carries a forwarding header
-        even though it arrives from 127.0.0.1: those get a 404. Tracked links (/r/), webhooks and
-        unsubscribe pages are not affected."""
+        even though it arrives from 127.0.0.1: those get a 404. The web app (/app) is covered too.
+        Tracked links (/r/), webhooks and unsubscribe pages are not affected."""
         path = request.url.path
-        if (path == "/" or path == "/demo" or path.startswith("/demo/")) and not is_local_request(request):
+        console = path in ("/", "/demo", "/app") or path.startswith(("/demo/", "/app/"))
+        if console and not is_local_request(request):
             return Response(status_code=404)
         return await call_next(request)
 
     @app.get("/", include_in_schema=False)
     def home() -> Response:
-        return Response(status_code=307, headers={"Location": "/demo"})
+        return Response(status_code=307, headers={"Location": "/app/"})
 
     @app.get("/demo", response_class=HTMLResponse, include_in_schema=False)
     def demo_page() -> HTMLResponse:
