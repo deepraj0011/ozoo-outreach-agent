@@ -34,6 +34,8 @@ Start with **onboarding**, then pick the guide for what you want to do.
 | [Implementation plan v1](plan/implementation-plan-v1.md) | The task-by-task build plan the code follows |
 | [P0 scheduled emails — design](plan/p0-scheduled-emails-design.md) | P0: the PM schedules which template goes as which email on which day; tracking recorded, never acted on |
 | [P0 scheduled emails — build plan](plan/p0-scheduled-emails-plan.md) | The 9 build tasks for P0, with tests per task |
+| [Web app redesign — design](superpowers/specs/2026-11-20-web-app-redesign-design.md) | The React + MUI web app at /app: pages, connectors, settings, build and serving |
+| [Web app redesign — plan](superpowers/plans/2026-11-20-web-app-redesign.md) | The 8 build tasks for the web app redesign |
 
 ## 4. Reference
 

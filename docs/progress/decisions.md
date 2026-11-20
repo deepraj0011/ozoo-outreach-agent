@@ -244,3 +244,13 @@ Verdict: safe for local testing. Real sending is blocked until Instantly is veri
 | `EMAIL_FLOW` setting, default `classic`; P0 only with our own sender. | Existing tests, Instantly mode and other flows stay untouched. | Must be set per run. |
 | Design 6.10 "failed after 3 tries" replaced by a `late` flag on the lead's Emails tab. | Simpler; a late email is visible, nothing is silently dropped. | No retry limit. |
 | Screens are local-only with no login until the new frontend. | Same as the other local screens. | Anyone on the machine can edit the schedule. |
+
+## Task 31: web app redesign (2026-11-20)
+
+| Decision | Why | Cost if wrong |
+|---|---|---|
+| The plain HTML app was replaced by a React + MUI app at `/app` (source in `frontend/`). | One maintainable UI with a component library instead of hand-written JS modules. | Building it needs Node 20+. |
+| Build output (`src/outreach/webapp/`) is not committed; `scripts/build_web` makes it and `scripts/run_local` runs it when missing or stale. | No generated files in git; `/app` shows a clear "not built" page (503) instead of failing silently. | A machine without Node cannot show the app. |
+| Connectors page is status-first: it shows what is active, needs a look or is not in use, with no OAuth or connect flow yet. | Real connecting needs a login and secret storage, which do not exist yet. | Changing a connector still means editing the env file. |
+| Settings are read-only in v1. | Same reason: no login, and secrets must not be editable from a local page. | Settings changes still go through the env file. |
+

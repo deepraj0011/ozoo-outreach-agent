@@ -1,26 +1,34 @@
-"""The web app (plain HTML + CSS + JS modules in src/outreach/web/) served at /app/. Local only: the
+"""The web app (React + MUI, built from frontend/ into src/outreach/webapp/) served at /app/. Local only: the
 demo console's middleware answers /app only on this computer, like /demo. The pages use the /demo/api JSON
 routes; there is no login yet, so this must never be reachable from outside."""
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
-from starlette.responses import Response
+from starlette.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 
-WEB_DIR = Path(__file__).with_name("web")
-
-
-class _RevalidatedFiles(StaticFiles):
-    """Static files the browser must re-check each load, so an edited module is never served stale."""
-
-    async def get_response(self, path: str, scope: Any) -> Response:
-        response = await super().get_response(path, scope)
-        response.headers["Cache-Control"] = "no-cache"
-        return response
+WEB_DIR = Path(__file__).with_name("webapp")
+NO_CACHE = {"Cache-Control": "no-cache"}
+NOT_BUILT_HTML = (
+    "<!doctype html><title>Ozoo.ai Outreach</title>"
+    "<p>The web app is not built yet. Run scripts/build_web, then reload.</p>"
+)
 
 
-def register(app: FastAPI) -> None:
-    app.mount("/app", _RevalidatedFiles(directory=str(WEB_DIR), html=True), name="web_app")
+def register(app: FastAPI, web_dir: Path = WEB_DIR) -> None:
+    root = web_dir.resolve()
+
+    @app.get("/app", include_in_schema=False)
+    async def app_no_slash() -> Response:
+        return RedirectResponse("/app/")
+
+    @app.get("/app/{path:path}", include_in_schema=False)
+    async def app_files(path: str) -> Response:
+        index = root / "index.html"
+        if not index.is_file():
+            return HTMLResponse(NOT_BUILT_HTML, status_code=503, headers=NO_CACHE)
+        candidate = (root / path).resolve()
+        if path and candidate.is_file() and root in candidate.parents:
+            return FileResponse(candidate, headers=NO_CACHE)
+        return FileResponse(index, headers=NO_CACHE)

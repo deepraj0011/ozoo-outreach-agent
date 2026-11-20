@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Build the React web app (frontend/) into src/outreach/webapp/, which the app serves at /app/.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if ! command -v npm >/dev/null 2>&1; then
+  echo "npm is not installed: install Node 20+ to build the web app." >&2
+  exit 1
+fi
+cd "$ROOT/frontend"
+npm ci
+npm run build
