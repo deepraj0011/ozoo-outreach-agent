@@ -7,6 +7,7 @@ from sqlalchemy.orm import sessionmaker
 
 from outreach.models import Event, Lead, PlannedEmail
 from outreach.p0 import planner
+from outreach.p0.board import board
 
 from .conftest import NOW, make_lead
 from .fakes import make_settings
@@ -95,3 +96,35 @@ def test_email_detail_sent_and_planned(tmp_path):
 def test_board_absent_outside_local(tmp_path):
     client, _ = build(tmp_path, app_env="production")
     assert client.get("/demo/api/p0/board").status_code == 404
+
+
+def _mark_sent_at(engine, lead_id, when):
+    with sessionmaker(engine)() as s:
+        row = s.query(PlannedEmail).filter_by(lead_id=lead_id, email_no=1).one()
+        row.status, row.sent_at = "sent", when
+        s.commit()
+
+
+def test_totals_count_emails_sent_today(tmp_path):
+    client, engine = build(tmp_path)
+    client.get("/demo/api/p0/schedule")
+    recent, old = _seed(engine, tag="r"), _seed(engine, tag="o")
+    _mark_sent_at(engine, recent, NOW - timedelta(hours=1))
+    _mark_sent_at(engine, old, NOW - timedelta(days=2))
+
+    with sessionmaker(engine)() as s:
+        out = board(s, NOW, settings=make_settings(email_flow="p0"))
+
+    assert out["totals"]["sent"] == 2
+    assert out["totals"]["sent_today"] == 1
+
+
+def test_totals_sent_today_zero_without_sends(tmp_path):
+    client, engine = build(tmp_path)
+    client.get("/demo/api/p0/schedule")
+    _seed(engine, tag="n")
+
+    with sessionmaker(engine)() as s:
+        out = board(s, NOW, settings=make_settings(email_flow="p0"))
+
+    assert out["totals"]["sent_today"] == 0
