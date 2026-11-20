@@ -12,7 +12,7 @@ function keepGitignore(): Plugin {
     name: "keep-gitignore",
     apply: "build",
     closeBundle() {
-      writeFileSync(`${outDir}/.gitignore`, "*\n!.gitignore\n");
+      writeFileSync(`${outDir}/.gitignore`, "*\n");
     },
   };
 }

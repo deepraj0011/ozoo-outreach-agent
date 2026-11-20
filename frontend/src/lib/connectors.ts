@@ -31,3 +31,10 @@ export const GROUPS: { id: "email" | "calendar" | "messaging"; title: string; bl
   { id: "calendar", title: "Calendar and booking", blurb: "Where leads book a demo and where demos land." },
   { id: "messaging", title: "Messaging, alerts and AI", blurb: "WhatsApp to leads, alerts to the sales team, the model that reads replies." },
 ];
+
+const BRAND_LOGOS = new Set(["gmail", "google_calendar", "whatsapp"]);
+
+/** Whether a connector gets a brand mark: the language model only when the provider is Anthropic. */
+export function hasBrandLogo(id: string, account: string): boolean {
+  return id === "llm" ? account === "anthropic" : BRAND_LOGOS.has(id);
+}

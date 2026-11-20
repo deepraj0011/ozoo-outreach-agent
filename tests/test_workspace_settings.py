@@ -1,8 +1,10 @@
 """Settings view for the Settings screen: plain-language, read-only, never a secret."""
 from __future__ import annotations
 
+import base64
 import json
 
+from outreach.config import MailboxConfig
 from outreach.workspace.settings_view import settings_view
 
 from .fakes import make_settings
@@ -23,7 +25,11 @@ def test_sending_section_reads_business_hours():
 
 def test_settings_view_has_no_secret():
     secret = "SENTINEL-SECRET-91f3"
-    s = make_settings(gmail_app_password=secret, cal_webhook_secret=secret, tool_api_key=secret)
+    s = make_settings(gmail_app_password=secret, cal_webhook_secret=secret, tool_api_key=secret,
+                      teams_webhook_url="https://x.test/" + secret, llm_api_key=secret, reacher_secret=secret,
+                      wa_app_secret=secret, wa_access_token=secret,
+                      teams_outgoing_secret=base64.b64encode((secret * 3).encode()).decode(),
+                      email_mode="mailbox", mailboxes=[MailboxConfig(address="a@x.test", password=secret)])
     assert secret not in json.dumps(settings_view(s))
 
 

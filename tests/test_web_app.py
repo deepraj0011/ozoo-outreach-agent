@@ -71,3 +71,24 @@ def test_app_refused_for_a_foreign_host_name(tmp_path):
     (tmp_path / "index.html").write_text("x")
     client = build(web_dir=tmp_path)
     assert client.get("/app/", headers={"host": "evil.example.com"}).status_code == 404
+
+
+def test_encoded_traversal_never_returns_a_sibling_file(tmp_path):
+    web = tmp_path / "web"
+    web.mkdir()
+    (web / "index.html").write_text("INDEX")
+    (tmp_path / "secret.txt").write_text("TOP-SECRET")
+    client = build(web_dir=web)
+    for url in ("/app/%2e%2e/secret.txt", "/app/..%2fsecret.txt", "/app/%2e%2e%2fsecret.txt"):
+        assert "TOP-SECRET" not in client.get(url).text
+
+
+def test_nul_byte_path_does_not_500(tmp_path):
+    (tmp_path / "index.html").write_text("INDEX")
+    assert build(web_dir=tmp_path).get("/app/%00").status_code < 500
+
+
+def test_missing_asset_is_a_404_not_the_index(tmp_path):
+    (tmp_path / "index.html").write_text("INDEX")
+    r = build(web_dir=tmp_path).get("/app/assets/gone.js")
+    assert r.status_code == 404 and "INDEX" not in r.text

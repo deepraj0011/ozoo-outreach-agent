@@ -35,6 +35,7 @@ function Value({ value, label }: { value: SettingRow["value"]; label: string }) 
   if (typeof value === "boolean") {
     return <Switch checked={value} disabled inputProps={{ "aria-label": label }} />;
   }
+  if (value === "") return <Typography color="text.secondary" sx={{ fontSize: 14 }}>Not set</Typography>;
   return <Typography sx={{ fontWeight: 600, fontSize: 14 }}>{String(value)}</Typography>;
 }
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Connector, ConnectorStatus } from "../types";
-import { actionLabel, GROUPS, statusLook, summarize } from "./connectors";
+import { actionLabel, GROUPS, hasBrandLogo, statusLook, summarize } from "./connectors";
 
 const c = (status: ConnectorStatus): Connector => ({
   id: status, group: "email", name: "", account: "", status, detail: "", basis: "", setup: { steps: [], env_keys: [] },
@@ -22,4 +22,17 @@ describe("connectors helpers", () => {
     expect(actionLabel("coming_soon")).toBe("Coming soon");
   });
   it("has the three groups in order", () => expect(GROUPS.map((g) => g.id)).toEqual(["email", "calendar", "messaging"]));
+});
+
+describe("hasBrandLogo", () => {
+  it("shows the Anthropic mark only for the anthropic provider", () => {
+    expect(hasBrandLogo("llm", "anthropic")).toBe(true);
+    expect(hasBrandLogo("llm", "azure_openai")).toBe(false);
+    expect(hasBrandLogo("llm", "")).toBe(false);
+  });
+  it("keeps marks for gmail, google calendar and whatsapp only", () => {
+    expect(hasBrandLogo("gmail", "")).toBe(true);
+    expect(hasBrandLogo("cal", "")).toBe(false);
+    expect(hasBrandLogo("teams", "")).toBe(false);
+  });
 });

@@ -56,7 +56,7 @@ webhook route in `app.py` (1 MiB cap, constant-time signature/secret check) → 
 
 **Realistic simulation** (`world/`): `python -m outreach.world` runs persona leads (most never read; Apple / Defender / bank-sandbox inbox machines; late replies) through the real app, worker and sender in a temp dir with a stand-in SMTP, and reports agent outcome vs truth. `tests/test_world.py` runs a subset; keep every story persona's outcome as expected when changing rules.
 
-**Local web app** (React + MUI in `frontend/`, built by `scripts/build_web` into `src/outreach/webapp/`, which is gitignored; `scripts/run_local` builds it when missing or stale; served at `/app` by `web_app.py`, `/` redirects there, local only; `/demo` still serves the older `demo_console.html` page): Campaign board, Leads (CSV/Excel import), Conversations with takeover, Templates, Connectors (status only), Settings (read-only). Frontend helper tests: `cd frontend && npm test`. Fake clock: `localclock.py` (`dev advance`).
+**Local web app** (React + MUI in `frontend/`, built by `scripts/build_web` into `src/outreach/webapp/`, which is gitignored; `scripts/run_local` builds it when missing or stale; served at `/app` by `web_app.py`, `/` redirects there, local only; `/demo` still serves the older `demo_console.html` page): Campaign board, Leads (CSV/Excel import), Conversations (a placeholder that links to the /demo page, where takeover lives), Templates, Connectors (status only), Settings (read-only). Frontend helper tests: `cd frontend && npm test`. Fake clock: `localclock.py` (`dev advance`).
 
 ## Tests
 

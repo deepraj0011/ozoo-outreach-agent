@@ -37,3 +37,6 @@ docs/Untitled
 *.swp
 .DS_Store
 Thumbs.db
+
+# Built web app (scripts/build_web)
+src/outreach/webapp/

@@ -10,11 +10,11 @@ interface Props {
 
 export default function ConnectorCard({ connector: c, onOpen }: Props) {
   const soon = c.status === "coming_soon";
-  const primary = c.status === "available";
+  const attention = c.status === "attention";
   return (
     <Card sx={{ p: 2, display: "flex", flexDirection: "column", gap: 1.25, height: "100%" }}>
       <Stack direction="row" alignItems="center" spacing={1.25}>
-        <ConnectorTile id={c.id} name={c.name} />
+        <ConnectorTile id={c.id} name={c.name} account={c.account} />
         <Box sx={{ flexGrow: 1, minWidth: 0 }}>
           <Typography noWrap sx={{ fontWeight: 700 }}>{c.name}</Typography>
           <Typography noWrap variant="caption" color="text.secondary">{c.account}</Typography>
@@ -25,8 +25,8 @@ export default function ConnectorCard({ connector: c, onOpen }: Props) {
       <Stack direction="row" alignItems="center" spacing={1}
         sx={{ borderTop: 1, borderColor: "divider", pt: 1.25 }}>
         <Typography variant="caption" color="text.secondary" sx={{ flexGrow: 1 }}>{c.basis}</Typography>
-        <Button size="small" variant={primary ? "contained" : "outlined"} color={primary ? "primary" : "inherit"}
-          disabled={soon} onClick={() => onOpen(c)} sx={primary ? undefined : { borderColor: "divider" }}>
+        <Button size="small" variant={attention ? "contained" : "outlined"} color={attention ? "primary" : "inherit"}
+          disabled={soon} onClick={() => onOpen(c)} sx={attention ? undefined : { borderColor: "divider" }}>
           {actionLabel(c.status)}
         </Button>
       </Stack>

@@ -319,6 +319,15 @@ Then:
 
 A quick tunnel's address changes every time it starts, so update the URLs each time.
 
+## Web app (/app)
+
+The main screen is a React app in `frontend/`, served at `http://127.0.0.1:8000/app/` (open `/` and it redirects there). It needs Node 20+ to build.
+
+- `scripts/build_web` builds it into `src/outreach/webapp/` (not committed).
+- `scripts/run_local` builds it automatically when it is missing or older than `frontend/`. If the build fails, the agent still starts and `/app` shows the last build.
+- A "web app is not built yet" page (HTTP 503) at `/app` means no build exists: run `scripts/build_web` and reload.
+- Frontend tests: `cd frontend && npm test`. For live editing run `npm run dev` there (port 5173, proxies to the running agent).
+
 ## 7. Safety notes
 
 - **Real WhatsApp:** send only to phone numbers registered as test recipients in Meta's test

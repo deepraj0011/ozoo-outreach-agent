@@ -60,7 +60,9 @@ function Header({ board, busy, onToggle }: { board: Board; busy: boolean; onTogg
           Start
         </Button>
       )}
-      <Button variant="contained" startIcon={<PersonAddRounded />} component={RouterLink} to="/leads">
+      <Button variant={st.action === "pause" ? "contained" : "outlined"} color={st.action === "pause" ? "primary" : "inherit"}
+        startIcon={<PersonAddRounded />} component={RouterLink} to="/leads"
+        sx={st.action === "pause" ? undefined : { borderColor: "divider" }}>
         Add leads
       </Button>
     </Stack>

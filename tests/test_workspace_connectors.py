@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import base64
 import json
 from datetime import timedelta
 
-from outreach.config import Settings
+from outreach.config import MailboxConfig, Settings
 from outreach.models import Alert, Event
 from outreach.workspace.connectors import connectors
 from tests.conftest import NOW
@@ -108,16 +109,38 @@ def test_account_is_non_secret_identity(session):
 
 
 def test_env_keys_are_real_settings_fields(session):
-    for c in connectors(make_settings(), session, NOW):
-        for key in c["setup"]["env_keys"]:
-            assert key.isupper() and key.lower() in Settings.model_fields, key
+    azure = make_settings(llm_mode="real", llm_provider="azure_openai", llm_api_key="k",
+                          llm_base_url="https://x.openai.azure.com", azure_openai_api_version="2024-06-01")
+    for s in (make_settings(), azure):
+        for c in connectors(s, session, NOW):
+            for key in c["setup"]["env_keys"]:
+                assert key.isupper() and key.lower() in Settings.model_fields, key
+
+
+def _llm_keys(session, **kw):
+    by = {c["id"]: c for c in connectors(make_settings(**kw), session, NOW)}
+    return by["llm"]["setup"]["env_keys"]
+
+
+def test_llm_card_lists_the_key_and_azure_extras(session):
+    azure = _llm_keys(session, llm_mode="real", llm_provider="azure_openai", llm_api_key="k",
+                      llm_base_url="https://x.openai.azure.com", azure_openai_api_version="2024-06-01")
+    assert {"LLM_API_KEY", "LLM_BASE_URL", "AZURE_OPENAI_API_VERSION"} <= set(azure)
+    anth = _llm_keys(session, llm_mode="real", llm_provider="anthropic", llm_api_key="k")
+    assert "LLM_API_KEY" in anth and "LLM_BASE_URL" not in anth
+    compat = _llm_keys(session, llm_mode="real", llm_provider="openai_compatible",
+                       llm_base_url="https://x.example.com/v1")
+    assert "LLM_BASE_URL" in compat and "AZURE_OPENAI_API_VERSION" not in compat
 
 
 def test_no_secret_reaches_the_payload(session):
     secret = "SENTINEL-SECRET-91f3"
     s = make_settings(gmail_app_password=secret, tool_api_key=secret, wa_access_token=secret,
                       cal_webhook_secret=secret, zerobounce_api_key=secret,
-                      wa_phone_number_id=secret, wa_verify_token=secret)
-    assert secret not in json.dumps(connectors(s, session, NOW))
+                      wa_phone_number_id=secret, wa_verify_token=secret, teams_webhook_url="https://x.test/" + secret,
+                      llm_api_key=secret, reacher_secret=secret, teams_outgoing_secret=base64.b64encode((secret * 3).encode()).decode(), wa_app_secret=secret,
+                      email_mode="mailbox", mailboxes=[MailboxConfig(address="a@x.test", password=secret)])
+    payload = json.dumps(connectors(s, session, NOW))
+    assert secret not in payload and base64.b64encode((secret * 3).encode()).decode() not in payload
     g = make_settings(**{**GMAIL, "gmail_app_password": secret})
     assert secret not in json.dumps(connectors(g, session, NOW))

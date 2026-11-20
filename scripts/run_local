@@ -14,8 +14,10 @@ fi
 # Build the web app when it is missing or older than its sources (needs Node 20+).
 WEB_INDEX="$ROOT/src/outreach/webapp/index.html"
 if command -v npm >/dev/null 2>&1; then
-  if [ ! -f "$WEB_INDEX" ] || [ -n "$(find "$ROOT/frontend/src" -type f -newer "$WEB_INDEX" -print -quit)" ]; then
-    "$ROOT/scripts/build_web"
+  STALE_SRC="$(find "$ROOT/frontend/src" "$ROOT/frontend/index.html" "$ROOT/frontend/package.json" \
+    "$ROOT/frontend/package-lock.json" "$ROOT/frontend/vite.config.ts" -type f -newer "$WEB_INDEX" -print -quit 2>/dev/null || true)"
+  if [ ! -f "$WEB_INDEX" ] || [ -n "$STALE_SRC" ]; then
+    "$ROOT/scripts/build_web" || echo "Web app build failed; /app will show the last build or a not-built page." >&2
   fi
 else
   echo "npm not found: the web app at /app will not be built (install Node 20+, then run scripts/build_web)." >&2

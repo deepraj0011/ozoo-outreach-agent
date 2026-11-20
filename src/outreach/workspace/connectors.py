@@ -157,10 +157,15 @@ def _teams(settings: Settings, session: Session, now: datetime) -> Dict[str, Any
 
 def _llm(settings: Settings, session: Session, now: datetime) -> Dict[str, Any]:
     account = settings.llm_provider or ""
+    keys = ["LLM_MODE", "LLM_PROVIDER", "LLM_CLASSIFIER_MODEL", "LLM_CHAT_MODEL", "LLM_API_KEY"]
+    if settings.llm_provider in ("azure_openai", "openai_compatible"):
+        keys.append("LLM_BASE_URL")
+    if settings.llm_provider == "azure_openai":
+        keys.append("AZURE_OPENAI_API_VERSION")
     return _card("llm", "messaging", "Language model", account, steps=[
         "Choose the provider and the two models, and add its key.",
         "Set LLM_MODE=real and restart."],
-        env_keys=["LLM_MODE", "LLM_PROVIDER", "LLM_CLASSIFIER_MODEL", "LLM_CHAT_MODEL"],
+        env_keys=keys,
         **_mode_status(settings.llm_mode))
 
 

@@ -6,16 +6,17 @@ import RocketLaunchRounded from "@mui/icons-material/RocketLaunchRounded";
 import CalendarMonthRounded from "@mui/icons-material/CalendarMonthRounded";
 import GroupsRounded from "@mui/icons-material/GroupsRounded";
 import VerifiedRounded from "@mui/icons-material/VerifiedRounded";
+import EventAvailableRounded from "@mui/icons-material/EventAvailableRounded";
+import SmartToyRounded from "@mui/icons-material/SmartToyRounded";
 import ExtensionRounded from "@mui/icons-material/ExtensionRounded";
 import gmail from "../assets/logos/gmail.svg";
 import googlecalendar from "../assets/logos/googlecalendar.svg";
-import caldotcom from "../assets/logos/caldotcom.svg";
 import whatsapp from "../assets/logos/whatsapp.svg";
 import anthropic from "../assets/logos/anthropic.svg";
-import { statusLook } from "../lib/connectors";
+import { hasBrandLogo, statusLook } from "../lib/connectors";
 import type { ConnectorStatus } from "../types";
 
-const LOGOS: Record<string, string> = { gmail, google_calendar: googlecalendar, cal: caldotcom, whatsapp, llm: anthropic };
+const LOGOS: Record<string, string> = { gmail, google_calendar: googlecalendar, whatsapp, llm: anthropic };
 
 const ICONS: Record<string, ReactNode> = {
   mailboxes: <DnsRounded />,
@@ -23,11 +24,13 @@ const ICONS: Record<string, ReactNode> = {
   outlook_calendar: <CalendarMonthRounded />,
   teams: <GroupsRounded />,
   verify: <VerifiedRounded />,
+  cal: <EventAvailableRounded />,
+  llm: <SmartToyRounded />,
 };
 
 /** Brand marks sit on a light tile so dark marks stay visible; tools without a mark get a tinted icon tile. */
-export function ConnectorTile({ id, name, size = 38 }: { id: string; name: string; size?: number }) {
-  const logo = LOGOS[id];
+export function ConnectorTile({ id, name, account = "", size = 38 }: { id: string; name: string; account?: string; size?: number }) {
+  const logo = hasBrandLogo(id, account) ? LOGOS[id] : undefined;
   const inner = Math.round(size * 0.58);
   return (
     <Box sx={(t: Theme) => ({

@@ -31,7 +31,7 @@ export default function ConnectorDrawer({ connector: c, onClose }: Props) {
       {c && (
         <Stack spacing={2.5}>
           <Stack direction="row" alignItems="center" spacing={1.25}>
-            <ConnectorTile id={c.id} name={c.name} size={34} />
+            <ConnectorTile id={c.id} name={c.name} account={c.account} size={34} />
             <Box sx={{ flexGrow: 1, minWidth: 0 }}>
               <Typography variant="h6" noWrap sx={{ fontSize: 16 }}>{c.name}</Typography>
               <Box sx={{ mt: 0.25 }}><StatusChip status={c.status} /></Box>
@@ -79,7 +79,7 @@ export default function ConnectorDrawer({ connector: c, onClose }: Props) {
         </Stack>
       )}
       <Snackbar open={notice !== null} autoHideDuration={2500} onClose={() => setNotice(null)}
-        message={notice ?? ""}anchorOrigin={{ vertical: "bottom", horizontal: "center" }} />
+        message={notice ?? ""} anchorOrigin={{ vertical: "bottom", horizontal: "center" }} />
     </Drawer>
   );
 }
