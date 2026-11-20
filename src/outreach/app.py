@@ -417,6 +417,9 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
         from .p0 import console as p0_console
 
         p0_console.register(app, session_factory, clock, settings, deps)
+        from .workspace import routes as workspace_routes
+
+        workspace_routes.register(app, session_factory, clock, settings)
         from . import web_app
 
         web_app.register(app)  # plain HTML/JS web app at /app/ (local only, see demo_console middleware)
