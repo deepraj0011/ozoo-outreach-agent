@@ -5,7 +5,7 @@ import hashlib
 import logging
 import re
 import string
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -383,6 +383,10 @@ def enroll(
     campaign_id = s.campaign_ids.get(group)
     if not campaign_id:
         raise SequencerConfigError(f"no campaign configured for timezone group {group!r}")
+    from .p0 import flow as p0_flow  # p0 imports this module
+    if p0_flow.is_p0(s, tool):
+        _enroll_p0(session, lead, tool, now, s, campaign_id)
+        return
     t = templates or _live_templates(session)
     offset = from_step - 1
     variables: Dict[str, str] = {}
@@ -415,12 +419,41 @@ def enroll(
     logger.info("enrolled lead_id=%s from step %s", lead.id, from_step)
 
 
+def _enroll_p0(session: Session, lead: Lead, tool: Any, now: datetime, s: Settings, campaign_id: str) -> None:
+    """P0: the tool waits (plan=1) for each email the worker hands it (p0.flow.dispatch_due). Day 0 is the
+    start time picked at import (flag plan_start), else now."""
+    from .p0.planner import _schedule, plan_lead
+    from .p0.templates import ensure_starter
+    ensure_starter(session, now, settings=s)
+    day0 = now
+    raw = (lead.variant_flags or {}).get("plan_start")
+    if raw:
+        try:
+            day0 = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        except ValueError:
+            day0 = now
+        if day0.tzinfo is None:
+            day0 = day0.replace(tzinfo=timezone.utc)
+    vals = _values(lead, 1, s)
+    lead.tool_lead_id = tool.add_lead(campaign_id, lead, {
+        PLAN_VAR: "1", "steps": str(len(_schedule(session))),
+        "first_name": vals["first_name"], "company": vals["company"]})
+    plan_lead(session, lead, day0, settings=s)
+    flags = dict(lead.variant_flags or {})
+    flags["enrolled_at"] = now.isoformat()
+    lead.variant_flags = flags
+    session.flush()
+    logger.info("enrolled lead_id=%s on the P0 schedule", lead.id)
+
+
 def refresh_next_step(
     session: Session, lead: Lead, tool: Any, *,
     settings: Optional[Settings] = None, templates: Optional[Dict[str, Any]] = None,
 ) -> None:
     if not lead.tool_lead_id or lead.step_sent >= LAST_STEP:
         return
+    if (lead.variant_flags or {}).get("p0"):
+        return  # P0 renders each email when it hands it to the tool (p0.flow.dispatch_due)
     if (lead.variant_flags or {}).get(PLAN_FLAG) is not None:
         return  # a send plan renders each email when it decides it (send_plan.commit_next)
     real = lead.step_sent + 1

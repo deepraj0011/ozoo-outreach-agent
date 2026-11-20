@@ -15,7 +15,7 @@ from types import MappingProxyType
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 from .actions import (
-    Action, AddScore, Alert, BotReply, Classify, HandOff, PauseColleagues, RefreshNextStep,
+    Action, AddScore, Alert, BotReply, Classify, HandOff, MarkPlannedSent, PauseColleagues, RefreshNextStep,
     SendReply, SetFlag, SetNurtureUntil, SetState, SetStepSent, SetVariant, StopAllOutreach, Suppress,
     SuppressAllChannels, SwitchChannel, ToolStop, WaSendText,
 )
@@ -267,6 +267,8 @@ def _on_sent(lead: LeadSnapshot, event: EventSnapshot) -> List[Action]:
     last step is out (the campaign's later steps only repeat it)."""
     if event.channel != "email" or event.step is None:
         return []
+    if lead.flags.get("p0"):  # the tool's step k is the k-th email handed to it (p0.flow)
+        return [SetStepSent(event.step), MarkPlannedSent(event.step)]
     try:
         offset = int(lead.flags.get("step_offset", 0))
     except (TypeError, ValueError):

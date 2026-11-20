@@ -61,7 +61,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from . import jobs, send_plan
 from .actions import (
-    TOOL_BLOCK_PENDING, TOOL_REALERT_AFTER, TOOL_STOP_PENDING, Alert, Deps, SendReply, SetState, execute,
+    TOOL_BLOCK_PENDING, TOOL_REALERT_AFTER, TOOL_STOP_PENDING, Alert, Deps, SendReply, SetState, ToolStop, execute,
     record_integration_error, tool_retry_delay, tool_stop_failed_text,
 )
 from .botfilter import TRAP_TAG, Scanners, classify_event, load_scanners
@@ -75,7 +75,8 @@ from .channels import EMAIL_OK_STATUSES
 from .verify import VERIFY_ERROR
 from .hours import business_deadline, business_zone, parse_business_hours
 from .models import Alert as AlertRow
-from .models import AlertAttempt, ChatMessage, Event, Lead, WorkerLock, WorkerMark
+from .models import AlertAttempt, ChatMessage, Event, Lead, PlannedEmail, WorkerLock, WorkerMark
+from .p0 import flow as p0_flow
 from .outreach import (
     FAILED_SUFFIX, INTRO_ATTEMPT, INTRO_TEMPLATE, REMINDER_ATTEMPT, REMINDER_TEMPLATE, WA_RETRY_AFTER,
     handle_wa_send_failure, send_template_once, set_flag, start_outreach, switch_channel, wa_gave_up,
@@ -625,6 +626,7 @@ def _end_of_sequence(ctx: Ctx, session: Session) -> int:
     def qualifies(lead: Lead) -> bool:
         return (lead.state == S.IN_SEQUENCE.value and lead.active_channel == "email"
                 and (lead.step_sent or 0) >= LAST_STEP and _flags(lead).get(PLAN_FLAG) is None
+                and not _flags(lead).get("p0")
                 and _before(lead.last_sent_at, ctx.now - _delay(ctx, "end_of_sequence_wait")))
 
     def one(lead: Lead) -> bool:
@@ -680,6 +682,55 @@ def _plan_schedule(ctx: Ctx, session: Session) -> int:
 
     leads = [ld for ld in (session.get(Lead, i) for i in send_plan.due_ids(session, ctx.batch)) if ld is not None]
     return _each_lead(ctx, session, "plan_schedule", leads, qualifies, one)
+
+
+# ====================================================================== 7c. P0 scheduled emails
+
+def _p0_dispatch(ctx: Ctx, session: Session) -> int:
+    """Hand each P0 lead's due email to our own sender (p0.flow.dispatch_due), one at a time."""
+    tool = ctx.deps.tool
+    if tool is None:
+        return 0
+    due = select(PlannedEmail.lead_id).where(PlannedEmail.status == "planned", PlannedEmail.due_at <= ctx.now)
+    stmt = (select(Lead).where(Lead.state == S.IN_SEQUENCE.value, Lead.active_channel == "email",
+                               Lead.tool_lead_id.is_not(None), Lead.id.in_(due)).order_by(Lead.id))
+
+    def keep(lead: Lead) -> bool:
+        return (lead.state == S.IN_SEQUENCE.value and lead.active_channel == "email"
+                and lead.tool_lead_id is not None and bool(_flags(lead).get("p0"))
+                and not _flags(lead).get(p0_flow.PAUSED_FLAG))
+
+    def one(lead: Lead) -> bool:
+        return p0_flow.dispatch_due(session, lead, tool, ctx.now, settings=ctx.settings)
+
+    return _each_lead(ctx, session, "p0_dispatch", _pick(session, stmt, keep, ctx.batch), keep, one)
+
+
+P0_END_DAYS = 5
+
+
+def _p0_finish(ctx: Ctx, session: Session) -> int:
+    """A P0 lead with nothing left to send goes to nurture 5 days after its last email (no alert)."""
+    open_rows = select(PlannedEmail.lead_id).where(PlannedEmail.status.in_(("planned", "handed")))
+    stmt = (select(Lead).where(Lead.state == S.IN_SEQUENCE.value, Lead.id.not_in(open_rows)).order_by(Lead.id))
+    cutoff = ctx.now - send_plan._scaled(P0_END_DAYS, ctx.settings)
+
+    def qualifies(lead: Lead) -> bool:
+        if lead.state != S.IN_SEQUENCE.value or not _flags(lead).get("p0"):
+            return False
+        rows = session.execute(select(PlannedEmail.status, PlannedEmail.sent_at).where(
+            PlannedEmail.lead_id == lead.id)).all()
+        if any(st in ("planned", "handed") for st, _ in rows):
+            return False
+        sent = [_ts(at) for _, at in rows if at is not None]
+        return not sent or max(sent) <= cutoff
+
+    def one(lead: Lead) -> bool:
+        execute(session, lead, [ToolStop(), SetState(S.NURTURE, "end_p0")], ctx.deps, ctx.now)
+        logger.info("lead %s: P0 emails done, moved to nurture", lead.id)
+        return True
+
+    return _each_lead(ctx, session, "p0_finish", _pick(session, stmt, qualifies, ctx.batch), qualifies, one)
 
 
 # ====================================================================== 8. WhatsApp human SLA
@@ -1042,7 +1093,7 @@ def _stuck_leads(ctx: Ctx, session: Session) -> int:
             .order_by(Lead.created_at, Lead.id))
 
     def qualifies(lead: Lead) -> bool:
-        if lead.state != S.IN_SEQUENCE.value or _flags(lead).get("stuck_alerted"):
+        if lead.state != S.IN_SEQUENCE.value or _flags(lead).get("stuck_alerted") or _flags(lead).get("p0"):
             return False
         since = _stuck_since(session, lead)
         return since is not None and ctx.now - since > STUCK_AFTER
@@ -1072,7 +1123,9 @@ JOBS: Sequence[Tuple[str, JobFn]] = (
     ("account_holds", _account_holds),
     ("eu_holds", _eu_holds),
     ("plan_schedule", _plan_schedule),
+    ("p0_dispatch", _p0_dispatch),
     ("nurture_follow_up", _nurture_follow_up),
+    ("p0_finish", _p0_finish),
     ("end_of_sequence", _end_of_sequence),
     ("wa_sla", _wa_sla),
     ("attended_check", _attended_check),

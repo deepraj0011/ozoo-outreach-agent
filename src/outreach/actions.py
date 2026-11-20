@@ -169,6 +169,12 @@ class RefreshNextStep:
 
 
 @dataclass(frozen=True)
+class MarkPlannedSent:
+    """P0: the tool reported its step `step` sent; mark that planned email sent."""
+    step: int
+
+
+@dataclass(frozen=True)
 class Alert:
     kind: str
     text: str = field(default="", compare=False)
@@ -236,7 +242,7 @@ class StopAllOutreach:
 Action = Union[
     SetState, Suppress, SuppressAllChannels, ToolStop, ToolPause, ToolResume,
     WaCancelReminder, WaSendText, WaSendTemplate, SwitchChannel, SetVariant, AddScore,
-    SetFlag, SetStepSent, RefreshNextStep, Alert, Classify, BotReply, SendReply,
+    SetFlag, SetStepSent, RefreshNextStep, MarkPlannedSent, Alert, Classify, BotReply, SendReply,
     PauseColleagues, HandOff, StopAllOutreach, SetNurtureUntil, IntakeReferral, WaSendRaw, StartTakeover,
 ]
 
@@ -318,6 +324,7 @@ class _Run:
                  event: Optional[Event], depth: int) -> None:
         self.session, self.lead, self.deps, self.now = session, lead, deps, now
         self.event, self.depth = event, depth
+        self.stop_reason = "stopped"  # P0: why the lead's remaining emails are cancelled on ToolStop
 
     # ---------------------------------------------------------------- helpers
     @property
@@ -469,6 +476,12 @@ class _Run:
         elif isinstance(a, ToolStop):
             if lead.tool_lead_id:
                 self.tool_stop(lead.tool_lead_id)
+            if (lead.variant_flags or {}).get("p0"):
+                from .p0.planner import cancel_remaining  # p0 imports this package's modules
+                cancel_remaining(s, lead, self.stop_reason, self.now)
+        elif isinstance(a, MarkPlannedSent):
+            from .p0.planner import mark_sent
+            mark_sent(s, lead, a.step, self.event_time)
         elif isinstance(a, ToolPause):
             lead.pause_until = a.until
             if lead.tool_lead_id:
@@ -553,6 +566,8 @@ def execute(session: Session, lead: Lead, actions: Iterable[Action], deps: Deps,
     """Apply `actions` to `lead` in order. Never raises for a failing integration or an
     illegal transition (both become integration_error alerts). Caller commits."""
     run = _Run(session, lead, deps, now, event, _depth)
-    for action in flatten(actions):
+    steps = flatten(actions)
+    run.stop_reason = next((a.reason for a in steps if isinstance(a, SetState)), "stopped")
+    for action in steps:
         run.apply(action)
     session.flush()

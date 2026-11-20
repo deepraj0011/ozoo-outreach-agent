@@ -278,6 +278,10 @@ class Settings(BaseSettings):
     # Approvals: EU cold email needs legal sign-off; until then EU leads get no email
     eu_email_approved: bool = False
 
+    # Email flow: "classic" (fixed 4-step sequence / send plans) or "p0" (the product manager's
+    # schedule of templates, p0/; needs our own sender: mailpit / gmail / mailbox mode)
+    email_flow: Literal["classic", "p0"] = "classic"
+
     # Worker (outreach.worker.tick): RUN_WORKER=1 runs it inside the web app every
     # WORKER_INTERVAL_S seconds; or run `python -m outreach.worker --loop` as its own process.
     run_worker: bool = False
