@@ -280,3 +280,29 @@ def test_default_deps_builds_mailpit_tool(tmp_path):
                       fake_clock_file=str(tmp_path / "clock.json"))
     deps = default_deps(s)
     assert isinstance(deps.tool, MailpitEmailTool) and deps.tool.state_file == tmp_path / "mp.db"
+
+
+# ---------------------------------------------------------------- planned steps (P0)
+
+def test_plan_lead_with_six_steps_sends_all_six(tool, clock):
+    past = (T0 - timedelta(days=1)).isoformat()
+    tid = tool.add_lead("camp", lead(), {"plan": "1", "steps": "6"})
+    for k in range(1, 7):
+        tool.update_variables(tid, {f"subject_{k}": f"Subject {k}", f"body_{k}": f"Body {k}",
+                                    f"due_at_{k}": past})
+        assert [s["step"] for s in sends(tool)] == [k]
+
+    assert len(SMTPStub.sent) == 6
+    assert all(m["Subject"].startswith("Re: ") for m in SMTPStub.sent[1:])
+    assert sends(tool) == []
+    with tool._db() as db:
+        assert db.execute("SELECT status FROM mp_lead WHERE tool_lead_id = ?", (tid,)).fetchone()["status"] == "done"
+
+
+def test_steps_default_still_four(tool, clock):
+    tool.add_lead("camp", lead(), _vars())
+    clock.t = T0 + timedelta(days=60)
+    for _ in range(6):
+        sends(tool)
+
+    assert len(SMTPStub.sent) == 4

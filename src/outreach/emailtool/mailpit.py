@@ -37,6 +37,14 @@ DEFAULT_SMTP_HOST = "127.0.0.1"
 DEFAULT_SMTP_PORT = 1025
 FROM_ADDR = "Ozoo.ai (local test) <outreach@ozoo.local>"
 LAST_STEP = 4
+MAX_STEPS = 10  # a planned lead (variable `steps`) can have up to this many emails
+
+def _int_or(raw: Any, default: int, cap: int) -> int:
+    try:
+        return max(1, min(int(raw), cap))
+    except (TypeError, ValueError):
+        return default
+
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS mp_lead (
@@ -351,7 +359,7 @@ class MailpitEmailTool:
         with self._db() as db:
             return [r["tool_lead_id"] for r in db.execute(
                 "SELECT tool_lead_id FROM mp_lead WHERE status = 'active' AND last_step < ? ORDER BY rowid",
-                (LAST_STEP,))]
+                (MAX_STEPS,))]
 
     def due_at(self, enrolled_at: datetime, step: int, schedule_days: Mapping[int, int],
                time_scale: float = 1.0, key: str = "") -> datetime:
@@ -387,13 +395,16 @@ class MailpitEmailTool:
         for tid in candidates:
             with self._db(immediate=True) as db:
                 row = db.execute("SELECT * FROM mp_lead WHERE tool_lead_id = ?", (tid,)).fetchone()
-                if row is None or row["status"] != "active" or row["last_step"] >= LAST_STEP:
+                if row is None or row["status"] != "active":
+                    continue
+                variables = json.loads(row["variables"])
+                last = _int_or(variables.get("steps"), LAST_STEP, MAX_STEPS)
+                if row["last_step"] >= last:
                     continue
                 if self._blocked(db, row["email"]):
                     db.execute("UPDATE mp_lead SET status = 'stopped' WHERE tool_lead_id = ?", (tid,))
                     continue
                 step = row["last_step"] + 1
-                variables = json.loads(row["variables"])
                 if variables.get("plan") == "1":
                     due = self.planned_due(variables, step, time_scale, key=tid)
                     if due is None or due > now:
@@ -420,7 +431,7 @@ class MailpitEmailTool:
                                          trap_url=variables.get(f"trap_url_{step}") or None,
                                          mailbox=mailbox or None,
                                          html_body=variables.get(f"html_{step}") or None)
-                status = "done" if step >= LAST_STEP else "active"
+                status = "done" if step >= last else "active"
                 db.execute("UPDATE mp_lead SET last_step = ?, last_subject = ?, last_message_id = ?, status = ?, "
                            "mailbox = ? WHERE tool_lead_id = ?", (step, subject, msg_id, status, mailbox or None, tid))
                 db.execute("INSERT INTO mp_send (tool_lead_id, campaign_id, step, sent_at, mailbox) "
