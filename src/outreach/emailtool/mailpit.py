@@ -161,6 +161,8 @@ class MailpitEmailTool:
     # the Gmail subclass (emailtool/gmail.py) sends to Gmail's SMTP instead of a loopback one
     LOOPBACK_ONLY = True
     LABEL = "mailpit"
+    # a send plan (task 26) sets each step's date itself: variables plan=1 + due_at_<step>
+    SUPPORTS_SCHEDULE = True
     # outreach.sendwindow.SendWindow: working days / hours + time-of-day rotation (set by make_tool
     # for mailbox / gmail mode). None = send the moment a step is due.
     send_window: Any = None
@@ -358,6 +360,23 @@ class MailpitEmailTool:
             return self.send_window.slot(due, step, key)
         return due
 
+    def planned_due(self, variables: Mapping[str, str], step: int, time_scale: float = 1.0,
+                    key: str = "") -> Optional[datetime]:
+        """A send-plan step's send time: due_at_<step> (set by the agent once it has decided the
+        email), moved into the send window unless due_exact_<step> (a date and time the product
+        manager picked). None = not decided yet, or on hold: wait."""
+        raw = variables.get(f"due_at_{step}") or ""
+        try:
+            due = datetime.fromisoformat(raw)
+        except ValueError:
+            return None
+        if due.tzinfo is None:
+            due = due.replace(tzinfo=timezone.utc)
+        if (self.send_window is not None and time_scale == 1.0
+                and variables.get(f"due_exact_{step}") != "1"):
+            return self.send_window.slot(due, step, key)
+        return due
+
     def send_due(self, schedule_days: Mapping[int, int], time_scale: float = 1.0) -> List[Dict[str, Any]]:
         """Send every step that is due now. State is re-checked inside the same write transaction
         right before each SMTP send, so a stop / pause / block that landed in the meantime wins.
@@ -374,9 +393,13 @@ class MailpitEmailTool:
                     db.execute("UPDATE mp_lead SET status = 'stopped' WHERE tool_lead_id = ?", (tid,))
                     continue
                 step = row["last_step"] + 1
-                if self.due_at(_parse(row["enrolled_at"]), step, schedule_days, time_scale, key=tid) > now:
-                    continue
                 variables = json.loads(row["variables"])
+                if variables.get("plan") == "1":
+                    due = self.planned_due(variables, step, time_scale, key=tid)
+                    if due is None or due > now:
+                        continue
+                elif self.due_at(_parse(row["enrolled_at"]), step, schedule_days, time_scale, key=tid) > now:
+                    continue
                 subject = variables.get(f"subject_{step}")
                 body = variables.get(f"body_{step}")
                 if not subject or not body:

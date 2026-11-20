@@ -384,6 +384,18 @@ def parse_leads(filename: str, data: bytes) -> Dict[str, Any]:
     return {"columns": found, "leads": leads}
 
 
+def _import_plan(start: Optional[str], settings: Any) -> Dict[str, Any]:
+    """The email-1 date and time picked in the import dialog (local, BUSINESS_TZ), as an intake field."""
+    from .send_plan import PlanError, _local_at, local_to_utc
+
+    if not start:
+        return {}
+    try:
+        return {"plan_start": local_to_utc(_local_at("Email 1", start), settings).isoformat()}
+    except PlanError as exc:
+        raise ValueError(str(exc)) from None
+
+
 def register(app: FastAPI, session_factory: sessionmaker, clock: Callable[[], datetime], settings: Any) -> None:
     modes = {"email": settings.email_mode, "whatsapp": settings.whatsapp_mode, "ai": settings.llm_mode,
              "alerts": settings.alerts_mode}
@@ -533,10 +545,15 @@ def register(app: FastAPI, session_factory: sessionmaker, clock: Callable[[], da
             return JSONResponse({"columns": parsed["columns"], "total": len(parsed["leads"]),
                                  "ready": sum(1 for x in parsed["leads"] if not x["problems"]),
                                  "rows": parsed["leads"][:200]})
+        try:
+            plan = _import_plan(request.query_params.get("start"), settings)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
         base = str(request.base_url).rstrip("/")
         results = []
         async with httpx.AsyncClient(timeout=20.0) as http:
             for item in parsed["leads"]:
+                item["payload"].update(plan)
                 if item["problems"]:
                     results.append({"row": item["row"], "name": item["payload"]["name"], "outcome": "skipped",
                                     "reason": ", ".join(item["problems"])})

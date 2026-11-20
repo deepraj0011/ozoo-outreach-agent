@@ -202,3 +202,17 @@ class EmailTemplate(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime)
     approved_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime)
+
+
+class SendPlan(Base):
+    """A sequence plan made on the Plan & Schedule screen (task 26): when email 1 goes, and after
+    each email which email comes next, on which day, depending on what the lead did. `data` is
+    checked by send_plan.clean_plan. The default plan is used for new email leads."""
+    __tablename__ = "send_plan"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(80))
+    data: Mapped[Dict[str, Any]] = mapped_column(JSON)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime)

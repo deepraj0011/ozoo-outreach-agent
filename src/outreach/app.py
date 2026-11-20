@@ -409,10 +409,11 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
             background.add_task(_run_jobs, list(job_ids))
 
     if settings.app_env == "local":  # live demo console at /demo; never in production
-        from . import demo_console, template_console
+        from . import demo_console, schedule_console, template_console
 
         demo_console.register(app, session_factory, clock, settings)
         template_console.register(app, session_factory, clock, settings, deps.tool)
+        schedule_console.register(app, session_factory, clock, settings, deps.tool)
 
     @app.exception_handler(Exception)
     async def _unhandled(request: Request, exc: Exception) -> JSONResponse:

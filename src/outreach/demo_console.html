@@ -76,6 +76,7 @@ tailwind.config = { theme: { extend: {
 <div id="toast" class="hidden fixed bottom-5 right-5 z-[60] bg-ink-950 text-white text-sm rounded-xl px-4 py-3 shadow-xl max-w-sm"></div>
 
 <script src="/demo/templates.js"></script>
+<script src="/demo/schedule.js"></script>
 <script>
 // ------------------------------------------------------------------ vocabulary (plan-aligned)
 const STATE = {
@@ -113,6 +114,7 @@ const ICON = {
   chat:'<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
   bell:'<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0"/>',
   flow:'<circle cx="5" cy="6" r="2"/><circle cx="19" cy="6" r="2"/><circle cx="12" cy="18" r="2"/><path d="M7 6h10M6 8l5 8M18 8l-5 8"/>',
+  calendar:'<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M8 14h2M14 14h2M8 18h2"/>',
   gear:'<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/>',
 };
 const PAGES = [
@@ -120,6 +122,7 @@ const PAGES = [
   {id:'leads', label:'Leads', icon:'leads', title:'Leads', sub:'Everyone the agent is following up with'},
   {id:'conversations', label:'Conversations', icon:'chat', title:'WhatsApp conversations', sub:'Chatbot and salesperson chats with leads'},
   {id:'templates', label:'Email templates', icon:'mail', title:'Email templates', sub:'Preview, write, approve and send the emails the agent uses'},
+  {id:'schedule', label:'Email schedule', icon:'calendar', title:'Email schedule', sub:'When each email goes, and what kind it is'},
   {id:'alerts', label:'Sales alerts', icon:'bell', title:'Sales alerts', sub:'What the sales team is told (Microsoft Teams in production)'},
   {id:'how', label:'How it works', icon:'flow', title:'How the agent works', sub:'The outreach plan, step by step'},
   {id:'settings', label:'Settings', icon:'gear', title:'Settings', sub:'Connections, time controls and sample data'},
@@ -169,7 +172,8 @@ window.addEventListener('hashchange', route);
 async function refresh() {
   try {
     const r = await fetch('/demo/api/state'); data = await r.json();
-    if (openId != null) { const d = await fetch('/demo/api/lead/' + openId); detail = d.ok ? await d.json() : null; }
+    if (openId != null) { const d = await fetch('/demo/api/lead/' + openId); detail = d.ok ? await d.json() : null;
+      if (drawerTab === 'schedule') await schLoadLead(openId); }
     if (page === 'conversations' && convId != null) { const d = await fetch('/demo/api/lead/' + convId); convDetail = d.ok ? await d.json() : null; }
     $('clock').textContent = new Date(data.clock).toLocaleString([], {weekday:'short', month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'});
     renderPage(true); if (openId != null) renderDrawer();
@@ -204,7 +208,7 @@ let lastRendered = '';
 function renderPage(fromPoll) {
   renderShell();
   if (!data) { $('page').innerHTML = '<div class="text-sm text-slate-400">Loading…</div>'; return; }
-  const html = ({overview: pOverview, leads: pLeads, conversations: pConversations, templates: pTemplates, alerts: pAlerts, how: pHow, settings: pSettings}[page])();
+  const html = ({overview: pOverview, leads: pLeads, conversations: pConversations, templates: pTemplates, schedule: pSchedule, alerts: pAlerts, how: pHow, settings: pSettings}[page])();
   if (fromPoll && html === lastRendered) return;
   // keep typed text and focus across re-renders
   const focused = document.activeElement && document.activeElement.id;
@@ -341,9 +345,9 @@ function renderDrawer(first) {
         .map(([k, v]) => `<div class="bg-slate-50 rounded-lg px-3 py-2"><div class="text-[10px] uppercase tracking-wide text-slate-400">${k}</div><div class="text-xs font-medium mt-0.5">${v}</div></div>`).join('')}</div>
       ${notes.map(n => `<div class="mt-2 text-xs bg-amber-50 text-amber-800 rounded-lg px-3 py-2">${esc(n)}</div>`).join('')}
     </div>
-    <div class="px-6 border-b border-slate-100 flex gap-6 text-sm overflow-x-auto">${[['activity','Activity'],['chat','WhatsApp chat'],['alerts','Alerts'],['demo','▶ Simulate the lead']].map(([k, t]) =>
+    <div class="px-6 border-b border-slate-100 flex gap-6 text-sm overflow-x-auto">${[['activity','Activity'],['schedule','Email schedule'],['chat','WhatsApp chat'],['alerts','Alerts'],['demo','▶ Simulate the lead']].map(([k, t]) =>
       `<button onclick="drawerTab='${k}';renderDrawer()" class="py-3 border-b-2 font-medium whitespace-nowrap ${drawerTab === k ? 'border-brand-500 text-brand-700' : 'border-transparent text-slate-500 hover:text-slate-800'}">${t}</button>`).join('')}</div>
-    <div id="drawerBody" class="flex-1 overflow-y-auto thin p-6">${drawerTab === 'activity' ? dActivity() : drawerTab === 'chat' ? dChat(detail) : drawerTab === 'alerts' ? dAlerts() : dDemo(l)}</div>`;
+    <div id="drawerBody" class="flex-1 overflow-y-auto thin p-6">${drawerTab === 'activity' ? dActivity() : drawerTab === 'schedule' ? dSchedule(l) : drawerTab === 'chat' ? dChat(detail) : drawerTab === 'alerts' ? dAlerts() : dDemo(l)}</div>`;
   Object.entries(keep).forEach(([id, v]) => { const e = $(id); if (e) e.value = v; });
   if (focused && $(focused)) $(focused).focus();
   if (!first && $('drawerBody')) $('drawerBody').scrollTop = scroll;
@@ -572,13 +576,14 @@ async function impPreview(file) {
           <td class="px-3 py-2 text-slate-400">${x.row}</td><td class="px-3 py-2 font-medium">${esc(p.name)}</td><td class="px-3 py-2">${esc(p.company)}</td><td class="px-3 py-2">${esc(p.role === 'Not given' ? '' : p.role)}</td>
           <td class="px-3 py-2">${esc(p.email || '')}</td><td class="px-3 py-2">${esc(p.phone || '')}</td><td class="px-3 py-2">${p.consent_whatsapp ? '✓' : ''}</td>
           <td class="px-3 py-2 whitespace-nowrap">${x.problems.length ? `<span class="text-amber-700">⚠ ${esc(x.problems.join(', '))}</span>` : '<span class="text-emerald-700">✓ Ready</span>'}</td></tr>`; }).join('')}</tbody></table></div>
-      ${j.total > j.rows.length ? `<div class="text-xs text-slate-400">Showing the first ${j.rows.length} of ${j.total} rows.</div>` : ''}</div>
+      ${j.total > j.rows.length ? `<div class="text-xs text-slate-400">Showing the first ${j.rows.length} of ${j.total} rows.</div>` : ''}
+      ${schImportBar()}</div>
     <div class="px-6 py-4 border-t border-slate-100 flex justify-between gap-2"><button class="btn" onclick="openImport()">← Choose another file</button>
       <button class="btn btn-primary" id="impGo" ${j.ready ? '' : 'disabled'} onclick="impCommit()">Import ${j.ready} lead${j.ready === 1 ? '' : 's'} and start outreach</button></div>`);
 }
 async function impCommit() {
   $('impGo').disabled = true; $('impGo').textContent = 'Importing… the agent checks each lead';
-  const r = await fetch('/demo/api/import?commit=1', {method:'POST', headers:{'X-Filename': impFile.name}, body: impFile});
+  const r = await fetch('/demo/api/import?commit=1' + schImportQuery(), {method:'POST', headers:{'X-Filename': impFile.name}, body: impFile});
   const j = await r.json();
   if (!r.ok) return openImport(j.error || ('HTTP ' + r.status));
   const keys = Object.keys(OUT).filter(k => j.summary[k]);

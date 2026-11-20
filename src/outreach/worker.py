@@ -59,9 +59,9 @@ from sqlalchemy import Select, and_, delete, func, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
-from . import jobs
+from . import jobs, send_plan
 from .actions import (
-    TOOL_BLOCK_PENDING, TOOL_REALERT_AFTER, TOOL_STOP_PENDING, Alert, Deps, SetState, execute,
+    TOOL_BLOCK_PENDING, TOOL_REALERT_AFTER, TOOL_STOP_PENDING, Alert, Deps, SendReply, SetState, execute,
     record_integration_error, tool_retry_delay, tool_stop_failed_text,
 )
 from .botfilter import TRAP_TAG, Scanners, classify_event, load_scanners
@@ -82,7 +82,7 @@ from .outreach import (
 )
 from .rules import EventSnapshot, LeadSnapshot, decide
 from .score import DECAY_AFTER, decay
-from .sequencer import LAST_STEP, end_of_sequence_route, enroll
+from .sequencer import LAST_STEP, PLAN_FLAG, SCHED_FLAG, end_of_sequence_route, enroll, load_templates
 from .states import TERMINAL_VALUES, LeadState
 
 __all__ = ["tick", "main", "parse_business_hours", "business_zone", "business_deadline"]
@@ -569,6 +569,9 @@ def _resume_paused(ctx: Ctx, session: Session) -> int:
             set_flag(lead, "previous_tool_lead_id", old_tool_id)
         _restart(session, lead, ctx.deps.tool, ctx.now, "ooo_resume")
         lead.pause_until = None
+        if send_plan.on_plan(lead):  # the next email waits a day after they're back (send_plan.BACK_GAP_DAYS)
+            set_flag(lead, send_plan.BACK_FLAG, ctx.now.isoformat())
+            send_plan.log(lead, ctx.now, "Back from out-of-office: the next email goes a day later at the earliest")
         logger.info("lead %s: out-of-office over, back in sequence", lead.id)
         if old_tool_id and (lead.step_sent or 0) < LAST_STEP:
             _re_enrol(ctx, session, lead)
@@ -603,27 +606,80 @@ def _eu_holds(ctx: Ctx, session: Session) -> int:
 
 # ====================================================================== 7. end of sequence
 
+def _finish_sequence(ctx: Ctx, session: Session, lead: Lead) -> None:
+    """The end-of-sequence route (nurture track, alert for a hot lead), after the last email."""
+    clicks = session.scalar(select(func.count(Event.id)).where(
+        Event.lead_id == lead.id, Event.kind == "click", Event.verdict == "human")) or 0
+    route, actions = end_of_sequence_route(lead, int(clicks), clicks_need_check=ctx.settings.click_alerts_need_check)
+    lead.nurture_track = route
+    execute(session, lead, actions, ctx.deps, ctx.now)
+    logger.info("lead %s: sequence ended, route %s", lead.id, route)
+
+
 def _end_of_sequence(ctx: Ctx, session: Session) -> int:
-    leads = list(session.scalars(select(Lead).where(
+    """Leads on the fixed schedule; a lead on a send plan ends when its plan says (_plan_schedule)."""
+    stmt = select(Lead).where(
         Lead.state == S.IN_SEQUENCE.value, Lead.active_channel == "email", Lead.step_sent >= LAST_STEP,
-        Lead.last_sent_at <= ctx.now - _delay(ctx, "end_of_sequence_wait")).order_by(Lead.last_sent_at, Lead.id).limit(ctx.batch)))
+        Lead.last_sent_at <= ctx.now - _delay(ctx, "end_of_sequence_wait")).order_by(Lead.last_sent_at, Lead.id)
 
     def qualifies(lead: Lead) -> bool:
         return (lead.state == S.IN_SEQUENCE.value and lead.active_channel == "email"
-                and (lead.step_sent or 0) >= LAST_STEP
+                and (lead.step_sent or 0) >= LAST_STEP and _flags(lead).get(PLAN_FLAG) is None
                 and _before(lead.last_sent_at, ctx.now - _delay(ctx, "end_of_sequence_wait")))
 
     def one(lead: Lead) -> bool:
-        clicks = session.scalar(select(func.count(Event.id)).where(
-            Event.lead_id == lead.id, Event.kind == "click", Event.verdict == "human")) or 0
-        route, actions = end_of_sequence_route(
-            lead, int(clicks), clicks_need_check=ctx.settings.click_alerts_need_check)
-        lead.nurture_track = route
-        execute(session, lead, actions, ctx.deps, ctx.now)
-        logger.info("lead %s: sequence ended, route %s", lead.id, route)
+        _finish_sequence(ctx, session, lead)
         return True
 
-    return _each_lead(ctx, session, "end_of_sequence", leads, qualifies, one)
+    return _each_lead(ctx, session, "end_of_sequence", _pick(session, stmt, qualifies, ctx.batch), qualifies, one)
+
+
+# ====================================================================== 7b. send plans (task 26)
+
+NURTURE_CHECKIN = "nurture_checkin_at"  # the check-in on the date a "not now" lead gave went out
+
+
+def _nurture_follow_up(ctx: Ctx, session: Session) -> int:
+    """A lead who said "not now, try in March": on that date, one check-in email in the same thread
+    (template nurture_checkin). A reply goes through the normal reply flow; no reply, no more emails."""
+    leads = list(session.scalars(select(Lead).where(
+        Lead.state == S.NURTURE.value, Lead.nurture_until.is_not(None), Lead.nurture_until <= ctx.now,
+        Lead.email.is_not(None), Lead.tool_lead_id.is_not(None)).order_by(Lead.nurture_until, Lead.id).limit(ctx.batch)))
+
+    def qualifies(lead: Lead) -> bool:
+        return (lead.state == S.NURTURE.value and _before(lead.nurture_until, ctx.now)
+                and not (lead.variant_flags or {}).get(NURTURE_CHECKIN))
+
+    def one(lead: Lead) -> bool:
+        set_flag(lead, NURTURE_CHECKIN, ctx.now.isoformat())  # guard first: a repeated tick sends nothing twice
+        if "nurture_checkin" not in load_templates()["replies"]:
+            return True
+        execute(session, lead, [SendReply("nurture_checkin")], ctx.deps, ctx.now)
+        logger.info("lead %s: not-now date reached, check-in sent", lead.id)
+        return True
+
+    return _each_lead(ctx, session, "nurture_follow_up", leads, qualifies, one)
+
+
+def _plan_schedule(ctx: Ctx, session: Session) -> int:
+    """Decide each plan lead's next email once its date has come (send_plan.commit_next), or end
+    its sequence when the plan says so."""
+    tool = ctx.deps.tool
+    if tool is None:
+        return 0
+
+    def qualifies(lead: Lead) -> bool:
+        return (lead.state == S.IN_SEQUENCE.value and lead.active_channel == "email"
+                and lead.tool_lead_id is not None and send_plan.on_plan(lead))
+
+    def one(lead: Lead) -> bool:
+        result = send_plan.commit_next(session, lead, tool, ctx.now, ctx.settings)
+        if result == "end":
+            _finish_sequence(ctx, session, lead)
+        return result != "waiting"
+
+    leads = [ld for ld in (session.get(Lead, i) for i in send_plan.due_ids(session, ctx.batch)) if ld is not None]
+    return _each_lead(ctx, session, "plan_schedule", leads, qualifies, one)
 
 
 # ====================================================================== 8. WhatsApp human SLA
@@ -970,6 +1026,12 @@ def _stuck_since(session: Session, lead: Lead) -> Optional[datetime]:
             return None
     switched = _ts((_flags(lead).get("switched") or {}).get("at")) if isinstance(_flags(lead).get("switched"),
                                                                                   dict) else None
+    if lead.active_channel == "email" and _flags(lead).get(PLAN_FLAG) is not None:
+        if (_flags(lead).get(send_plan.NEXT_FLAG) or {}).get("hold"):
+            return None  # the product manager put it on hold
+        # a send plan can start email 1 on a later date: stuck counts from that date
+        planned = _ts((_flags(lead).get(SCHED_FLAG) or {}).get("due"))
+        switched = max([t for t in (switched, planned) if t is not None], default=None)
     times = [t for t in (_entered_sequence(session, lead), lead.wa_template_sent_at, lead.wa_reminder_sent_at,
                          switched) if t is not None]
     return max(times) if times else None
@@ -1009,6 +1071,8 @@ JOBS: Sequence[Tuple[str, JobFn]] = (
     ("resume_paused", _resume_paused),
     ("account_holds", _account_holds),
     ("eu_holds", _eu_holds),
+    ("plan_schedule", _plan_schedule),
+    ("nurture_follow_up", _nurture_follow_up),
     ("end_of_sequence", _end_of_sequence),
     ("wa_sla", _wa_sla),
     ("attended_check", _attended_check),

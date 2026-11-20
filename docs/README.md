@@ -19,16 +19,20 @@ Start with **onboarding**, then pick the guide for what you want to do.
 | [Real demo](guides/real-demo.md) | A free demo with real Gmail, the Meta WhatsApp test number and a real AI model |
 | [Visit tracking](guides/visit-tracking.md) | Installing the one-line reading snippet on the website so the agent sees verified visits (a person read the page) |
 | [Email templates](guides/email-templates.md) | The Templates screen (preview, write, approve, send by hand) and what gets an email into the Primary inbox |
+| [Email schedule](guides/send-plans.md) | When each email goes and what type it is (simple list, ⚡ sooner if interested, per-lead changes) |
 | [Mailbox mode](guides/mailbox-mode.md) | Sending email from our own mailboxes (`EMAIL_MODE=mailbox`): domain, DNS, warm-up, Reacher verification |
 
 ## 3. Plan (what we agreed to build)
 
 | Doc | |
 |---|---|
-| [Outreach agent plan v2](plan/outreach-agent-plan-v2.md) ([PDF](plan/outreach-agent-plan-v2.pdf)) | The spec: flows, rules, tracking, compliance |
+| [Outreach agent plan v2 — 6-page PDF](plan/outreach-agent-plan-v2.pdf) | Short shareable plan with all diagrams (source: [HTML](plan/outreach-agent-plan-v2.html), print to A4 landscape) |
+| [Outreach agent plan v2 — full spec](plan/outreach-agent-plan-v2.md) | Detailed engineering spec: flows, rules, tracking, compliance (code cites its § numbers) |
 | [Email and WhatsApp flows](plan/email-whatsapp-flows.pdf) | The original one-page flow diagrams |
 | [Pilot plan](plan/pilot-plan.md) | Phases from a free internal test to production, with costs |
 | [Implementation plan v1](plan/implementation-plan-v1.md) | The task-by-task build plan the code follows |
+| [P0 scheduled emails — design](plan/p0-scheduled-emails-design.md) | P0: the PM schedules which template goes as which email on which day; tracking recorded, never acted on |
+| [P0 scheduled emails — build plan](plan/p0-scheduled-emails-plan.md) | The 9 build tasks for P0, with tests per task |
 
 ## 4. Reference
 

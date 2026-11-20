@@ -631,6 +631,18 @@ replies:
       Thanks for letting me know, completely understood. I'll check back {follow_up_when}. If anything changes before then, just reply here.
 
       {signature}
+  # the date a "not now" lead gave has come: one check-in in the same thread (worker nurture_follow_up)
+  nurture_checkin:
+    body: |-
+      Hi {first_name},
+
+      You asked me to check back around now, so here I am. Is improving call quality, collections calling or borrower chat on your list this quarter?
+
+      If it is, you can pick a 30-minute slot here: {booking_link}. If the timing still isn't right, just say so and I won't chase.
+
+      {signature}
+
+      Unsubscribe: {unsubscribe_link}
   # not interested
   not_interested_ack:
     body: |-

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Iterable, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -47,6 +47,9 @@ class IntakePayload(BaseModel):
     industry: Optional[str] = Field(default=None, max_length=100)
     size: Optional[str] = Field(default=None, max_length=50)
     timezone_group: Optional[str] = Field(default=None, max_length=50)
+    # send plan (task 26): which plan this lead follows and when its email 1 goes (else the default plan)
+    plan_id: Optional[int] = Field(default=None, ge=1)
+    plan_start: Optional[datetime] = None
 
 
 class IntakeResult:
@@ -143,6 +146,11 @@ def intake_lead(session: Session, payload: dict, verifier, now: datetime,
         lead.email_hold = VERIFY_HOLD  # never sendable until verified (worker: retry_verification)
     if tz_note is not None:
         lead.variant_flags = {**(lead.variant_flags or {}), "timezone_group_unknown": tz_note}
+    if p.plan_id is not None:
+        lead.variant_flags = {**(lead.variant_flags or {}), "plan_id": p.plan_id}
+    if p.plan_start is not None:
+        start = p.plan_start if p.plan_start.tzinfo else p.plan_start.replace(tzinfo=timezone.utc)
+        lead.variant_flags = {**(lead.variant_flags or {}), "plan_start": start.astimezone(timezone.utc).isoformat()}
     channel = choose_channel(lead, primary_when_both)
     held: Optional[str] = None
     if channel is None and lead.email_hold:

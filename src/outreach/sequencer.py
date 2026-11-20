@@ -37,7 +37,7 @@ ALLOWED_PLACEHOLDERS = frozenset({
 })
 # Replies with a booking link (and so an unsubscribe link); the courtesy replies carry neither.
 REPLY_KEYS = ("booking_link", "booking_slots", "reschedule", "question_answer", "question_ack")
-COURTESY_REPLY_KEYS = ("not_now_ack", "not_interested_ack", "referral_thanks", "who_is_right")
+COURTESY_REPLY_KEYS = ("not_now_ack", "not_interested_ack", "referral_thanks", "who_is_right", "nurture_checkin")
 DEFAULT_ANGLE = "general"
 ANGLE_PAGES = ("product", "voice", "chat", "pricing", "case_study", "homepage")
 MAX_VALUE_LEN = 80
@@ -272,10 +272,12 @@ def render_version(lead: Lead, version: Dict[str, Any], step: int, *, templates:
     return {"subject": subject, "text": parts["text"], "html": parts["html"]}
 
 
-def choose_version(lead: Lead, step: int, templates: Dict[str, Any]) -> Dict[str, Any]:
-    """The lead's version of `step`: its variant's live versions, else the standard ones, else (all
-    switched off) the built-in standard ones: an email is never blank."""
-    v = _variant(lead)
+def choose_version(lead: Lead, step: int, templates: Dict[str, Any],
+                   variant: Optional[str] = None) -> Dict[str, Any]:
+    """The lead's version of `step`: its variant's live versions (`variant` = the kind a send plan
+    chose, else from what the lead did), else the standard ones, else (all switched off) the
+    built-in standard ones: an email is never blank."""
+    v = variant if variant in STEP_VARIANTS else _variant(lead)
     angle = angle_for(lead, templates)
     cands = (live_versions(templates, step, v, angle) or live_versions(templates, step, "standard", angle)
              or step_versions(templates, step, "standard"))
@@ -283,11 +285,12 @@ def choose_version(lead: Lead, step: int, templates: Dict[str, Any]) -> Dict[str
 
 
 def render_step(
-    lead: Lead, step: int, *, templates: Optional[Dict[str, Any]] = None, settings: Optional[Settings] = None
+    lead: Lead, step: int, *, templates: Optional[Dict[str, Any]] = None, settings: Optional[Settings] = None,
+    variant: Optional[str] = None,
 ) -> Dict[str, str]:
     t = templates or load_templates()
     s = settings or get_settings()
-    out = render_version(lead, choose_version(lead, step, t), step, templates=t, settings=s)
+    out = render_version(lead, choose_version(lead, step, t, variant), step, templates=t, settings=s)
     rendered = {f"subject_{step}": out["subject"], f"body_{step}": out["text"]}
     if out["html"]:
         rendered[f"html_{step}"] = out["html"]  # the designed version (task 21); the text always goes too
@@ -333,6 +336,22 @@ def _live_templates(session: Session) -> Dict[str, Any]:
 
 LAST_STEP = max(SCHEDULE_DAYS)
 STEP_OFFSET = "step_offset"
+# Send plans (task 26, send_plan.py): the lead's plan id, the plan emails decided so far (node ids,
+# one per our step) and the decided-but-not-sent email; PLAN_VAR tells the tool to wait for due_at.
+PLAN_FLAG = "plan_id"
+PATH_FLAG = "plan_path"
+SCHED_FLAG = "plan_next_sched"
+PLAN_VAR = "plan"
+
+
+def _plan_id(session: Session, lead: Lead, tool: Any) -> Optional[int]:
+    """The send plan for this enrolment, or None (the fixed 0 / 4 / 9 / 15 day schedule): only a
+    tool that sends the steps itself on our dates (SUPPORTS_SCHEDULE) can follow a plan."""
+    if not getattr(tool, "SUPPORTS_SCHEDULE", False):
+        return None
+    from .send_plan import plan_for_lead  # imports this module
+    plan = plan_for_lead(session, lead)
+    return plan.id if plan is not None else None
 
 
 def step_offset(lead: Lead) -> int:
@@ -375,8 +394,15 @@ def enroll(
     vals = _values(lead, 1, s)
     variables["first_name"] = vals["first_name"]
     variables["company"] = vals["company"]
+    plan_id = _plan_id(session, lead, tool)
+    if plan_id is not None:
+        variables[PLAN_VAR] = "1"  # the tool sends a step only once the plan gives it a due_at_<step>
     lead.tool_lead_id = tool.add_lead(campaign_id, lead, variables)
     flags = dict(lead.variant_flags or {})
+    if plan_id is not None:
+        flags[PLAN_FLAG] = plan_id
+        flags[PATH_FLAG] = list(flags.get(PATH_FLAG) or [])[:from_step - 1]  # re-decided from here
+        flags.pop(SCHED_FLAG, None)
     flags["enrolled_at"] = now.isoformat()
     if offset:
         flags[STEP_OFFSET] = offset
@@ -393,6 +419,8 @@ def refresh_next_step(
 ) -> None:
     if not lead.tool_lead_id or lead.step_sent >= LAST_STEP:
         return
+    if (lead.variant_flags or {}).get(PLAN_FLAG) is not None:
+        return  # a send plan renders each email when it decides it (send_plan.commit_next)
     real = lead.step_sent + 1
     campaign_step = real - step_offset(lead)
     if campaign_step < 1:

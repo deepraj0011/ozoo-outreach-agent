@@ -208,3 +208,27 @@ Verdict: safe for local testing. Real sending is blocked until Instantly is veri
 |---|---|---|
 | Emails 1 and 2 keep the design (use-case box, purple button, signature with the Ozoo mark) but have no product picture; pictures only in email 3 (email 4 never had one). Chosen by the user ("personal look") after asking for every email in Primary. | A picture in a cold email from an unknown sender is the strongest content signal for Promotions we control; the first emails are the ones judged hardest. | Less visual first impression. A custom version with a picture can still be approved in the Templates screen. |
 | Told the user plainly: Primary on every platform can't be guaranteed by any sender; it depends on domain reputation, authentication, warm-up and each recipient's history. | Honesty about what code can do. | none |
+
+## Task 26: Plan & schedule (2026-11-20)
+
+| Decision | Why | Cost if wrong |
+|---|---|---|
+| The PM controls timing and the kind of each email; the agent writes the content. A plan is a tree of up to 4 emails with branches HOT > read a page > clicked > otherwise; "otherwise" is required. | The team lead's ask; a tree keeps every lead on exactly one path and is easy to draw. | Plans with loops or more than 4 emails need a redesign of the 4-step sequence. |
+| No passcode on plans or per-lead changes (the user's call); every change goes to the lead's change log. | Speed for the PM; the log shows who changed what. | Anyone with the local web app can change timing. |
+| The next email is decided only when its date comes (email 1 at once), from what the lead did since the previous email, people only. | A click just before the date still changes the next email. | A decision is final once handed to the sender (the PM can still move, change, hold or stop it). |
+| "After N days" goes in the next working-hours slot; a picked date and time goes exactly then (BUSINESS_TZ). | The PM picked that time on purpose. | A picked time outside working hours is honoured. |
+| Plans only with our own sender (mailpit / gmail / mailbox); Instantly keeps its campaign schedule. Leads enrolled before any plan keep the fixed days unless moved onto a plan. | Instantly's API has no per-lead send date. | Production on Instantly would not get plans. |
+
+
+## Task 27: Simpler Email schedule (2026-11-20)
+
+- **One schedule as a list, not a branching tree.** The task-26 flow builder confused both the team lead and the user. Each email now has a type and "N days after the previous email". One optional "sooner if they show interest" (a click, page read or HOT score, as one signal) covers the useful branch. Link-specific branches, per-branch dates and several named plans were dropped as rarely needed and hard to read.
+- **Per-lead changes stay in the lead panel**, as four buttons (Send now, Change date, Pause/Resume, Stop). The schedule screen only edits what every new lead gets.
+- Old tree plans are converted on read, not migrated: there are no migrations, and `create_all` keeps the same table.
+
+## Task 28: Tracking vs. the schedule (2026-11-20)
+
+- **Only the next email is decided, and a queued one is re-checked for interest until it goes.** Interest arriving overnight (between the decision and the morning send slot) would otherwise be ignored. A per-lead change by the PM is never overridden.
+- **After an out-of-office, at least one day before the next email.** Its date was counted from the last email, so it was usually overdue and went the minute the lead was back.
+- **"Sooner" can end the sequence** (`fast.last`). Once a lead shows interest, the PM may want one meeting-time email and then sales, not three more automated emails.
+- **A "not now" lead gets exactly one check-in on its date**, in the same thread. More nurture emails need content and a cadence the PM hasn't asked for. End-of-sequence nurture leads (no date) get none.
