@@ -16,6 +16,7 @@ import CampaignPage from "./pages/CampaignPage";
 import TemplatesPage from "./pages/TemplatesPage";
 import ConversationsPage from "./pages/ConversationsPage";
 import ComingSoonPage from "./pages/ComingSoonPage";
+import LeadsPage from "./pages/LeadsPage";
 
 const NAV_WIDTH = 232;
 const SIDEBAR_BG = "#16181b";
@@ -107,7 +108,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Navigate to="/campaign" replace />} />
           <Route path="/campaign" element={<CampaignPage />} />
-          <Route path="/leads" element={<ComingSoonPage title="Leads" />} />
+          <Route path="/leads" element={<LeadsPage />} />
           <Route path="/conversations" element={<ConversationsPage />} />
           <Route path="/templates" element={<TemplatesPage />} />
           <Route path="/connectors" element={<ComingSoonPage title="Connectors" />} />

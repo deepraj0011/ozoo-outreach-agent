@@ -147,5 +147,44 @@ export interface SettingsView {
 }
 
 export interface NewLead {
-  [field: string]: string | undefined;
+  name: string;
+  company: string;
+  role?: string;
+  email?: string;
+  phone?: string;
+  country?: string;
+  consent_whatsapp?: boolean;
+}
+
+export interface ImportRow {
+  row: number;
+  payload: { name?: string; company?: string; role?: string; email?: string; phone?: string };
+  problems: string[];
+}
+
+export interface ImportPreview {
+  columns: Record<string, string>;
+  total: number;
+  ready: number;
+  rows: ImportRow[];
+}
+
+export interface IntakeResult {
+  outcome: string;
+  lead_id?: number | null;
+  reason?: string | null;
+  error?: string;
+}
+
+export interface ImportResultRow {
+  row: number;
+  name: string;
+  lead_id?: number | null;
+  outcome: string;
+  reason?: string | null;
+}
+
+export interface ImportResult {
+  summary: Record<string, number>;
+  results: ImportResultRow[];
 }

@@ -8,7 +8,7 @@ export default function EmailPreview({ subject, html, text, height = 560 }:
   const showing = html ? tab : "text";
   return (
     <Paper variant="outlined" sx={{ overflow: "hidden" }}>
-      <Box sx={{ px: 2, py: 1.25, bgcolor: "#f9fafb", borderBottom: 1, borderColor: "divider" }}>
+      <Box sx={{ px: 2, py: 1.25, bgcolor: "background.default", borderBottom: 1, borderColor: "divider" }}>
         <Typography variant="caption" color="text.secondary">Subject</Typography>
         <Typography sx={{ fontWeight: 600, fontSize: 15 }}>{subject || "(no subject)"}</Typography>
       </Box>

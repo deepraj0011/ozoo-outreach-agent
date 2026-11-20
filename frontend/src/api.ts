@@ -1,4 +1,4 @@
-import type { Board, Connector, NewLead, SettingsView } from "./types";
+import type { Board, Connector, ImportPreview, ImportResult, IntakeResult, NewLead, SettingsView } from "./types";
 
 /** Small typed client for the agent's local JSON routes (/demo/api/...). */
 
@@ -65,8 +65,11 @@ export const startCampaign = (by: string) => postJson<unknown>(`${BASE}/p0/campa
 export const pauseCampaign = (by: string) => postJson<unknown>(`${BASE}/p0/campaign/pause`, { by });
 export const getConnectors = () => getJson<{ connectors: Connector[] }>(`${BASE}/connectors`);
 export const getSettings = () => getJson<SettingsView>(`${BASE}/settings`);
-export const addLead = (lead: NewLead) => postJson<unknown>(`${BASE}/intake`, lead);
+export const addLead = (lead: NewLead) => postJson<IntakeResult>(`${BASE}/intake`, lead);
 
 /** commit=false previews what the file holds; commit=true imports it. The body is the raw file. */
-export const importLeads = (file: File, commit: boolean) =>
-  postFile<unknown>(`${BASE}/import${commit ? "?commit=1" : ""}`, file);
+export function importLeads(file: File, commit: false): Promise<ImportPreview>;
+export function importLeads(file: File, commit: true): Promise<ImportResult>;
+export function importLeads(file: File, commit: boolean): Promise<ImportPreview | ImportResult> {
+  return postFile<ImportPreview | ImportResult>(`${BASE}/import${commit ? "?commit=1" : ""}`, file);
+}

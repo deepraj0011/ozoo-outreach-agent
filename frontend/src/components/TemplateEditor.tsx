@@ -1,28 +1,26 @@
 import { useEffect, useRef, useState } from "react";
-import { Alert, AppBar, Box, Button, Chip, Dialog, IconButton, Stack, TextField, Toolbar, Tooltip,
-  Typography } from "@mui/material";
-import CloseIcon from "@mui/icons-material/Close";
+import { Alert, Box, Button, Card, Chip, Stack, TextField, Tooltip, Typography } from "@mui/material";
 import { errorText, postJson } from "../api";
 import type { Rendered, Template, TemplateStatus } from "../types";
 import { useUser } from "../user";
 import EmailPreview from "./EmailPreview";
+import { TEMPLATE_STATUS } from "./templateStatus";
 
 const PREVIEW_DELAY_MS = 500;
 type Field = "subject" | "body";
 
 interface Props {
-  open: boolean;
   template: Template | null; // null = new
   placeholders: string[];
-  onClose: () => void;
-  onSaved: (message: string) => void;
+  onSaved: (message: string, id: number) => void;
 }
 
-export default function TemplateEditor({ open, template, placeholders, onClose, onSaved }: Props) {
+/** The right pane of the Templates page: edit one template, insert placeholders, see the rendered email. */
+export default function TemplateEditor({ template, placeholders, onSaved }: Props) {
   const { name: by } = useUser();
-  const [name, setName] = useState("");
-  const [subject, setSubject] = useState("");
-  const [body, setBody] = useState("");
+  const [name, setName] = useState(template?.name ?? "");
+  const [subject, setSubject] = useState(template?.subject ?? "");
+  const [body, setBody] = useState(template?.body ?? "");
   const [preview, setPreview] = useState<Rendered | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -31,31 +29,35 @@ export default function TemplateEditor({ open, template, placeholders, onClose, 
   const bodyRef = useRef<HTMLTextAreaElement>(null);
   const lastField = useRef<Field>("body");
 
+  // The page remounts this editor (key) when another template is picked; a save of the same one refreshes the fields.
   useEffect(() => {
-    if (!open) return;
     setName(template?.name ?? "");
     setSubject(template?.subject ?? "");
     setBody(template?.body ?? "");
     setError(null);
-    setPreview(null);
-  }, [open, template]);
+  }, [template]);
 
   useEffect(() => {
-    if (!open) return undefined;
     if (!name.trim() || !subject.trim() || !body.trim()) {
+      setPreview(null);
       setPreviewError("Fill in the name, subject and text to see the preview.");
       return undefined;
     }
+    let live = true;
     const t = window.setTimeout(() => {
       postJson<Rendered>("/demo/api/p0/preview", { draft: { name, subject, body } })
         .then((r) => {
+          if (!live) return;
           setPreview(r);
           setPreviewError(null);
         })
-        .catch((e) => setPreviewError(errorText(e)));
+        .catch((e) => live && setPreviewError(errorText(e)));
     }, PREVIEW_DELAY_MS);
-    return () => window.clearTimeout(t);
-  }, [open, name, subject, body]);
+    return () => {
+      live = false;
+      window.clearTimeout(t);
+    };
+  }, [name, subject, body]);
 
   const insert = (ph: string) => {
     const token = `{${ph}}`;
@@ -82,7 +84,7 @@ export default function TemplateEditor({ open, template, placeholders, onClose, 
       if (status && status !== (template?.status ?? "draft")) {
         await postJson(`/demo/api/p0/templates/${out.id}/status`, { status, by });
       }
-      onSaved(status === "live" ? "Template saved and live: it can now go on the schedule." : "Template saved.");
+      onSaved(status === "live" ? "Template saved and live: it can now go on the schedule." : "Template saved.", out.id);
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -96,7 +98,7 @@ export default function TemplateEditor({ open, template, placeholders, onClose, 
     setError(null);
     try {
       await postJson(`/demo/api/p0/templates/${template.id}/status`, { status: "off", by });
-      onSaved("Template switched off.");
+      onSaved("Template switched off.", template.id);
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -105,28 +107,26 @@ export default function TemplateEditor({ open, template, placeholders, onClose, 
   };
 
   const isLive = template?.status === "live";
+  const look = template ? TEMPLATE_STATUS[template.status] : null;
   return (
-    <Dialog fullScreen open={open} onClose={onClose}>
-      <AppBar position="sticky" color="inherit" elevation={0} sx={{ borderBottom: 1, borderColor: "divider" }}>
-        <Toolbar sx={{ gap: 1 }}>
-          <IconButton edge="start" onClick={onClose} aria-label="Close"><CloseIcon /></IconButton>
-          <Typography variant="h6" sx={{ flexGrow: 1, fontSize: 17 }} noWrap>
-            {template ? `Edit template: ${template.name}` : "New template"}
-          </Typography>
-          {template && template.status !== "off" && (
-            <Button color="error" onClick={switchOff} disabled={busy}>Switch off</Button>
-          )}
-          <Button variant={isLive ? "contained" : "outlined"} onClick={() => save()} disabled={busy}>
-            {template ? "Save changes" : "Save draft"}
-          </Button>
-          {!isLive && (
-            <Button variant="contained" onClick={() => save("live")} disabled={busy}>Save and make live</Button>
-          )}
-        </Toolbar>
-      </AppBar>
-      <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" }, gap: 3, p: { xs: 2, md: 3 },
-        bgcolor: "background.default", flexGrow: 1 }}>
-        <Stack spacing={2}>
+    <Card sx={{ minWidth: 0 }}>
+      <Stack direction="row" alignItems="center" spacing={1.5} useFlexGap flexWrap="wrap"
+        sx={{ px: 2.5, py: 1.5, borderBottom: 1, borderColor: "divider" }}>
+        <Typography variant="h6" sx={{ fontSize: 16, flexGrow: 1 }} noWrap>
+          {template ? template.name : "New template"}
+        </Typography>
+        {look && <Chip size="small" label={look.label} sx={{ ...look.sx, fontWeight: 600 }} />}
+        {template && template.status !== "off" && (
+          <Button color="error" onClick={switchOff} disabled={busy}>Switch off</Button>
+        )}
+        <Button variant={isLive ? "contained" : "outlined"} color={isLive ? "primary" : "inherit"}
+          sx={isLive ? undefined : { borderColor: "divider" }} onClick={() => save()} disabled={busy}>
+          {template ? "Save changes" : "Save draft"}
+        </Button>
+        {!isLive && <Button variant="contained" onClick={() => save("live")} disabled={busy}>Save and make live</Button>}
+      </Stack>
+      <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", xl: "1fr 1fr" }, gap: 3, p: 2.5 }}>
+        <Stack spacing={2} sx={{ minWidth: 0 }}>
           {error && <Alert severity="error" onClose={() => setError(null)}>{error}</Alert>}
           {isLive && (
             <Alert severity="info" variant="outlined">
@@ -138,7 +138,7 @@ export default function TemplateEditor({ open, template, placeholders, onClose, 
           <TextField label="Subject" value={subject} onChange={(e) => setSubject(e.target.value)} fullWidth
             inputRef={subjectRef} onFocus={() => { lastField.current = "subject"; }} />
           <TextField label="Email text" value={body} onChange={(e) => setBody(e.target.value)} fullWidth multiline
-            minRows={14} inputRef={bodyRef} onFocus={() => { lastField.current = "body"; }}
+            minRows={12} inputRef={bodyRef} onFocus={() => { lastField.current = "body"; }}
             helperText="Plain text. An unsubscribe line is added automatically if you leave it out." />
           <Box>
             <Typography variant="subtitle2" sx={{ mb: 1 }}>Insert a placeholder at the cursor</Typography>
@@ -152,12 +152,14 @@ export default function TemplateEditor({ open, template, placeholders, onClose, 
             </Stack>
           </Box>
         </Stack>
-        <Stack spacing={1.5}>
+        <Stack spacing={1.5} sx={{ minWidth: 0 }}>
           <Typography variant="subtitle2">Preview (a sample lead, Head of Collections)</Typography>
           {previewError && <Alert severity="warning">{previewError}</Alert>}
-          {preview && <EmailPreview subject={preview.subject} html={preview.html} text={preview.text} height="65vh" />}
+          {preview && !previewError && (
+            <EmailPreview subject={preview.subject} html={preview.html} text={preview.text} height={520} />
+          )}
         </Stack>
       </Box>
-    </Dialog>
+    </Card>
   );
 }
