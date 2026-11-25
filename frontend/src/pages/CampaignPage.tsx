@@ -18,8 +18,8 @@ import BoardTable from "../components/BoardTable";
 import EmailDrawer from "../components/EmailDrawer";
 import LeadDrawer from "../components/LeadDrawer";
 import PageState from "../components/PageState";
-import ScheduleDrawer from "../components/ScheduleDrawer";
-import ScheduleStrip from "../components/ScheduleStrip";
+import ScheduleEditor from "../components/ScheduleEditor";
+import ScheduleRuler from "../components/ScheduleRuler";
 import TotalsRow from "../components/TotalsRow";
 import { TONE_SX } from "../components/status";
 
@@ -147,7 +147,7 @@ export default function CampaignPage() {
   const [loading, setLoading] = useState(true);
   const [email, setEmail] = useState<{ leadId: number; leadName: string; emailNo: number } | null>(null);
   const [leadId, setLeadId] = useState<number | null>(null);
-  const [schedule, setSchedule] = useState<{ addRow: boolean } | null>(null);
+  const [editing, setEditing] = useState(false);
   const [toggling, setToggling] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
 
@@ -166,7 +166,7 @@ export default function CampaignPage() {
     void load();
   }, [load]);
 
-  const busy = email !== null || leadId !== null || schedule !== null;
+  const busy = email !== null || leadId !== null || editing;
   useEffect(() => {
     if (busy) return undefined;
     const t = window.setInterval(() => void load(), REFRESH_MS);
@@ -203,12 +203,11 @@ export default function CampaignPage() {
           <Header board={b} busy={toggling} onToggle={toggle} />
           {error !== null && <Alert severity="warning">Could not refresh: {errorText(error)}</Alert>}
           <TotalsRow totals={b.totals} />
-          <ScheduleStrip schedule={b.schedule} tz={b.tz} onEdit={(addRow) => setSchedule({ addRow })} />
+          <ScheduleRuler board={b} onEdit={() => setEditing(true)} />
           {b.leads.length === 0 ? <EmptyLeads /> : (
             <LeadsCard board={b} onLead={(l) => setLeadId(l.id)} onCell={openEmail} />
           )}
-          <ScheduleDrawer open={schedule !== null} addRow={schedule?.addRow ?? false} board={b}
-            onClose={() => setSchedule(null)} onSaved={done} />
+          <ScheduleEditor open={editing} board={b} onClose={() => setEditing(false)} onSaved={done} />
           <EmailDrawer target={email} tz={b.tz} onClose={() => setEmail(null)} />
           <LeadDrawer lead={email ? null : lead} tz={b.tz} onClose={() => setLeadId(null)} onChanged={done}
             onEmail={openEmail} />
