@@ -1,4 +1,5 @@
-import type { Board, BoardLead, CellStatus, ScheduleRow } from "../types";
+import type { Board, BoardLead, Cell, CellStatus, ScheduleRow, StopReason } from "../types";
+import { shortDate, timeOfDay, weekdayDate } from "../format";
 
 /** Pure helpers behind the Campaign page (labels, counts, looks). No React, no I/O. */
 
@@ -31,18 +32,6 @@ export function timingLabel(row: ScheduleRow, tz: string): string {
   return `Day ${row.day}`;
 }
 
-export interface StripItem {
-  emailNo: number;
-  name: string;
-  row: ScheduleRow;
-}
-
-export function stripItems(rows: ScheduleRow[]): StripItem[] {
-  return [...rows]
-    .sort((a, b) => a.email_no - b.email_no)
-    .map((row) => ({ emailNo: row.email_no, name: row.template_name, row }));
-}
-
 export interface HeaderState {
   label: "Sending" | "Paused" | "Not started";
   action: "pause" | "start";
@@ -52,24 +41,6 @@ export function campaignHeaderState(c: Board["campaign"]): HeaderState {
   if (c.running) return { label: "Sending", action: "pause" };
   if (c.started_at) return { label: "Paused", action: "start" };
   return { label: "Not started", action: "start" };
-}
-
-export interface CellLook {
-  icon: "sent" | "today" | "planned" | "cancelled";
-  tone: "success" | "warning" | "muted";
-}
-
-const CELL_LOOK: Record<CellStatus, CellLook> = {
-  sent: { icon: "sent", tone: "success" },
-  today: { icon: "today", tone: "warning" },
-  planned: { icon: "planned", tone: "muted" },
-  handed: { icon: "planned", tone: "muted" },
-  cancelled: { icon: "cancelled", tone: "muted" },
-  skipped: { icon: "cancelled", tone: "muted" },
-};
-
-export function cellLook(status: CellStatus): CellLook {
-  return CELL_LOOK[status];
 }
 
 export type TabKey = "all" | "today" | "replied" | "stopped";
@@ -117,4 +88,85 @@ export function initials(name: string): string {
   if (words.length === 0) return "?";
   if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
   return (words[0][0] + words[words.length - 1][0]).toUpperCase();
+}
+
+// ------------------------------------------------------------------ board dot tracks
+
+export type DotLook = "sent" | "active" | "planned" | "late" | "stopped";
+
+/** sent = green filled; today / with the sender = teal ring; planned = grey outline; late = amber ring;
+ * cancelled or skipped = a short dash. */
+export function dotLook(cell: Cell): DotLook {
+  if (cell.status === "sent") return "sent";
+  if (cell.status === "cancelled" || cell.status === "skipped") return "stopped";
+  if (cell.late) return "late";
+  if (cell.status === "today" || cell.status === "handed") return "active";
+  return "planned";
+}
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+/** The dot's tooltip and accessible name: "Email 2: sent Tue 24 Nov · 2 opens · 1 click". */
+export function dotHint(cell: Cell, tz: string): string {
+  const head = `Email ${cell.email_no}: `;
+  const day = weekdayDate(cell.date, tz);
+  switch (cell.status) {
+    case "sent": {
+      const parts = [`sent ${weekdayDate(cell.sent_at ?? cell.date, tz)}`.trim(), plural(cell.opens, "open"),
+        plural(cell.clicks, "click")];
+      if (cell.visits) parts.push(plural(cell.visits, "page read"));
+      return head + parts.join(" · ");
+    }
+    case "cancelled":
+    case "skipped":
+      return head + (cell.reason ? `${cell.status} (${cell.reason.replace(/_/g, " ")})` : cell.status);
+    case "today":
+      return `${head}goes today ${timeOfDay(cell.date, tz)}`.trim();
+    default:
+      if (cell.late) return `${head}late, was due ${day}`;
+      return `${head}${cell.status === "handed" ? "with the sender, goes" : "planned"} ${day}`.trim();
+  }
+}
+
+/** Under each track marker: "D0", "D4", or a fixed date as "14/12". */
+export function trackLabel(row: ScheduleRow): string {
+  if (row.mode === "now") return "D0";
+  if (row.mode === "at") {
+    const m = /^\d{4}-(\d{2})-(\d{2})/.exec(row.at ?? "");
+    return m ? `${Number(m[2])}/${m[1]}` : "Date";
+  }
+  return `D${row.day}`;
+}
+
+/** "k of N sent": emails removed from the schedule do not count. */
+export function sentCount(lead: BoardLead): { sent: number; total: number } {
+  const kept = lead.emails.filter((e) => !(e.status === "cancelled" && e.reason === "removed"));
+  return { sent: kept.filter((e) => e.status === "sent").length, total: kept.length };
+}
+
+const STOP_NEXT: Record<StopReason, string> = {
+  replied: "Replied{at} — emails stopped",
+  unsubscribed: "Unsubscribed — stopped",
+  bounced: "Bounced — stopped",
+  booked: "Demo booked — emails stopped",
+  stopped: "Stopped{at} — no more emails",
+};
+
+const OPEN: CellStatus[] = ["planned", "today", "handed"];
+
+/** The board's Next column: what happens to this lead next, in a few words. */
+export function nextLabel(lead: BoardLead, tz: string): string {
+  if (lead.stop_reason) {
+    const at = shortDate(lead.stopped_at, tz);
+    return STOP_NEXT[lead.stop_reason].replace("{at}", at ? ` ${at}` : "");
+  }
+  if (lead.paused) return "Paused";
+  const next = [...lead.emails].sort((a, b) => a.email_no - b.email_no).find((e) => OPEN.includes(e.status));
+  if (next) {
+    if (next.status === "today") return `Email ${next.email_no} · today ${timeOfDay(next.date, tz)}`.trim();
+    const day = weekdayDate(next.date, tz);
+    return [`Email ${next.email_no}`, day, next.late ? "late" : ""].filter(Boolean).join(" · ");
+  }
+  if (lead.emails.some((e) => e.status === "sent")) return lead.state === "nurture" ? "All sent · nurture" : "All sent";
+  return "Nothing planned";
 }
