@@ -156,6 +156,13 @@ def test_preview_of_a_builtin_version(session):
     assert out["subject"] and "<!doctype html>" in out["html"]  # email 1: designed
 
 
+def test_preview_carries_copy_advice(session):
+    long_draft = {**SEQ, "body": SEQ["body"].replace("{ask}", "More detail. " * 70 + "{ask}")}
+    out = lib.preview(session, ST, draft=long_draft, role="CTO")
+    assert any("words" in a for a in out["advice"])
+    assert isinstance(lib.preview(session, ST, draft=SEQ, role="CTO")["advice"], list)
+
+
 # ---------------------------------------------------------------- sending by hand
 def emailed_lead(session, **kw):
     kw.setdefault("state", "in_sequence")

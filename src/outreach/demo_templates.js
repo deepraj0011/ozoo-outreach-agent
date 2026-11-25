@@ -143,6 +143,7 @@ async function tplPvLoad() {
   if (!j.ok) { $('pvBody').innerHTML = `<div class="text-rose-700 bg-rose-50 rounded-lg px-3 py-2">${esc(j.error)}</div>`; return; }
   $('pvSubj').textContent = j.subject;
   tplShow($('pvBody'), j, p.mode, p.device);
+  tplAdvice($('pvBody'), j.advice);
 }
 function tplShow(box, j, mode, device) {
   if (mode === 'text' || !j.html) {
@@ -151,6 +152,13 @@ function tplShow(box, j, mode, device) {
   }
   box.innerHTML = '<iframe title="Email preview" sandbox="allow-popups allow-popups-to-escape-sandbox" class="w-full border-0 block" style="height:720px"></iframe>';
   box.firstChild.srcdoc = j.html;
+}
+
+// Copy advice from the drip-marketing research (outreach/copycheck.py): shown above the preview, never blocks.
+function tplAdvice(box, advice) {
+  if (!advice || !advice.length) return;
+  const items = advice.map(a => `<li>${esc(a)}</li>`).join('');
+  box.insertAdjacentHTML('afterbegin', `<div class="text-xs text-amber-800 bg-amber-50 border-b border-amber-200 px-5 py-3"><b>Copy tips</b> (from cold-email research; advice only)<ul class="list-disc ml-4 mt-1 space-y-0.5">${items}</ul></div>`);
 }
 
 // ------------------------------------------------------------------ editor
@@ -250,6 +258,7 @@ async function tplEdLoad() {
   if (!j.ok) return;
   $('edSubj').textContent = j.subject;
   tplShow($('edBody'), j, tplEd.mode, tplEd.device);
+  tplAdvice($('edBody'), j.advice);
 }
 async function tplSave() {
   tplEdSync(true);

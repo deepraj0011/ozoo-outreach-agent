@@ -40,6 +40,7 @@ Start with **onboarding**, then pick the guide for what you want to do.
 | Doc | |
 |---|---|
 | [Tool capabilities](reference/tool-capabilities.md) | What Instantly / Smartlead / Meta / Cal.com support, from their docs (items to confirm on a trial account are marked) |
+| [Drip marketing playbook](reference/drip-marketing-playbook.md) | Cold-email research (sequence, timing, copy, deliverability, India rules) mapped to what the agent does |
 | [Architecture](progress/architecture.md) | Module map and how an event flows through the code |
 | [Decisions](progress/decisions.md) | Every binding ruling, with why and the cost if wrong |
 

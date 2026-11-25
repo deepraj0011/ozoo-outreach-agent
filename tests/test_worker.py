@@ -127,6 +127,33 @@ def test_start_new_skips_held_and_caps_batch(env):
     assert tool_names(env) == ["add_lead"] * 3
 
 
+def test_start_new_starts_at_most_two_contacts_per_company(env):
+    # research (Hunter / Reply.io): 1-2 contacts per company reply better than 3+, and a burst of
+    # similar mail to one domain looks like spam; the third waits until a slot frees up
+    ids = [new_lead(env, verify_status="valid", active_channel="email", domain="bank.in",
+                    email=f"p{i}@bank.in") for i in range(3)]
+    other = new_lead(env, verify_status="valid", active_channel="email", domain="nbfc.in", email="x@nbfc.in")
+    assert run(env, NOW)["start_new"] == 3
+    assert [bool(get(env, i).tool_lead_id) for i in ids] == [True, True, False]
+    assert get(env, other).tool_lead_id
+    with env.factory() as s:  # the first contact's sequence ends: the third may start
+        s.get(Lead, ids[0]).state = S.NURTURE.value
+        s.commit()
+    assert run(env, NOW + timedelta(minutes=1))["start_new"] == 1
+    assert get(env, ids[2]).tool_lead_id
+
+
+def test_company_cap_ignores_free_mail_and_can_be_switched_off(env):
+    gm = [new_lead(env, verify_status="valid", active_channel="email", domain="gmail.com",
+                   email=f"g{i}@gmail.com") for i in range(3)]
+    assert run(env, NOW)["start_new"] == 3
+    bank = [new_lead(env, verify_status="valid", active_channel="email", domain="bank.in",
+                     email=f"q{i}@bank.in") for i in range(3)]
+    off = make_settings(max_active_per_company=0)
+    assert run(env, NOW + timedelta(minutes=1), settings=off)["start_new"] == 3
+    assert all(get(env, i).tool_lead_id for i in gm + bank)
+
+
 def test_start_new_retries_failed_enrolment_then_gives_up(env):
     env.tool.fail.add("add_lead")
     lid = new_lead(env, verify_status="valid", active_channel="email")

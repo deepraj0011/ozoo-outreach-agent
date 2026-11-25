@@ -199,6 +199,11 @@ class Settings(BaseSettings):
     # hot_lead sales alert. Bank security sandboxes can click links like a person. Set false once
     # real data shows the click filter holds.
     click_alerts_need_check: bool = True
+    # Most contacts at one company (same email domain) in an email sequence at once; more wait at
+    # start until one finishes. Research (docs/reference/drip-marketing-playbook.md): 1-2 contacts
+    # per company reply better than 3+, and bursts of similar mail to one domain look like spam.
+    # 0 = no cap. Free-mail domains are never capped.
+    max_active_per_company: int = Field(2, ge=0, le=50)
     # Real-visit tracking (outreach.visits): tracked links to our own site pages (pricing, case
     # study, product, homepage) carry ?oz_v=<signed token>; the site's /v.js snippet reports an
     # engaged visit (15 s of active reading plus scrolling, or a second page). Engaged visits score

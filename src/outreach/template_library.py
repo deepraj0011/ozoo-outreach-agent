@@ -23,6 +23,7 @@ from typing import Any, Dict, Iterable, List, Optional
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from .copycheck import copy_advice
 from .models import EmailTemplate, Event, Lead
 from .outreach import _TERMINAL_VALUES, email_suppressed
 from .richmail import LINK_TAGS, MAX_TEXT, TEXT_KEYS, available_images, image_file
@@ -315,13 +316,15 @@ def set_status(session: Session, key: str, status: str, by: str, passcode: str, 
 # ---------------------------------------------------------------- preview and sending
 def preview(session: Session, settings: Any, *, key: Optional[str] = None, draft: Optional[Dict[str, Any]] = None,
             role: str = "", name: str = "Asha Rao", company: str = "Acme Finance") -> Dict[str, Any]:
-    """{"subject", "text", "html", "angle"} as a lead with `role` would get it. Links go straight to
+    """{"subject", "text", "html", "angle", "advice"} as a lead with `role` would get it. Links go straight to
     the real pages (no tracked link, no event)."""
     t = templates_for(session)
     version = clean_draft(draft, t, settings) if draft is not None else find_version(session, key or "", t)
     lead = sample_lead(role, name, company, version.get("variant") or "standard")
-    out = render_version(lead, version, version.get("step") or 2, templates=t, settings=settings, preview=True)
-    return {**out, "angle": angle_for(lead, t)}
+    step = version.get("step") or 2
+    out = render_version(lead, version, step, templates=t, settings=settings, preview=True)
+    advice = copy_advice(out.get("subject") or "", out.get("text") or "", step)
+    return {**out, "angle": angle_for(lead, t), "advice": advice}
 
 
 def eligibility(session: Session, lead: Lead) -> Optional[str]:

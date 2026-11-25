@@ -244,3 +244,11 @@ Verdict: safe for local testing. Real sending is blocked until Instantly is veri
 | `EMAIL_FLOW` setting, default `classic`; P0 only with our own sender. | Existing tests, Instantly mode and other flows stay untouched. | Must be set per run. |
 | Design 6.10 "failed after 3 tries" replaced by a `late` flag on the lead's Emails tab. | Simpler; a late email is visible, nothing is silently dropped. | No retry limit. |
 | Screens are local-only with no login until the new frontend. | Same as the other local screens. | Anyone on the machine can edit the schedule. |
+
+## Task 30: Drip-marketing research applied (2026-11-20)
+
+| Decision | Why | Cost if wrong |
+|---|---|---|
+| At most 2 contacts per company domain in an email sequence at once (`MAX_ACTIVE_PER_COMPANY`, 0 = off); more wait at start. Free-mail never capped. | Hunter / Reply.io: 1–2 contacts reply better than 3+; bursts to one domain look like spam. | Slower coverage of big accounts. |
+| Copy advice is advisory only (Templates preview), never blocks a save or send. | Vendor numbers are rules of thumb; the PM decides. | Long emails can still go out. |
+| Send window and the designed HTML part unchanged. | Timing effect is small (~2 points); HTML vs plain should be tested in the pilot, not guessed. | Possibly a few lost replies until tested. |

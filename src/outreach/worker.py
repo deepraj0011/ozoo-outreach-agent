@@ -70,7 +70,7 @@ from .chatbot import takeover_active
 from .config import DELAY_DEFAULTS_S, Settings
 from .health import check_mailboxes
 from .holds import INBOUND_KINDS, _restart, release_eu_holds, resume_account_holds
-from .intake import EU_HOLD, VERIFY_HOLD
+from .intake import EU_HOLD, FREE_MAIL_DOMAINS, VERIFY_HOLD
 from .channels import EMAIL_OK_STATUSES
 from .verify import VERIFY_ERROR
 from .hours import business_deadline, business_zone, parse_business_hours
@@ -287,6 +287,19 @@ def _start_failed(ctx: Ctx, session: Session, lead: Lead) -> None:
             ctx.deps, ctx.now)
 
 
+def _company_full(ctx: Ctx, session: Session, lead: Lead) -> bool:
+    """True when MAX_ACTIVE_PER_COMPANY colleagues (same domain) are already in an email sequence
+    that has started; this lead then waits at start until one of them finishes."""
+    cap = ctx.settings.max_active_per_company
+    domain = (lead.domain or "").strip().lower()
+    if not cap or not domain or domain in FREE_MAIL_DOMAINS:
+        return False
+    active = session.scalar(select(func.count(Lead.id)).where(
+        Lead.domain == lead.domain, Lead.id != lead.id, Lead.state == S.IN_SEQUENCE.value,
+        Lead.active_channel == "email", Lead.tool_lead_id.is_not(None))) or 0
+    return active >= cap
+
+
 def _start_new(ctx: Ctx, session: Session) -> int:
     # per active channel: a lead switched WhatsApp -> email has wa_template_sent_at set and must still
     # be picked up when its email enrolment failed
@@ -313,6 +326,8 @@ def _start_new(ctx: Ctx, session: Session) -> int:
                 return False  # transient Meta error: backing off
         if f.get("start_failed"):
             return False
+        if lead.active_channel == "email" and _company_full(ctx, session, lead):
+            return False  # waits for a colleague's sequence to finish (logged ids only)
         retry = _ts(f.get("start_retry_at"))
         return retry is None or retry <= ctx.now
 
