@@ -93,3 +93,20 @@ def test_lead_rows_and_pause(tmp_path):
     assert client.post(f"/demo/api/p0/leads/{lead_id}/pause", json={"by": ""}).status_code == 400
     assert client.post(f"/demo/api/p0/leads/{lead_id}/resume", json={"by": "pm"}).status_code == 200
     assert client.get("/demo/api/p0/leads/9999").status_code == 404
+
+
+def test_lead_rows_with_a_sent_email_is_json(tmp_path):
+    client, engine = build(tmp_path)
+    client.get("/demo/api/p0/schedule")
+    from sqlalchemy.orm import sessionmaker
+    from outreach.p0 import planner
+    with sessionmaker(engine)() as s:
+        lead = make_lead(s, active_channel="email")
+        planner.plan_lead(s, lead, NOW, settings=make_settings(email_flow="p0"))
+        row = s.query(PlannedEmail).filter_by(lead_id=lead.id, email_no=1).one()
+        row.status, row.sent_at = "sent", NOW
+        s.commit()
+        lead_id = lead.id
+    r = client.get(f"/demo/api/p0/leads/{lead_id}")
+    assert r.status_code == 200
+    assert r.json()["rows"][0]["sent_at"].startswith("2026-11-12T10:00")

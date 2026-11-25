@@ -260,7 +260,8 @@ def lead_view(session: Session, lead: Lead, now: datetime, *, settings: Any) -> 
         out.append({"email_no": r.email_no, "template_name": names.get(r.template_id, ""), "status": r.status,
                     "due_date": local_day(goes_at(r.due_at, r.reason == SEND_NOW or bool(r.exact),
                                                   settings=settings, key=lead.tool_lead_id or ""),
-                                          settings=settings), "sent_at": r.sent_at, "reason": r.reason,
+                                          settings=settings),
+                    "sent_at": r.sent_at.isoformat() if r.sent_at else None, "reason": r.reason,
                     "sent_subject": r.sent_subject, "late": late,
                     "opens": counts.get((r.email_no, "open"), 0), "clicks": counts.get((r.email_no, "click"), 0),
                     "visits": counts.get((r.email_no, "visit"), 0)})
