@@ -16,6 +16,7 @@ import threading
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, AsyncIterator, Callable, Dict, Iterator, List, Optional, Tuple
 from urllib.parse import parse_qsl, quote, unquote, urlencode, urlsplit, urlunsplit
 
@@ -327,7 +328,7 @@ WORKER_STOP_TIMEOUT_S = 30.0
 
 def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None, engine: Any = None, *,
                clock: Callable[[], datetime] = _utcnow, scanners: Optional[Scanners] = None,
-               verifier: Any = None) -> FastAPI:
+               verifier: Any = None, web_dir: Optional[Path] = None) -> FastAPI:
     settings = settings or get_settings()
     configure_logging()  # the outreach logger at LOG_LEVEL (ids and kinds only)
     if settings.app_env == "local":
@@ -417,9 +418,12 @@ def create_app(settings: Optional[Settings] = None, deps: Optional[Deps] = None,
         from .p0 import console as p0_console
 
         p0_console.register(app, session_factory, clock, settings, deps)
+        from .workspace import routes as workspace_routes
+
+        workspace_routes.register(app, session_factory, clock, settings)
         from . import web_app
 
-        web_app.register(app)  # plain HTML/JS web app at /app/ (local only, see demo_console middleware)
+        web_app.register(app, web_dir or web_app.WEB_DIR)  # React web app at /app/ (local only, see demo_console middleware)
 
     @app.exception_handler(Exception)
     async def _unhandled(request: Request, exc: Exception) -> JSONResponse:

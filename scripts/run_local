@@ -11,6 +11,17 @@ if [ ! -f "$ENV_FILE" ]; then
   echo "No $ENV_FILE yet. Run scripts/local_setup first." >&2
   exit 1
 fi
+# Build the web app when it is missing or older than its sources (needs Node 20+).
+WEB_INDEX="$ROOT/src/outreach/webapp/index.html"
+if command -v npm >/dev/null 2>&1; then
+  STALE_SRC="$(find "$ROOT/frontend/src" "$ROOT/frontend/index.html" "$ROOT/frontend/package.json" \
+    "$ROOT/frontend/package-lock.json" "$ROOT/frontend/vite.config.ts" -type f -newer "$WEB_INDEX" -print -quit 2>/dev/null || true)"
+  if [ ! -f "$WEB_INDEX" ] || [ -n "$STALE_SRC" ]; then
+    "$ROOT/scripts/build_web" || echo "Web app build failed; /app will show the last build or a not-built page." >&2
+  fi
+else
+  echo "npm not found: the web app at /app will not be built (install Node 20+, then run scripts/build_web)." >&2
+fi
 export RUN_WORKER=1
 export OUTREACH_ENV_FILE="$ENV_FILE"  # the /demo console runs dev commands with it
 export WORKER_INTERVAL_S="${WORKER_INTERVAL_S:-10}"

@@ -123,12 +123,14 @@ def board(session: Session, now: datetime, *, settings: Any) -> Dict[str, Any]:
     today = planner.local_day(now, settings=settings) if camp["running"] else None
     day_start = planner._day_start(now, settings=settings)
     out_leads: List[Dict[str, Any]] = []
-    totals = {"leads": len(leads), "sent": 0, "today": 0, "replied": 0, "stopped": 0, "unsubscribed": 0}
+    totals = {"leads": len(leads), "sent": 0, "sent_today": 0, "today": 0, "replied": 0, "stopped": 0, "unsubscribed": 0}
     for ld in leads:
         mine = rows.get(ld.id, [])
         cells = [_cell(r, ld, counts, today, day_start, now, settings) for r in mine]
         reason, at = _stop(ld, mine, stops.get(ld.id, {}))
         totals["sent"] += sum(1 for c in cells if c["status"] == "sent")
+        totals["sent_today"] += sum(1 for r, c in zip(mine, cells)
+                                    if c["status"] == "sent" and r.sent_at is not None and r.sent_at >= day_start)
         totals["today"] += sum(1 for c in cells if c["status"] == "today")
         totals["replied"] += reason == "replied"
         totals["unsubscribed"] += reason == "unsubscribed"

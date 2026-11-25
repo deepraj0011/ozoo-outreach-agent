@@ -40,3 +40,6 @@ Thumbs.db
 
 # local DB backups (contain lead data)
 backups/
+
+# Built web app (scripts/build_web)
+src/outreach/webapp/

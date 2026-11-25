@@ -252,3 +252,13 @@ Verdict: safe for local testing. Real sending is blocked until Instantly is veri
 | At most 2 contacts per company domain in an email sequence at once (`MAX_ACTIVE_PER_COMPANY`, 0 = off); more wait at start. Free-mail never capped. | Hunter / Reply.io: 1–2 contacts reply better than 3+; bursts to one domain look like spam. | Slower coverage of big accounts. |
 | Copy advice is advisory only (Templates preview), never blocks a save or send. | Vendor numbers are rules of thumb; the PM decides. | Long emails can still go out. |
 | Send window and the designed HTML part unchanged. | Timing effect is small (~2 points); HTML vs plain should be tested in the pilot, not guessed. | Possibly a few lost replies until tested. |
+
+## Task 31: web app redesign (2026-11-20)
+
+| Decision | Why | Cost if wrong |
+|---|---|---|
+| The plain HTML app was replaced by a React + MUI app at `/app` (source in `frontend/`). | One maintainable UI with a component library instead of hand-written JS modules. | Building it needs Node 20+. |
+| Build output (`src/outreach/webapp/`) is not committed; `scripts/build_web` makes it and `scripts/run_local` runs it when missing or stale. | No generated files in git; `/app` shows a clear "not built" page (503) instead of failing silently. | A machine without Node cannot show the app. |
+| Connectors page is status-first: it shows what is active, needs a look or is not in use, with no OAuth or connect flow yet. | Real connecting needs a login and secret storage, which do not exist yet. | Changing a connector still means editing the env file. |
+| Settings are read-only in v1. | Same reason: no login, and secrets must not be editable from a local page. | Settings changes still go through the env file. |
+
