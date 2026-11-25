@@ -48,8 +48,9 @@ Branch: `feat/outreach-agent-v1`. Plan: `docs/plan/implementation-plan-v1.md`. S
 | 30 | **Drip-marketing research applied**: playbook from 15+ sources; at most 2 contacts per company in an email sequence at once (`MAX_ACTIVE_PER_COMPANY`); "Copy tips" in the Templates preview (length, subject, links, early meeting ask) | done | [task-30](tasks/task-30-drip-research.md) · [playbook](../reference/drip-marketing-playbook.md) |
 | 29 | **P0 scheduled emails**: templates + day schedule, own sender, tracking record-only, unsubscribe / bounce / reply / booking stop the rest, per-lead pause / resume / send now / stop, `EMAIL_FLOW=p0`; end-to-end test; final-review fixes. Full suite: 1978 passing | done | [task-29](tasks/task-29-p0-scheduled-emails.md) · [guide](../guides/p0-email-schedule.md) |
 | 31 | **Web app redesign**: React + MUI app in `frontend/` (dark teal theme, Campaign board, Leads, Conversations, Templates, Connectors, Settings) served at `/app` from a build (`scripts/build_web`, run by `scripts/run_local`); read-only connectors and settings routes; plain HTML app retired. Full suite: 2028 passing | done | [task-31](tasks/task-31-web-app-redesign.md) |
+| 32 | **P0 schedule views**: up to 15 emails; Campaign page day ruler, list editor (gap, real date, weekend note), board with one dot per email and a Next column; handed emails dated by the sender's real slot (a Saturday hand-off shows Monday). Full suite: 2047 passing, 51 vitest | done | [task-32](tasks/task-32-p0-schedule-views.md) · [guide](../guides/p0-email-schedule.md) |
 
-**Tests now:** 2028 passing (`.venv/bin/pytest -q`).
+**Tests now:** 2047 passing (`.venv/bin/pytest -q`).
 
 **What's next:** test locally with [docs/guides/local-testing.md](../guides/local-testing.md). Before any real sending: verify Instantly on a trial account (sent-event step, stop/block/find endpoints, bounce type, pause), Cal.com and Teams payloads, pick the AI provider, have marketing review `kb/ozoo_kb.md` and the WhatsApp template previews, add DB migrations. See [go-live-checklist.md](go-live-checklist.md).
 

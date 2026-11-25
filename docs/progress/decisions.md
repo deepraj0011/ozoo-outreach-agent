@@ -262,3 +262,11 @@ Verdict: safe for local testing. Real sending is blocked until Instantly is veri
 | Connectors page is status-first: it shows what is active, needs a look or is not in use, with no OAuth or connect flow yet. | Real connecting needs a login and secret storage, which do not exist yet. | Changing a connector still means editing the env file. |
 | Settings are read-only in v1. | Same reason: no login, and secrets must not be editable from a local page. | Settings changes still go through the env file. |
 
+
+## Task 32: P0 schedule views (2026-11-25)
+
+| Decision | Why | Cost if wrong |
+|---|---|---|
+| A P0 schedule has up to 15 emails (was 10); the sender's `MAX_STEPS` is 15 too. | The owner asked for longer sequences; 15 still fits the board without horizontal scroll at 1280 px. | Very long sequences risk spam complaints; the cap is one constant on each side. |
+| An email already handed to the sender is shown at the send-window slot of its hand-off, and is late only a day after that slot. | The sender counts from the hand-off (`due_at_<k>`), so a Saturday hand-off goes Monday; the screen must show the day it really goes. | None known: it matches the sender and the stuck-handed check. |
+| The schedule editor is a wide dialog (list rows), not a side drawer. | One row per email with template, timing, gap and real date needs ~1000 px; a 460 px drawer could not show 15 emails readably. | Less of the board is visible while editing. |

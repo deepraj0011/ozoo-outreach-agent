@@ -13,13 +13,35 @@ day. Tracking (clicks, page visits) is recorded and shown, never acted on. Desig
   `{unsubscribe_link}` one is appended.
 - A template that is still on the schedule or on a lead's unsent email cannot be switched off.
 
-## Email schedule screen
+## Email schedule (Campaign page)
 
-A list of 1 to 10 emails, each with a live template and a **Day** (0 to 365, strictly increasing).
+A list of 1 to 15 emails, each with a live template and a timing: **Now** (email 1 only: when the lead
+starts), **Day N** (0 to 365, strictly increasing) or a **Date and time** (the same moment for every lead).
 Day 0 is the day the lead is added (or the start time picked at import, if that is still ahead; a start
 time already in the past counts as now); Day N is calendar day N in `BUSINESS_TZ` (Asia/Kolkata). The
-Example column shows the dates for a lead added now, as the send slot (working hours) the email would
-actually go in; **Example dates** recomputes them for the rows on screen without losing unsaved edits.
+sender (`MAX_STEPS` in `emailtool/mailpit.py`) takes up to 15 emails per lead too.
+
+The web app (`/app`, Campaign) shows it three ways:
+
+- **Day ruler**: every email on one day axis, placed by its day (a fixed date at its offset from today).
+  Now = filled teal circle, Day = outlined teal circle, fixed date = amber square; labels alternate above and
+  below (when, template, the date a lead added today gets it); week bands; chips "N emails" and
+  "X days, ends <date>". Readable at 15 emails on a 1280 px screen; narrower, it scrolls inside its card.
+- **Edit** opens the list editor: one row per email (template, Now | Day | Date, day or date and time, the
+  gap since the previous email, the real date a lead added today gets it, recomputed for unsaved rows by
+  `POST /demo/api/p0/schedule/example`). A Day email that lands on a weekend says so ("Day 3 is a Saturday:
+  goes Monday") when the send window moves it; a fixed date says "Same moment for every lead". Add up to 15,
+  remove any but the last one; Save replaces the whole schedule, and an API refusal shows in the editor.
+- **Board with dot tracks**: one row per lead: one dot per email (green = sent, teal ring = today or with
+  the sender, grey ring = planned, amber ring = late, dash = cancelled or skipped after a stop), status with
+  "k of N sent", and **Next** ("Email 6 · Mon 7 Dec", "Email 4 · today 3 pm", "Replied 27 Nov — emails
+  stopped", "Unsubscribed — stopped", "All sent · nurture", "Paused"). A dot opens that email; the lead's
+  name opens the lead panel (Pause / Resume / Send next now / Stop emails).
+
+Dates shown are the send slot the sender really uses: the send window's first-email slot (working hours, so
+a Saturday email shows Monday), and for an email already handed to the sender, the slot of the hand-off
+(the sender counts from it). Locally `EMAIL_SEND_WINDOW` is unset, so there is no window and emails do go
+on weekends; on a fast test clock (`TIME_SCALE`) the window is skipped by sender and screen alike.
 
 - Every P0 email goes at the first-email slot of the send window (no afternoon / morning rotation).
 
