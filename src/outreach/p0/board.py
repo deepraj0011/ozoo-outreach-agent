@@ -9,7 +9,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..models import Event, Lead, P0Template, PlannedEmail
-from ..send_plan import _scaled
 from ..sequencer import load_templates, render_version
 from . import campaign, planner
 from . import schedule as sch
@@ -33,13 +32,8 @@ def _iso(at: Optional[datetime]) -> Optional[str]:
 
 
 def _slot(row: PlannedEmail, lead: Lead, settings: Any) -> datetime:
-    """When the row goes (or went): sent time, else the send-window slot of its due time."""
-    if row.status == "sent" and row.sent_at is not None:
-        return row.sent_at
-    if row.status == "handed" and row.handed_at is not None:
-        return row.handed_at
-    return planner.goes_at(row.due_at, row.reason == planner.SEND_NOW or bool(row.exact), settings=settings,
-                           key=lead.tool_lead_id or "")
+    """When the row goes (or went), as the sender sees it (planner.row_goes)."""
+    return planner.row_goes(row, settings=settings, key=lead.tool_lead_id or "")
 
 
 def _counts(session: Session, lead_ids: List[int]) -> Dict[Tuple[int, int, str], int]:
@@ -96,8 +90,7 @@ def _cell(row: PlannedEmail, lead: Lead, counts: Dict[Tuple[int, int, str], int]
     status = row.status
     if today is not None and status in OPEN_STATUSES and planner.local_day(slot, settings=settings) == today:
         status = "today"
-    late = (row.status == "planned" and row.due_at < day_start) or (
-        row.status == "handed" and row.handed_at is not None and now - row.handed_at > _scaled(1, settings))
+    late = planner.is_late(row, now, settings=settings, key=lead.tool_lead_id or "")
     return {"email_no": row.email_no, "status": status, "date": _iso(slot), "sent_at": _iso(row.sent_at),
             "opens": counts.get((lead.id, row.email_no, "open"), 0),
             "clicks": counts.get((lead.id, row.email_no, "click"), 0),

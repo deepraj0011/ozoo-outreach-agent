@@ -59,6 +59,27 @@ def goes_at(due: datetime, exact: bool, *, settings: Any, key: str = "") -> date
     return due if exact else send_slot(due, settings=settings, key=key)
 
 
+def row_goes(row: "PlannedEmail", *, settings: Any, key: str = "") -> datetime:
+    """When a planned-email row goes (or went), as the sender sees it: its send time once sent; once handed,
+    the send-window slot of the hand-off (the sender counts from due_at_<k> = hand-off time, so an email handed
+    on a Saturday goes on Monday); otherwise the slot of its due time."""
+    exact = row.reason == SEND_NOW or bool(row.exact)
+    if row.status == "sent" and row.sent_at is not None:
+        return row.sent_at
+    if row.status == "handed" and row.handed_at is not None:
+        return goes_at(row.handed_at, exact, settings=settings, key=key)
+    return goes_at(row.due_at, exact, settings=settings, key=key)
+
+
+def is_late(row: "PlannedEmail", now: datetime, *, settings: Any, key: str = "") -> bool:
+    """A planned email due before today, or a handed one the sender has not sent a day after its slot."""
+    if row.status == "planned":
+        return row.due_at < _day_start(now, settings=settings)
+    if row.status == "handed" and row.handed_at is not None:
+        return now - row_goes(row, settings=settings, key=key) > _scaled(1, settings)
+    return False
+
+
 def local_day(at: datetime, *, settings: Any) -> str:
     """The calendar day `at` falls on (business time), or the scaled-day bucket on a fast clock."""
     scale = _scale(settings)
@@ -252,15 +273,15 @@ def lead_view(session: Session, lead: Lead, now: datetime, *, settings: Any) -> 
     for step, kind in session.execute(select(Event.step, Event.kind).where(
             Event.lead_id == lead.id, Event.verdict == "human", Event.kind.in_(("open", "click", "visit")))):
         counts[(step, kind)] = counts.get((step, kind), 0) + 1
-    start, out = _day_start(now, settings=settings), []
+    out: List[Dict[str, Any]] = []
+    key = lead.tool_lead_id or ""
     names = dict(session.execute(select(P0Template.id, P0Template.name)).all())
     for r in lead_rows(session, lead.id):
-        late = (r.status == "planned" and r.due_at < start) or (
-            r.status == "handed" and r.handed_at is not None and now - r.handed_at > _scaled(1, settings))
+        late = is_late(r, now, settings=settings, key=key)
+        goes = goes_at(r.due_at, r.reason == SEND_NOW or bool(r.exact), settings=settings, key=key) \
+            if r.status == "sent" else row_goes(r, settings=settings, key=key)  # sent: the day it was due
         out.append({"email_no": r.email_no, "template_name": names.get(r.template_id, ""), "status": r.status,
-                    "due_date": local_day(goes_at(r.due_at, r.reason == SEND_NOW or bool(r.exact),
-                                                  settings=settings, key=lead.tool_lead_id or ""),
-                                          settings=settings),
+                    "due_date": local_day(goes, settings=settings),
                     "sent_at": r.sent_at.isoformat() if r.sent_at else None, "reason": r.reason,
                     "sent_subject": r.sent_subject, "late": late,
                     "opens": counts.get((r.email_no, "open"), 0), "clicks": counts.get((r.email_no, "click"), 0),
