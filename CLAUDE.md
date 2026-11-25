@@ -20,7 +20,8 @@ scripts/local_setup            # writes .env.local (fresh secrets, every service
 scripts/run_local              # FastAPI app + in-process worker (10 s tick) on 127.0.0.1:8000
 scripts/start_demo [.env.demo] # run_local + Mailpit + opens the web app at /
 
-# dev CLI (refuses unless APP_ENV=local); reads OUTREACH_ENV_FILE / .env.local
+# dev CLI (refuses unless APP_ENV=local); uses .env.local unless `--env-file X` is given BEFORE the
+# subcommand (OUTREACH_ENV_FILE is NOT read); `sim` posts to 127.0.0.1:8000 unless --base-url / DEV_BASE_URL
 .venv/bin/python -m outreach.dev seed | show [ID] [--mask] | tick | advance --hours 48 | advance --reset
 .venv/bin/python -m outreach.dev sim SCENARIO --lead ID   # signed webhook to the running server
 .venv/bin/python -m outreach.world [--leads 100]          # realistic lead simulation, own temp dir (no env file)
@@ -48,7 +49,7 @@ webhook route in `app.py` (1 MiB cap, constant-time signature/secret check) → 
 
 **LLM is provider-agnostic**: classifier and chatbot depend only on the port in `llm/base.py`; `llm/factory.py` picks `anthropic`, `openai`, `azure_openai` or `openai_compatible` from `LLM_PROVIDER` + model settings. Don't hard-wire a provider.
 
-**Content/config outside code**: email copy `templates/emails.yaml` (every step also renders a letter-like designed HTML part via `richmail.py`; images in `static/email/`, served at `/img/`) plus web-app templates in the `email_template` table (`template_library.py`, Templates screen; approved versions join the YAML ones through `templates_for(session)`), WhatsApp templates `templates/whatsapp.yaml`, chatbot knowledge base `kb/ozoo_kb.md`, scanner IP ranges `config/scanners.yaml`.
+**Content/config outside code**: email copy `templates/emails.yaml` (every step also renders a letter-like designed HTML part via `richmail.py`; images in `static/email/`, served at `/img/`) plus web-app templates in the `email_template` table (`template_library.py`, Templates screen; approved versions join the YAML ones through `templates_for(session)`), the email schedule in the `send_plan` table (`send_plan.py`, Email schedule screen: one list of up to 4 emails with type and days, optionally sooner if the lead showed interest; worker job `plan_schedule`, our own sender only), WhatsApp templates `templates/whatsapp.yaml`, chatbot knowledge base `kb/ozoo_kb.md`, scanner IP ranges `config/scanners.yaml`.
 - The chatbot answers only from `kb/ozoo_kb.md`; its post-check rejects any reply with a URL or a currency amount not written in the KB (the KB deliberately has no amounts).
 - WhatsApp template bodies live in Meta; `templates/whatsapp.yaml` `preview` is a display-only copy for the web app and must match the approved Meta text.
 
