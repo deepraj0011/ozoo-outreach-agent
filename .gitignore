@@ -37,3 +37,6 @@ docs/Untitled
 *.swp
 .DS_Store
 Thumbs.db
+
+# local DB backups (contain lead data)
+backups/
