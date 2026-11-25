@@ -37,7 +37,7 @@ DEFAULT_SMTP_HOST = "127.0.0.1"
 DEFAULT_SMTP_PORT = 1025
 FROM_ADDR = "Ozoo.ai (local test) <outreach@ozoo.local>"
 LAST_STEP = 4
-MAX_STEPS = 10  # a planned lead (variable `steps`) can have up to this many emails
+MAX_STEPS = 15  # a planned lead (variable `steps`) can have up to this many emails
 
 def _int_or(raw: Any, default: int, cap: int) -> int:
     try:

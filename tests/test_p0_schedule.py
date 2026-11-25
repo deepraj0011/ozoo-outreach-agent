@@ -49,8 +49,8 @@ def test_days_must_increase(session):
         _save(session, [{"template_id": a.id, "day": d} for d in (0, 3, 3)])
 
 
-@pytest.mark.parametrize("count", [0, 11])
-def test_one_to_ten_emails(session, count):
+@pytest.mark.parametrize("count", [0, 16])
+def test_one_to_fifteen_emails(session, count):
     a = _tpl(session)
     with pytest.raises(p0.P0Error):
         _save(session, [{"template_id": a.id, "day": i} for i in range(count)])

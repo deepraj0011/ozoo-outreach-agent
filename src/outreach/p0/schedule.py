@@ -14,7 +14,7 @@ from .templates import P0Error, _who
 
 logger = logging.getLogger(__name__)
 
-MAX_EMAILS = 10
+MAX_EMAILS = 15
 
 
 def _local(at: Optional[datetime], settings: Any) -> Optional[str]:
